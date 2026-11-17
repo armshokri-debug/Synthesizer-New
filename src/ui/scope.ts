@@ -5,6 +5,7 @@
 import { getAudioCtxIfAny, getSynthBus } from "../engine/bus";
 import { getSynthPatch } from "../engine/synth";
 import { onSkinChange, readScopeColors } from "./skins";
+import { onPluginVisualFrame } from "./plugin-visuals";
 
 let synthScopeRaf: number | null = null;
 let scopeColors: { line: string; grid: string } | null = null;
@@ -14,6 +15,7 @@ export function startSynthScope(): void {
   if (synthScopeRaf !== null) return;
 
   const data = new Uint8Array(2048);
+  const plugin = !!(globalThis as any).__SY1_PLUGIN__;
 
   const draw = () => {
     const canvas = document.querySelector(".synth-panel:not([hidden]) .synth-scope") as HTMLCanvasElement | null;
@@ -68,8 +70,13 @@ export function startSynthScope(): void {
       g.shadowBlur = 0;
     }
 
-    synthScopeRaf = requestAnimationFrame(draw);
+    if (!plugin) synthScopeRaf = requestAnimationFrame(draw);
   };
 
+  if (plugin) {
+    synthScopeRaf = -1;
+    onPluginVisualFrame(draw);
+    return;
+  }
   synthScopeRaf = requestAnimationFrame(draw);
 }

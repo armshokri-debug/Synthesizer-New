@@ -8,7 +8,9 @@
  * (with mono/legato, HOLD, sustain pedal and tuning applied).
  */
 
-import { getAudioCtx, getAudioCtxIfAny, getSynthBus, makeDriveCurve, makeReverbImpulse, unlockAudio } from "./bus";
+import { mirrorCall } from "./mirror";
+
+import { getAudioCtx, getAudioCtxIfAny, getSynthBus, makeDriveCurve, setMainToFx, setReverbSize, unlockAudio } from "./bus";
 import { getCustomTuning, setCustomTuning, setOrbitSyncFormat, SYNC_DIVS, SYNTH_PARAMS, SynthPatch, synthDefaults, tuningCents } from "./params";
 import { createHQVoice, EngineId, hqPost, initHQ, setEngine, useHQ } from "./hq";
 import { createStringsVoice, initStrings, stringsPost, useStrings } from "./strings";
@@ -33,11 +35,15 @@ import {
   setDrumKit,
   setDrumTempoSource,
   useDrumBank,
+  isDrumPlaying,
+  setDrumHitListener,
+  startDrums,
   stopDrums,
   triggerDrum
 } from "./drums";
+import { allOff as midiOutAllOff, configureDaw, drumHit, modWheelOut, pitchBendOut, scheduledNote, syncHeldNotes } from "./daw";
 import { getMachineDef, MACHINES } from "../machines";
-import type { MachineDef, PresetDef } from "../machines/types";
+import type { DrumKitDef, MachineDef, PresetDef } from "../machines/types";
 
 export const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
@@ -71,16 +77,27 @@ try {
 } catch (e) {}
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSave: (() => void) | null = null;
 function savePatchSoon(): void {
   if (saveTimer) clearTimeout(saveTimer);
   const id = machine.id;
-  saveTimer = setTimeout(() => {
+  pendingSave = () => {
+    saveTimer = null;
+    pendingSave = null;
     try {
       const { hold: _hold, ...toSave } = synthPatch;
       localStorage.setItem(patchKey(id), JSON.stringify(toSave));
       localStorage.setItem(presetKey(id), synthPresetId);
     } catch (e) {}
-  }, 300);
+  };
+  saveTimer = setTimeout(pendingSave, 300);
+}
+
+/** Save a pending patch change now (the plugin, when the DAW saves the project). */
+export function flushPatchSave(): void {
+  if (!pendingSave) return;
+  if (saveTimer) clearTimeout(saveTimer);
+  pendingSave();
 }
 
 export function getSynthPatch(): SynthPatch {
@@ -94,6 +111,69 @@ export function getMachine(): MachineDef {
 }
 export function getMachines(): MachineDef[] {
   return MACHINES;
+}
+
+// ------------------------------------------------- drum kits and styles ----
+// Drum machines choose a KIT (the sound of the 8 slots) and a STYLE (tempo,
+// swing, patterns) separately. The preset id of a drum machine is its style.
+const kitKey = (id: string) => `sy1.m.${id}.kit`;
+const KEEP_KIT_KEY = "sy1.drums.keepKit";
+let drumKitId = "";
+let drumKitEdited = false;
+const kitListeners = new Set<() => void>();
+
+export function getDrumKitId(): string { return drumKitId; }
+export function isDrumKitEdited(): boolean { return drumKitEdited; }
+export function getDrumKitDef(): DrumKitDef | undefined { return machine.kits?.find((k) => k.id === drumKitId); }
+export function onDrumKitChange(cb: () => void): () => void { kitListeners.add(cb); return () => kitListeners.delete(cb); }
+
+/** "Keep kit": choosing a style keeps the loaded kit instead of loading the style's own. */
+export function getKeepKit(): boolean {
+  try { return localStorage.getItem(KEEP_KIT_KEY) === "1"; } catch (e) { return false; }
+}
+function setKeepKit__impl(on: boolean): void {
+  try { localStorage.setItem(KEEP_KIT_KEY, on ? "1" : "0"); } catch (e) {}
+}
+
+function syncDrumLabels(): void {
+  const kit = getDrumKitDef();
+  setDrumKit(machine.drumModel, { ...(machine.drumLabels || {}), ...(kit?.labels || {}) });
+}
+
+function saveKitSoon(): void {
+  try { localStorage.setItem(kitKey(machine.id), JSON.stringify({ id: drumKitId, edited: drumKitEdited })); } catch (e) {}
+}
+
+/** Load a kit's sound; the pattern bank, tempo, swing and accent stay as they are. */
+function applyDrumKit__impl(id: string): void {
+  const kit = machine.kits?.find((k) => k.id === id);
+  if (!kit) return;
+  const groove = { drumSwing: synthPatch.drumSwing, drumAccent: synthPatch.drumAccent };
+  const next = Object.assign(synthDefaults(), machine.base, kit.patch, groove);
+  next.hold = "off";
+  applyPatchObject(next);
+  drumKitId = kit.id;
+  drumKitEdited = false;
+  syncDrumLabels();
+  saveKitSoon();
+  kitListeners.forEach((cb) => cb());
+  presetChangeListeners.forEach((cb) => cb(synthPresetId));
+  savePatchSoon();
+}
+
+/** Load a style: tempo, swing, accent and its patterns (and its own kit unless keepKit). */
+function applyDrumStyle__impl(id: string, keepKit = getKeepKit()): void {
+  const st = machine.styles?.find((x) => x.id === id);
+  if (!st) return;
+  if (!keepKit || !drumKitId) applyDrumKit(st.kit);
+  const base = machine.base as Record<string, any>;
+  setSynthParam("drumSwing", st.swing ?? base.drumSwing ?? 0, { fromPreset: true });
+  setSynthParam("drumAccent", st.accent ?? base.drumAccent ?? 0.5, { fromPreset: true });
+  loadBank(st.patterns);
+  setTempo(st.bpm);
+  synthPresetId = st.id;
+  presetChangeListeners.forEach((cb) => cb(synthPresetId));
+  savePatchSoon();
 }
 
 export type ParamChangeCallback = (key: string, value: any) => void;
@@ -123,7 +203,7 @@ function syncedLfoRate(): number | null {
   return getTempo() / 60 / div.beats; // cycles per second
 }
 
-export function setSynthParam(
+function setSynthParam__impl(
   key: string,
   value: any,
   { fromPreset = false, internal = false }: { fromPreset?: boolean; internal?: boolean } = {}
@@ -143,8 +223,17 @@ export function setSynthParam(
   }
 
   if (!fromPreset && !internal && key !== "hold" && key !== "oriental") {
-    synthPresetId = "custom";
-    presetChangeListeners.forEach((cb) => cb(synthPresetId));
+    if (machine.kind === "drums" && machine.styles) {
+      // drum machines: turning a knob edits the kit (or the groove), the style keeps its name
+      if (key !== "drumSwing" && key !== "drumAccent" && !drumKitEdited) {
+        drumKitEdited = true;
+        saveKitSoon();
+        presetChangeListeners.forEach((cb) => cb(synthPresetId));
+      }
+    } else {
+      synthPresetId = "custom";
+      presetChangeListeners.forEach((cb) => cb(synthPresetId));
+    }
   }
 
   if (key === "hold" && synthPatch.hold !== "on" && before === "on") {
@@ -168,6 +257,7 @@ export function setSynthParam(
     }
     if (key === "arpOn" && synthPatch.arpOn !== before) handleArpToggle(synthPatch.arpOn === "on");
     if (key === "polyMode" && value !== before) releaseEverything();
+    if (key === "hold" || key === "polyMode" || key === "arpOn") syncOut();
   }
 
   // Shared FX bus
@@ -183,7 +273,7 @@ export function setSynthParam(
     else if (key === "eqMid") bus.eqMid.gain.setTargetAtTime(v, now, 0.02);
     else if (key === "eqHigh") bus.eqHigh.gain.setTargetAtTime(v, now, 0.02);
     else if (key === "delayTime") bus.delay.delayTime.setTargetAtTime(v, now, 0.05);
-    else if (key === "delayFb") bus.fb.gain.setTargetAtTime(v, now, 0.02);
+    else if (key === "delayFb") bus.fb.gain.setTargetAtTime(Math.min(0.95, v), now, 0.02);
     else if (key === "delayMix") bus.delayWet.gain.setTargetAtTime(v * 0.7, now, 0.02);
     else if (key === "revMix") bus.revWet.gain.setTargetAtTime(v * 0.9, now, 0.02);
     else if (key === "chorusMix") bus.chorusWet.gain.setTargetAtTime(v * 0.9, now, 0.03);
@@ -192,15 +282,7 @@ export function setSynthParam(
       bus.chorusDepthL.gain.setTargetAtTime(0.004 * v, now, 0.05);
       bus.chorusDepthR.gain.setTargetAtTime(-0.004 * v, now, 0.05);
     } else if (key === "volume") bus.master.gain.setTargetAtTime(v, now, 0.02);
-    else if (key === "revSize") {
-      if (bus.revTimer) clearTimeout(bus.revTimer);
-      bus.revTimer = setTimeout(() => {
-        if (Math.abs(bus.revSizeApplied - synthPatch.revSize) > 0.01) {
-          bus.reverb.buffer = makeReverbImpulse(ctx, synthPatch.revSize);
-          bus.revSizeApplied = synthPatch.revSize;
-        }
-      }, 180);
-    }
+    else if (key === "revSize") setReverbSize(bus, v);
   }
 
   activeSynthVoices.forEach((vc) => vc.update(key));
@@ -223,7 +305,7 @@ export function setSynthParam(
   savePatchSoon();
 }
 
-export function updateCustomTuningOffsets(offsets?: number[]): number[] {
+function updateCustomTuningOffsets__impl(offsets?: number[]): number[] {
   const machineId = machine.id;
   const clean = offsets ? setCustomTuning(machineId, offsets) : getCustomTuning(machineId);
   retuneActiveVoices();
@@ -248,7 +330,12 @@ function findPreset(id: string): PresetDef | undefined {
   return machine.presets.find((p) => p.id === id);
 }
 
-export function applySynthPreset(id: string): void {
+function applySynthPreset__impl(id: string): void {
+  // drum machines: a preset is a style played on its own kit
+  if (machine.kind === "drums" && machine.styles) {
+    applyDrumStyle(id, false);
+    return;
+  }
   const preset = findPreset(id);
   if (!preset) return;
   setSynthParam("hold", "off", { internal: true });
@@ -268,20 +355,25 @@ export function applySynthPreset(id: string): void {
   savePatchSoon();
 }
 
-export function stepPreset(dir: number): void {
+function stepPreset__impl(dir: number): void {
   const list = machine.presets;
   const i = list.findIndex((p) => p.id === synthPresetId);
   const next = list[(Math.max(0, i) + dir + list.length) % list.length];
-  if (next) applySynthPreset(next.id);
+  if (next && machine.kind === "drums" && machine.styles) applyDrumStyle(next.id);
+  else if (next) applySynthPreset(next.id);
 }
 
 /** Switch instrument: stop everything, load its saved patch (or first preset). */
-export function setMachine(id: string): void {
+function setMachine__impl(id: string): void {
   const next = getMachineDef(id);
   setSynthParam("hold", "off", { internal: true });
   releaseEverything();
   stopDrums();
   machine = next;
+  drumKitId = "";
+  drumKitEdited = false;
+  // drum machines feed delay/reverb only through per-voice sends; synths feed them directly
+  setMainToFx(machine.kind !== "drums");
   if (machine.kind === "drums") {
     setDrumKit(machine.drumModel, machine.drumLabels);
     useDrumBank(machine.id, machine.presets[0]?.patterns);
@@ -297,6 +389,20 @@ export function setMachine(id: string): void {
       applyPatchObject(full);
       synthPresetId = localStorage.getItem(presetKey(machine.id)) || "custom";
       restored = true;
+      if (machine.kind === "drums" && machine.kits) {
+        let saved: { id?: string; edited?: boolean } = {};
+        try { saved = JSON.parse(localStorage.getItem(kitKey(machine.id)) || "{}") || {}; } catch (e) {}
+        const style = machine.styles?.find((x) => x.id === synthPresetId);
+        if (machine.kits.some((k) => k.id === saved.id)) {
+          drumKitId = String(saved.id);
+          drumKitEdited = !!saved.edited;
+          syncDrumLabels();
+        } else {
+          // a sound saved before kits existed: name it after its style's kit, marked as edited
+          drumKitId = style?.kit || machine.kits[0].id;
+          drumKitEdited = true;
+        }
+      }
     }
   } catch (e) {}
   if (!restored) {
@@ -318,9 +424,10 @@ export function setMachine(id: string): void {
 }
 
 // ------------------------------------------------------- pitch bend etc. ----
-export function setPitchBend(norm: number): void {
+function setPitchBend__impl(norm: number): void {
   setVoicePitchBend(norm);
   const v = getVoicePitchBend();
+  pitchBendOut(v);
   hqPost({ t: "bend", v });
   stringsPost({ t: "bend", v });
   fmPost({ t: "bend", v });
@@ -330,9 +437,10 @@ export function setPitchBend(norm: number): void {
 export function getPitchBend(): number {
   return getVoicePitchBend();
 }
-export function setModWheel(norm: number): void {
+function setModWheel__impl(norm: number): void {
   setVoiceModWheel(norm);
   const v = getVoiceModWheel();
+  modWheelOut(v);
   hqPost({ t: "mod", v });
   stringsPost({ t: "mod", v });
   fmPost({ t: "mod", v });
@@ -359,7 +467,7 @@ export function prepareAudio(): void {
 }
 
 /** Switch engines (releases every note first so nothing hangs). */
-export function switchEngine(id: EngineId): void {
+function switchEngine__impl(id: EngineId): void {
   allNotesOff();
   setEngine(id);
 }
@@ -591,9 +699,20 @@ function releaseHeldByHold(): void {
   }
 }
 
-export function setSustainPedal(down: boolean): void {
+function setSustainPedal__impl(down: boolean): void {
   sustainPedal = down;
   if (!down) releaseHeldByHold();
+  syncOut();
+}
+
+/** MIDI out / take: send the notes that sound now (the arpeggiator sends its own steps). */
+function syncOut(): void {
+  if (machine.kind === "drums") return;
+  const arp = synthPatch.arpOn === "on";
+  const cands: number[] = Array.from(heldNotesOrder.keys());
+  heldVoices.forEach((_, m) => cands.push(m));
+  if (monoMidi >= 0) cands.push(monoMidi);
+  syncHeldNotes(cands, (m) => !arp && isNoteSounding(m), (m) => heldNotesOrder.get(m) ?? 0.8);
 }
 export function getSustainPedal(): boolean {
   return sustainPedal;
@@ -719,7 +838,7 @@ function polyOff(midi: number): void {
 }
 
 /** Note on from keyboard, pads or MIDI (velocity 0..1). */
-export function noteOn(midi: number, velocity = 1): void {
+function noteOn__impl(midi: number, velocity = 1): void {
   prepareAudio();
   const ctx = getAudioCtx();
   if (!ctx) return;
@@ -737,9 +856,10 @@ export function noteOn(midi: number, velocity = 1): void {
   }
   if (synthPatch.polyMode === "mono") monoOn(midi, velocity);
   else polyOn(midi, velocity);
+  syncOut();
 }
 
-export function noteOff(midi: number): void {
+function noteOff__impl(midi: number): void {
   if (machine.kind === "drums") {
     markKey(midi, false);
     return;
@@ -752,10 +872,11 @@ export function noteOff(midi: number): void {
   }
   if (synthPatch.polyMode === "mono") monoOff(midi);
   else polyOff(midi);
+  syncOut();
 }
 
 /** Release only physically held keys (window blur / tab hidden); keeps HOLD-latched notes and sustain pedal. */
-export function releasePhysicalNotes(): void {
+function releasePhysicalNotes__impl(): void {
   const fromKeys = Array.from(downKeys.values());
   downKeys.clear();
   fromKeys.forEach((m) => noteOff(m));
@@ -771,6 +892,7 @@ export function releasePhysicalNotes(): void {
     const dropped = arpReleasePhysical(synthPatch.hold === "on");
     dropped.forEach((m) => markKey(m, false));
   }
+  syncOut();
 }
 
 /** Stop every sound and forget held state (keeps the sustain pedal flag off too). */
@@ -793,9 +915,10 @@ function releaseEverything(): void {
   analogPost({ t: "alloff" });
   vectorPost({ t: "alloff" });
   document.querySelectorAll(".key.is-pressed").forEach((el) => el.classList.remove("is-pressed"));
+  midiOutAllOff();
 }
 
-export function allNotesOff(): void {
+function allNotesOff__impl(): void {
   sustainPedal = false;
   downKeys.clear();
   setVoicePitchBend(0);
@@ -814,13 +937,35 @@ configureArp({
     flushPendingHandoverVoices(at);
     const v = startVoice(midi, vel, at);
     v.release(off);
+    scheduledNote(midi, vel, at, off);
+  }
+});
+setDrumHitListener(drumHit);
+configureDaw({
+  isDrums: () => machine.kind === "drums",
+  getTap: () => {
+    const ctx = getAudioCtxIfAny();
+    if (!ctx) return null;
+    return { ctx, tap: getSynthBus(ctx, synthPatch).tap };
+  },
+  startDrums: (at) => { prepareAudio(); startDrums(at); },
+  stopDrums,
+  isDrumPlaying,
+  takeName: () => {
+    const preset = machine.presets.find((p) => p.id === synthPresetId);
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    return `SY-1 ${machine.name}${preset ? " " + preset.name : ""} ${stamp}`.replace(/[\\/:*?"<>|]+/g, "-");
   }
 });
 configureDrums(
   () => synthPatch,
   () => {
     const ctx = getAudioCtxIfAny();
-    return ctx ? getSynthBus(ctx, synthPatch).input : null;
+    if (!ctx) return null;
+    const bus = getSynthBus(ctx, synthPatch);
+    return { main: bus.input, send: bus.sendIn };
   }
 );
 setDrumTempoSource(getTempo);
@@ -828,4 +973,84 @@ setDrumTempoSource(getTempo);
 /** Load the remembered machine at startup (call once, before the first render). */
 export function initMachine(): void {
   setMachine(machine.id);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function setSynthParam(...args: Parameters<typeof setSynthParam__impl>): ReturnType<typeof setSynthParam__impl> {
+  return mirrorCall("setSynthParam", setSynthParam__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function applySynthPreset(...args: Parameters<typeof applySynthPreset__impl>): ReturnType<typeof applySynthPreset__impl> {
+  return mirrorCall("applySynthPreset", applySynthPreset__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function stepPreset(...args: Parameters<typeof stepPreset__impl>): ReturnType<typeof stepPreset__impl> {
+  return mirrorCall("stepPreset", stepPreset__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function setMachine(...args: Parameters<typeof setMachine__impl>): ReturnType<typeof setMachine__impl> {
+  return mirrorCall("setMachine", setMachine__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function applyDrumKit(...args: Parameters<typeof applyDrumKit__impl>): ReturnType<typeof applyDrumKit__impl> {
+  return mirrorCall("applyDrumKit", applyDrumKit__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function applyDrumStyle(...args: Parameters<typeof applyDrumStyle__impl>): ReturnType<typeof applyDrumStyle__impl> {
+  return mirrorCall("applyDrumStyle", applyDrumStyle__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function setKeepKit(...args: Parameters<typeof setKeepKit__impl>): ReturnType<typeof setKeepKit__impl> {
+  return mirrorCall("setKeepKit", setKeepKit__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function updateCustomTuningOffsets(...args: Parameters<typeof updateCustomTuningOffsets__impl>): ReturnType<typeof updateCustomTuningOffsets__impl> {
+  return mirrorCall("updateCustomTuningOffsets", updateCustomTuningOffsets__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function setPitchBend(...args: Parameters<typeof setPitchBend__impl>): ReturnType<typeof setPitchBend__impl> {
+  return mirrorCall("setPitchBend", setPitchBend__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function setModWheel(...args: Parameters<typeof setModWheel__impl>): ReturnType<typeof setModWheel__impl> {
+  return mirrorCall("setModWheel", setModWheel__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function setSustainPedal(...args: Parameters<typeof setSustainPedal__impl>): ReturnType<typeof setSustainPedal__impl> {
+  return mirrorCall("setSustainPedal", setSustainPedal__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function noteOn(...args: Parameters<typeof noteOn__impl>): ReturnType<typeof noteOn__impl> {
+  return mirrorCall("noteOn", noteOn__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function noteOff(...args: Parameters<typeof noteOff__impl>): ReturnType<typeof noteOff__impl> {
+  return mirrorCall("noteOff", noteOff__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function releasePhysicalNotes(...args: Parameters<typeof releasePhysicalNotes__impl>): ReturnType<typeof releasePhysicalNotes__impl> {
+  return mirrorCall("releasePhysicalNotes", releasePhysicalNotes__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function allNotesOff(...args: Parameters<typeof allNotesOff__impl>): ReturnType<typeof allNotesOff__impl> {
+  return mirrorCall("allNotesOff", allNotesOff__impl, args);
+}
+
+/** mirrored for the plugin (see mirror.ts) */
+export function switchEngine(...args: Parameters<typeof switchEngine__impl>): ReturnType<typeof switchEngine__impl> {
+  return mirrorCall("switchEngine", switchEngine__impl, args);
 }

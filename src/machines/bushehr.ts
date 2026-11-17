@@ -1,6 +1,6 @@
 import { patternFrom as P } from "../engine/drums";
-import { DRUM_PAGES, drumSections, KitVoices, kitPatch, pats } from "./drumkit";
-import { MachineDef } from "./types";
+import { DRUM_PAGES, drumPresets, drumSections, kitFromSource, KitVoices, kitPatch, pats, stylesFrom } from "./drumkit";
+import { DrumKitDef, DrumStyleDef, MachineDef, PresetDef } from "./types";
 
 /**
  * BUSHEHR — Persian & Middle-Eastern percussion.
@@ -14,28 +14,17 @@ const DEF: KitVoices = {
   kick: [0, 1, 0.4, 0.85], snare: [0, 1, 0.5, 0.7], clap: [0, 1, 0.5, 0.7], ch: [0, 1, 0.5, 0.35],
   oh: [0, 1, 0.5, 0.5], tom: [0, 1, 0.5, 0.85], rim: [0, 1, 0.5, 0.55], bell: [0, 1, 0.5, 0.4]
 };
-const kit = (over: KitVoices, fx: Record<string, number> = {}) => kitPatch(DEF, over, fx);
+const kit = (over: KitVoices, fx: Record<string, number | string> = {}) => kitPatch(DEF, over, fx);
 
-export const BUSHEHR: MachineDef = {
-  id: "bushehr",
-  name: "Bushehr",
-  role: "Persian & Arabic percussion",
-  skin: "bushehr",
-  kind: "drums",
-  drumModel: "persian",
-  drumLabels: { kick: "DOHOL", snare: "TAK", clap: "DAF", ch: "ZANG", oh: "DAYEREH", tom: "DOM", rim: "PELANG", bell: "SENJ" },
-  tempo: true,
-  pages: DRUM_PAGES,
-  sections: drumSections(),
-  base: { drumSwing: 0, drumAccent: 0.55, delayMix: 0, revMix: 0.16, revSize: 1.6, drive: 0.05, volume: 0.82 },
-  presets: [
+/** Rhythm sources: each one becomes a style (and some lend their sound to a kit). */
+const SRC: PresetDef[] = [
     {
       id: "tombakSolo", name: "Tombak Zarbi", group: "Persian", bpm: 96,
       patch: kit({ tom: [0, 1.1, 0.6, 0.95], snare: [0, 1, 0.6, 0.75], rim: [0, 0.9, 0.6, 0.6] }),
       patterns: pats([
-        P(16, { tom: "X.......X.......", snare: "....X..x....X.x.", rim: "..x.......x....." }),
-        P(16, { tom: "X..x....X.......", snare: "....X..x....XxX.", rim: "..x...x...x....x" }),
-        P(16, { tom: "X.x.X.x.X.......", snare: "........XxXxXxXX", rim: "...x...x........" }),
+        P(16, { tom: "X.......X.......", snare: "..g.X..x.g..X.x.", rim: "..x.......x....." }),
+        P(16, { tom: "X..x....X.......", snare: "..g.X..x.g..X3X.", rim: "..x...x...x....x" }),
+        P(16, { tom: "X.x.X.x.X.......", snare: "........X4X4X4XX", rim: "...x...x........" }),
         P(16, { tom: "X.......X.......", rim: "..x.x.x...x.x.x." })
       ])
     },
@@ -63,9 +52,9 @@ export const BUSHEHR: MachineDef = {
       id: "sufiDaf", name: "Sufi Daf (Sama)", group: "Persian", bpm: 88,
       patch: kit({ clap: [-2, 1.4, 0.7, 0.9], kick: [-3, 1.3, 0.3, 0.7], oh: [-1, 1.2, 0.5, 0.45] }, { revMix: 0.32, revSize: 3 }),
       patterns: pats([
-        P(16, { kick: "X.......X.......", clap: "....X.......X...", oh: "..x.......x....." }),
-        P(16, { kick: "X.......X.......", clap: "....X..x....X.x.", oh: "..x...x...x...x." }),
-        P(16, { kick: "X...X...X...X...", clap: "..X...X...X.XXXX", oh: "x.x.x.x.x.x....." }),
+        P(16, { kick: "X.......X.......", clap: "....F.......F...", oh: "..x.......x....." }),
+        P(16, { kick: "X.......X.......", clap: "....F..x....F.x.", oh: "..x...x...x...x." }),
+        P(16, { kick: "X...X...X...X...", clap: "..X...X...X.F334", oh: "x.x.x.x.x.x....." }),
         P(16, { kick: "X...............", clap: "....X.......X...", oh: "x.x.x.x.x.x.x.x." })
       ])
     },
@@ -168,6 +157,119 @@ export const BUSHEHR: MachineDef = {
         P(16, { kick: "X......X..X.....", snare: "........X...XXXX", ch: "xxxxxxxxxxxxxxxx" }),
         P(16, { kick: "X...............", tom: "...x.x...x.x.x.." })
       ])
+    },
+    // ------------------------------------------------- folk, chill, riz ----
+    {
+      id: "tombakRiz", name: "Tombak Riz", group: "Persian", bpm: 100,
+      patch: kit({ tom: [0, 1.1, 0.55, 0.95], snare: [0, 0.9, 0.65, 0.75], rim: [0, 0.9, 0.6, 0.55] }),
+      patterns: pats([
+        P(16, { tom: "X.......X.......", snare: "..g.X.g...g.X.4.", rim: "......x.......x." }),
+        P(16, { tom: "X.....x.X.......", snare: "..g.X.g.g.g.X44.", rim: "......x.......x." }),
+        P(16, { tom: "X.......X.......", snare: "44444444X.X.4444" }),
+        P(16, { tom: "X.......X.x.....", snare: "..g.X.g...g.X...", rim: "..x...x...x...x." })
+      ])
+    },
+    {
+      id: "kurdishDaf", name: "Kurdish Daf", group: "Folk", bpm: 112,
+      patch: kit({ clap: [0, 1.1, 0.75, 0.9], kick: [-2, 1, 0.3, 0.65], oh: [0, 1, 0.55, 0.4] }, { revMix: 0.22, revSize: 2 }),
+      patterns: pats([
+        P(12, { kick: "X.....X.....", clap: "..x.x...x.x.", oh: "x..x..x..x.." }),
+        P(12, { kick: "X.....X.....", clap: "..F.x...F.x.", oh: "x..x..x..x.." }),
+        P(12, { kick: "X..X..X..X..", clap: "..x.x.333444", oh: "x..x..x....." }),
+        P(12, { clap: "F.....F.....", oh: "x..x..x..x.." })
+      ])
+    },
+    {
+      id: "lori", name: "Lori 6/8", group: "Folk", bpm: 120,
+      patch: kit({ kick: [0, 1, 0.45, 0.9], snare: [0, 0.9, 0.6, 0.6], tom: [-1, 1, 0.5, 0.65], bell: [0, 0.9, 0.5, 0.35] }, { revMix: 0.18 }),
+      patterns: pats([
+        P(12, { kick: "X.....X.....", tom: "..x..x..x..x", snare: "...x.....x..", bell: "x.....x....." }),
+        P(12, { kick: "X..x..X.....", tom: "..x..x..x.xx", snare: "...x.....x..", bell: "x.....x....." }),
+        P(12, { kick: "X.....X..X..", tom: "..x..x..3.44", snare: "...x..g..x.g" }),
+        P(12, { tom: "..x..x..x..x", bell: "x.....x....." })
+      ])
+    },
+    {
+      id: "ambientDaf", name: "Ambient Daf", group: "Chill", bpm: 72,
+      patch: kit({ clap: [-3, 1.6, 0.6, 0.75], ch: [0, 1.4, 0.4, 0.3], tom: [-4, 1.4, 0.3, 0.55], bell: [-2, 1.6, 0.3, 0.22] },
+        { revMix: 0.42, revSize: 4.5, delayMix: 0.22, delayTime: 0.62, delayFb: 0.45, drumGlue: 0.15, clapSend: 1, chSend: 1 }),
+      patterns: pats([
+        P(16, { clap: "F.......x.......", tom: "X.......X.......", ch: "....x.......x..?" }),
+        P(16, { clap: "F.......x...x...", tom: "X.......X.......", ch: "....x...?...x..?" }),
+        P(16, { clap: "F.......x...3344", tom: "X.......X.......", ch: "....x.......x..." }),
+        P(16, { ch: "....x.......x..?", bell: "X..............." })
+      ])
+    },
+    {
+      id: "persianChill", name: "Persian Chill", group: "Chill", bpm: 88,
+      patch: kit({ tom: [-2, 1.2, 0.4, 0.85], snare: [-1, 0.9, 0.5, 0.6], ch: [0, 1.1, 0.4, 0.3], rim: [0, 0.9, 0.5, 0.45], kick: [-3, 1.2, 0.2, 0.6] },
+        { drumSwing: 0.16, revMix: 0.3, revSize: 2.8, drumGlue: 0.4, snareColor: -0.2, chSend: 1, volume: 0.72 }),
+      patterns: pats([
+        P(16, { kick: "X.........X.....", tom: "X.....x...X.....", snare: "....X..g....X...", ch: "..x...x...x...x.", rim: ".......x......x." }),
+        P(16, { kick: "X.........X.....", tom: "X.....x...X..x..", snare: "....X..g.g..X...", ch: "..x...x...x...x.", rim: ".......x......x." }),
+        P(16, { kick: "X.........X.....", tom: "X.....x...X.....", snare: "....X..g....3344", ch: "..x...x...x....." }),
+        P(16, { tom: "X.....x...X.....", ch: "..x...x...x...x." })
+      ])
     }
-  ]
+  ];
+
+const KITS: DrumKitDef[] = [
+  // ------------------------------------------------------------ Persian ----
+  kitFromSource(SRC, "sheshohasht", { id: "classic", name: "Tombak & Daf", group: "Persian", tag: "Modelled skins",
+    desc: "The Persian ensemble: tombak DOM, TAK and PELANG at the centre, daf with ringlets, dayereh, zang." }),
+  kitFromSource(SRC, "tombakSolo", { id: "zarb", name: "Zarb Studio", group: "Persian", tag: "Close & dry",
+    desc: "A tombak close-miked in a small studio: deep DOM, ringing TAK, sharp PELANG. Zarbi solos, riz." }),
+  kitFromSource(SRC, "sufiDaf", { id: "sufi", name: "Sufi Daf", group: "Persian", tag: "Big hall",
+    desc: "Large dafs booming in a long hall, slow and hypnotic. Sama, Sufi and mystic music." }),
+  kitFromSource(SRC, "kurdishDaf", { id: "kurdish", name: "Kurdish Daf", group: "Persian", tag: "Bright ringlets",
+    desc: "Bright, driving daf with loud ringlets and a deep dohol. Kurdish dance and folk." }),
+  // --------------------------------------------------- Gulf & Arabic ----
+  kitFromSource(SRC, "bandari", { id: "bandar", name: "Bushehr Port", group: "Gulf & Arabic", tag: "Modelled skins",
+    desc: "Dohol, senj and zang of the southern coast. Bandari, sang-o-senj, khaleeji." }),
+  kitFromSource(SRC, "maqsum", { id: "arabic", name: "Darbuka", group: "Gulf & Arabic", tag: "Modelled skins",
+    desc: "A goblet drum played Arabic style: round DUM, crisp TEK, fast KA. Maqsum, baladi, saidi.",
+    labels: { tom: "DUM", snare: "TEK", rim: "KA" }, patch: { snareTune: 2, snareTone: 0.65, tomDecay: 0.85 } }),
+  kitFromSource(SRC, "doholSorna", { id: "folk", name: "Dohol & Sorna", group: "Folk", tag: "Outdoor",
+    desc: "The big wedding dohol played outdoors with a stick and a switch. Lori, Kurdish, Azeri wedding rhythms." }),
+  // ------------------------------------------------------ chill & fusion ----
+  kitFromSource(SRC, "ambientDaf", { id: "ambientDaf", name: "Ambient Frame", group: "Chill & Fusion", tag: "Spacious",
+    desc: "Soft frame drums and zang far in the reverb. Meditation, film, ambient Persian." }),
+  kitFromSource(SRC, "persianChill", { id: "persianChill", name: "Persian Chill", group: "Chill & Fusion", tag: "Warm",
+    desc: "Low warm tombak, soft dohol and brushed daf. Chill-out, cafe, Persian lounge." }),
+  kitFromSource(SRC, "persianTrap", { id: "persianTrap", name: "Persian Trap", group: "Chill & Fusion", tag: "Hybrid",
+    desc: "A long 808 boom and trap hats under tombak and daf. Persian trap and rap.",
+    labels: { kick: "808", ch: "HAT" },
+    patch: { kickModel: "analog", chModel: "analog", kickTune: -3, kickDecay: 2.2, kickLevel: 0.95, chLevel: 0.6, chPan: 0.2 } }),
+  kitFromSource(SRC, "bandariHouse", { id: "bandariHouse", name: "Bandari House", group: "Chill & Fusion", tag: "Hybrid",
+    desc: "A 909 kick and hats driving bandari dohol, tombak and senj. Persian club and wedding house.",
+    labels: { kick: "KICK", oh: "OPEN HAT" },
+    patch: { kickModel: "tr909", ohModel: "tr909", kickTune: 0, kickLevel: 0.95, ohLevel: 0.34 } })
+];
+
+const KIT_OF: Record<string, string> = {
+  tombakSolo: "zarb", sheshohasht: "classic", reng: "classic", sufiDaf: "sufi", bandari: "bandar", sangoSenj: "bandar",
+  khaleeji: "bandar", maqsum: "arabic", baladi: "arabic", saidi: "arabic", ayoub: "arabic", doholSorna: "folk",
+  bandariHouse: "bandariHouse", persianTrap: "persianTrap", tombakRiz: "zarb", kurdishDaf: "kurdish", lori: "folk",
+  ambientDaf: "ambientDaf", persianChill: "persianChill"
+};
+
+const STYLES: DrumStyleDef[] = stylesFrom(SRC, KIT_OF, "classic");
+
+export const BUSHEHR: MachineDef = {
+  id: "bushehr",
+  name: "Bushehr",
+  role: "Persian & Arabic percussion",
+  skin: "bushehr",
+  kind: "drums",
+  drumModel: "persian",
+  drumLabels: { kick: "DOHOL", snare: "TAK", clap: "DAF", ch: "ZANG", oh: "DAYEREH", tom: "DOM", rim: "PELANG", bell: "SENJ" },
+  tempo: true,
+  pages: DRUM_PAGES,
+  sections: drumSections(),
+  // stereo stage like an ensemble: tombak (DOM/TAK) centre, daf left, zang right, dohol centre with some room
+  base: { drumSwing: 0, drumAccent: 0.55, delayMix: 0, revMix: 0.16, revSize: 1.6, drive: 0.05, volume: 0.82, drumGlue: 0.25,
+    clapPan: -0.25, chPan: 0.4, ohPan: -0.35, bellPan: 0.3, rimPan: 0.15, kickSend: 0.25, tomSend: 0.6 },
+  kits: KITS,
+  styles: STYLES,
+  presets: drumPresets(KITS, STYLES)
 };

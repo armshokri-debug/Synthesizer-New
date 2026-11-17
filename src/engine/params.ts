@@ -1,11 +1,12 @@
 /**
  * SY-1 Engine — Parameters and Normalization
  */
+import { mirrorCall } from "./mirror";
 
 import { keyMap, SCALES } from "./scales";
 
 export interface ParamDef {
-  type?: "wave" | "filter" | "lfo" | "poly" | "onoff" | "lfoShape" | "arpMode" | "tuning" | "micro" | "strModel" | "fmAlgo" | "wave3" | "orbitMode";
+  type?: "wave" | "filter" | "lfo" | "poly" | "onoff" | "lfoShape" | "arpMode" | "tuning" | "micro" | "strModel" | "fmAlgo" | "wave3" | "orbitMode" | "drumModel";
   min?: number;
   max?: number;
   step?: number;
@@ -19,7 +20,7 @@ export type SynthPatch = Record<string, any>;
 export const PARAM_CHOICES: Record<string, string[]> = {
   wave: ["sawtooth", "square", "triangle", "sine"],
   wave3: ["triangle", "sawtooth", "revsaw", "square"],
-  filter: ["lowpass", "lp24", "bandpass", "highpass"],
+  filter: ["lowpass", "lp24", "ladder", "bandpass", "highpass"],
   lfo: ["pitch", "filter", "amp"],
   poly: ["poly", "mono"],
   onoff: ["off", "on"],
@@ -29,7 +30,9 @@ export const PARAM_CHOICES: Record<string, string[]> = {
   micro: ["24tet", "practice"],
   strModel: ["santur", "setar", "tar", "kanun", "oud", "harp"],
   fmAlgo: ["1", "2", "3", "4", "5", "6", "7", "8"],
-  orbitMode: ["off", "circle", "figure8", "drawn"]
+  orbitMode: ["off", "circle", "figure8", "drawn"],
+  // "" = the drum machine's own model
+  drumModel: ["", "analog", "tr909", "tr707", "tr606", "cr78", "lm80", "acoustic", "persian", "minimal"]
 };
 
 /** Musical note divisions used by tempo-synced LFO and arpeggiator (beats per step). */
@@ -211,6 +214,20 @@ DRUM_PARAM_VOICES.forEach((v) => {
   SYNTH_PARAMS[v + "Tone"] = { min: 0, max: 1, def: 0.5, fmt: (x) => Math.round(x * 100) + "%" };
   SYNTH_PARAMS[v + "Level"] = { min: 0, max: 1, def: 0.8, fmt: (x) => Math.round(x * 100) + "%" };
 });
+// Per-voice mix (all drum machines): PAN, COLOR (one-knob filter: left = low-pass,
+// right = high-pass), DRIVE (saturation), SEND (how much of this voice goes to delay/reverb)
+DRUM_PARAM_VOICES.forEach((v) => {
+  SYNTH_PARAMS[v + "Pan"] = { min: -1, max: 1, def: 0, fmt: (x) => (Math.abs(x) < 0.02 ? "C" : (x < 0 ? "L" : "R") + Math.round(Math.abs(x) * 100)) };
+  SYNTH_PARAMS[v + "Color"] = { min: -1, max: 1, def: 0, fmt: (x) => (Math.abs(x) < 0.02 ? "Open" : (x < 0 ? "LP " : "HP ") + Math.round(Math.abs(x) * 100)) };
+  SYNTH_PARAMS[v + "Drive"] = { min: 0, max: 1, def: 0, fmt: (x) => Math.round(x * 100) + "%" };
+  // the kick stays mostly dry by default: reverb on the kick muddies the low end
+  SYNTH_PARAMS[v + "Send"] = { min: 0, max: 1, def: v === "kick" ? 0.2 : 1, fmt: (x) => Math.round(x * 100) + "%" };
+});
+// Sound model of the loaded kit, and of single slots in fusion kits ("" = the machine's own)
+SYNTH_PARAMS.kitModel = { type: "drumModel", def: "" };
+DRUM_PARAM_VOICES.forEach((v) => { SYNTH_PARAMS[v + "Model"] = { type: "drumModel", def: "" }; });
+// Drum bus GLUE: bus compression + gentle saturation that makes the kit sound like one instrument
+SYNTH_PARAMS.drumGlue = { min: 0, max: 1, def: 0.35, fmt: (x) => Math.round(x * 100) + "%" };
 SYNTH_PARAMS.drumSwing = { min: 0, max: 0.6, def: 0, fmt: (x) => Math.round(x * 100) + "%" };
 SYNTH_PARAMS.drumAccent = { min: 0, max: 1, def: 0.5, fmt: (x) => Math.round(x * 100) + "%" };
 
@@ -284,7 +301,7 @@ export function getCustomTuning(machineId = "sy1"): number[] {
   return customTuningCache[machineId];
 }
 
-export function setCustomTuning(machineId: string, offsets: number[]): number[] {
+function setCustomTuning__impl(machineId: string, offsets: number[]): number[] {
   const clean = Array.from({ length: 12 }, (_, i) => clampCentOffset(offsets[i] ?? 0));
   customTuningCache[machineId] = clean;
   try {
@@ -404,3 +421,6 @@ export function synthDenorm(key: string, n: number): number {
   return d.min + n * (d.max - d.min);
 }
 
+export function setCustomTuning(...args: Parameters<typeof setCustomTuning__impl>): ReturnType<typeof setCustomTuning__impl> {
+  return mirrorCall("setCustomTuning", setCustomTuning__impl, args);
+}

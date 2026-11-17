@@ -36,8 +36,46 @@ import { startSynthScope } from "./ui/scope";
 import { initArpPanel } from "./ui/arp-panel";
 import { initOrientalPanel } from "./ui/oriental-panel";
 import { initLibrary } from "./ui/library";
+import { initMachineBrowser } from "./ui/machine-browser";
+import { initDawPanel } from "./ui/daw-panel";
+import { setMirrorSink } from "./engine/mirror";
+import { applyEngineCall } from "./engine/calls";
+import { getParamMacro, paramNorm } from "./engine/cc-map";
+import { batchPluginVisuals } from "./ui/plugin-visuals";
 
 function initApp(): void {
+  // Inside the AU/VST3 plugin: the plugin's engine makes the sound; this window mirrors
+  // every engine call to it, and applies the calls the plugin sends back (DAW MIDI, tempo).
+  const plugin = (window as any).__SY1_PLUGIN__;
+  if (plugin) {
+    document.documentElement.classList.add("is-plugin");
+    plugin.onCall = (name: string, args: unknown[]) => applyEngineCall(name, args);
+    plugin.onCalls = (calls: { name: string; args: string }[]) => batchPluginVisuals(() => {
+      for (const c of calls) {
+        try { applyEngineCall(c.name, JSON.parse(c.args)); } catch (e) {}
+      }
+    });
+    // the DAW's tempo and Play state come with every update too: the window shows the real tempo
+    // even when it opened (or reloaded) after the plugin last sent them
+    let hostBpm = 0, hostPlaying = false;
+    plugin.onHost = (h: { bpm?: number; playing?: boolean }) => {
+      const bpm = Number(h && h.bpm) || 0;
+      if (bpm > 0 && bpm !== hostBpm) { hostBpm = bpm; applyEngineCall("setHostTempo", [bpm]); }
+      const playing = !!(h && h.playing);
+      if (playing !== hostPlaying) { hostPlaying = playing; applyEngineCall("hostTransport", [playing]); }
+    };
+    // mirror only what the player does from now on (the start-up calls below run in the plugin's engine already)
+    setTimeout(() => setMirrorSink((name, args) => {
+      plugin.send(name, args);
+      // Only a direct player edit is reported. Incoming DAW calls and nested preset
+      // changes are unmirrored, preventing automation feedback and preset jumps.
+      if (name === "setSynthParam") {
+        const key = String(args[0]);
+        const macro = getParamMacro(key);
+        if (macro !== undefined) plugin.send("macroValue", [macro, paramNorm(key, args[1])]);
+      }
+    }), 0);
+  }
   // skin and keyboard follow the machine
   onMachineChange((m) => {
     applySkin(m.skin);
@@ -48,6 +86,8 @@ function initApp(): void {
   initArpPanel();
   initOrientalPanel();
   initLibrary();
+  initMachineBrowser();
+  initDawPanel();
   initMachine();          // loads the remembered machine and its patch
   applySkin(getMachine().skin);
   renderPanel();
@@ -98,7 +138,7 @@ if (document.readyState === "loading") {
 }
 
 // PWA: offline support. Only in the production build (the dev server must not cache anything).
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
+if (import.meta.env.PROD && "serviceWorker" in navigator && !(window as any).__SY1_PLUGIN__) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   });

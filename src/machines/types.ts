@@ -59,6 +59,48 @@ export interface PresetDef {
   patterns?: import("../engine/drums").DrumPattern[];
 }
 
+type DrumSlot = "kick" | "snare" | "clap" | "ch" | "oh" | "tom" | "rim" | "bell";
+
+/** A drum kit: the sound of the 8 slots (models, tuning, mix, effects), separate from the rhythm. */
+export interface DrumKitDef {
+  id: string;
+  name: string;
+  /** Library group (e.g. "Classic machines", "Hybrid"). */
+  group: string;
+  /** One line on the kit's character and what it suits. */
+  desc: string;
+  /** Short tag shown on the tile: how it makes sound (e.g. "Analog", "6-bit samples", "Acoustic"). */
+  tag: string;
+  patch: Record<string, unknown>;
+  /** Slot names when this kit's sounds differ from the machine's (e.g. BONGO, COWBELL). */
+  labels?: Partial<Record<DrumSlot, string>>;
+}
+
+/** A rhythm style: tempo, swing and 4+ patterns, played on whichever kit is loaded. */
+export interface DrumStyleDef {
+  id: string;
+  name: string;
+  /** Genre group (Funk, Jazz, House, Persian...). */
+  group: string;
+  bpm: number;
+  patterns: import("../engine/drums").DrumPattern[];
+  /** The kit this style was written for (loaded with it unless "Keep kit" is on). */
+  kit: string;
+  swing?: number;
+  accent?: number;
+}
+
+/** How the instrument browser draws a machine: its panel colours and front-panel layout. */
+export interface MachineArt {
+  body: string;
+  panel: string;
+  accent: string;
+  accent2: string;
+  ink: string;
+  /** Front-panel layout drawn on the card. */
+  face: "keys" | "pads" | "steps" | "strings" | "rings" | "vector" | "fm" | "drone" | "bass" | "arp" | "frame" | "kit" | "perc" | "lead" | "pad";
+}
+
 export interface MachineDef {
   id: string;
   name: string;
@@ -67,13 +109,21 @@ export interface MachineDef {
   kind: "synth" | "drums";
   engine?: "hq" | "strings" | "fm" | "analog" | "vector";
   /** Drum machines: which synthesis model plays the 8 drum slots. */
-  drumModel?: "analog" | "persian" | "acoustic" | "digital";
+  drumModel?: "analog" | "persian" | "acoustic" | "minimal";
   /** Drum machines: the name shown for each of the 8 slots (kick, snare, clap, ch, oh, tom, rim, bell). */
   drumLabels?: Partial<Record<"kick" | "snare" | "clap" | "ch" | "oh" | "tom" | "rim" | "bell", string>>;
   /** Shows the tempo control (arpeggiator, synced LFO, sequencer). */
   tempo?: boolean;
   pages: { id: string; label: string }[];
   sections: SectionDef[];
+  /** One or two sentences for the instrument browser: what it is and what it is for. */
+  blurb?: string;
+  /** Highlights shown as chips in the instrument browser. */
+  tags?: string[];
+  art?: MachineArt;
+  /** Drum machines: kits (sounds) and styles (rhythms), chosen separately. */
+  kits?: DrumKitDef[];
+  styles?: DrumStyleDef[];
   /** Overrides shared by every preset of this machine. */
   base: Record<string, unknown>;
   presets: PresetDef[];
@@ -101,6 +151,7 @@ export const LADDER_OPTS: ChoiceOption[] = [
 export const FILTER_OPTS: ChoiceOption[] = [
   ["lowpass", "LP", "Low-pass 12 dB"],
   ["lp24", "24", "Low-pass 24 dB (HQ engine)"],
+  ["ladder", "LDR", "Ladder low-pass 24 dB (Tabriz transistor ladder)"],
   ["bandpass", "BP", "Band-pass"],
   ["highpass", "HP", "High-pass"]
 ];
@@ -158,6 +209,11 @@ export const SEC = {
       row([["cutoff", "CUTOFF"], ["res", "RESO"], ["envAmt", "ENV"]]),
       row([["fA", "A"], ["fD", "D"], ["fS", "S"]], { small: true })
     ]
+  }),
+  /** Analog character (HQ and Tabriz engines): key tracking, filter drive, oscillator drift. */
+  analog: (page: string): SectionDef => ({
+    title: "ANALOG", page,
+    controls: [row([["keyTrack", "KEY TRK"], ["filterDrive", "DRIVE"], ["drift", "DRIFT"]])]
   }),
   amp: (page: string, hold = false): SectionDef => ({
     title: "AMP ENV", page,

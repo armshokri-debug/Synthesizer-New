@@ -15,6 +15,7 @@ import {
   getSelectedMidiDevice,
   isLearnMode,
   isMidiEnabled,
+  isLearnUnavailable,
   isMidiUnavailable,
   isParamMapped,
   onMidiStateChange,
@@ -25,10 +26,12 @@ import {
   selectLearnParam,
   toggleLearnMode
 } from "../engine/midi";
+import { renderMasterKnob, renderRecButton } from "./daw-panel";
 import { escapeHtml } from "../engine/params";
 import {
   allNotesOff,
   applySynthPreset,
+  getDrumKitDef,
   getMachine,
   getMachines,
   getModWheel,
@@ -36,6 +39,8 @@ import {
   getSynthPresetId,
   noteOff,
   noteOn,
+  isDrumKitEdited,
+  onDrumKitChange,
   onMachineChange,
   onParamChange,
   onPresetChange,
@@ -47,7 +52,10 @@ import {
 } from "../engine/synth";
 import { evalOrbitPoint, getVectorLiveXY, setVectorDrawnPath } from "../engine/vector";
 import { getEngine, getHQState, onEngineChange } from "../engine/hq";
-import { getTempo, onTempoChange, setTempo, tapTempo } from "../engine/tempo";
+import { getMidiPickup, getMidiMode, HOST_MIDI, MIDI_MODES, MidiMode, setMidiMode, setMidiPickup } from "../engine/cc-map";
+import { getPluginMidiOut, onDawChange, setPluginMidiOut } from "../engine/daw";
+import { exportDrumMidi } from "./drum-export";
+import { fmtBpm, getSync, getTempo, isHostSynced, onSyncChange, onTempoChange, setSync, setTempo, tapTempo } from "../engine/tempo";
 import {
   clearPattern,
   drumLabel,
@@ -63,13 +71,19 @@ import {
   setPatternLength,
   startDrums,
   stopDrums,
-  toggleStep,
-  triggerDrum
+  editStep,
+  STEP_EDITS,
+  StepEdit,
+  stepFlam,
+  stepProb,
+  stepRoll,
+  playDrum
 } from "../engine/drums";
 import type { ControlDef, SectionDef } from "../machines/types";
 import { euclidHit, onArpStep } from "../engine/arp";
-import { getBaseMidi } from "./keyboard";
+import { getBaseMidi, renderKeyboard } from "./keyboard";
 import { renderSynthKnob, updateMidiLearnDOM, updateSynthControlDOM } from "./knob";
+import { onPluginVisualFrame, queueVisualUpdate } from "./plugin-visuals";
 
 // ------------------------------------------------------------ controls ----
 export function renderSynthChoice(key: string, options: [string, string, string?][]): string {
@@ -120,7 +134,16 @@ export function renderControl(c: ControlDef): string {
 
 // --------------------------------------------------------- drum sections ----
 let drumVoice: DrumVoice = "kick";
-let accentMode = false;
+let stepEdit: StepEdit = "hit";
+const EDIT_LABEL: Record<StepEdit, string> = { hit: "HIT", accent: "ACCENT", ghost: "GHOST", roll: "ROLL", flam: "FLAM", chance: "CHANCE" };
+const EDIT_HELP: Record<StepEdit, string> = {
+  hit: "Tap steps to add or remove hits",
+  accent: "Tap steps to make them accents (louder, brighter)",
+  ghost: "Tap steps to make them ghost notes (very soft)",
+  roll: "Tap steps to cycle a roll / riz: 2, 3 or 4 fast hits in one step",
+  flam: "Tap steps to add a flam (a soft grace note just before)",
+  chance: "Tap steps to cycle the chance they play: 75%, 50%, 25%"
+};
 
 function renderDrumTransport(): string {
   const pat = getPattern();
@@ -136,8 +159,9 @@ function renderDrumTransport(): string {
         <button type="button" class="synth-choice-btn ${pat.len === 16 ? "active" : ""}" data-action="drum-len" data-len="16" title="16 steps (4/4)">16</button>
         <button type="button" class="synth-choice-btn ${pat.len === 12 ? "active" : ""}" data-action="drum-len" data-len="12" title="12 steps (6/8)">12</button>
       </div>
-      <button type="button" class="synth-choice-btn drum-acc ${accentMode ? "active" : ""}" data-action="drum-accent" aria-pressed="${accentMode}" title="Tap steps to add or remove accents">ACCENT</button>
+      <button type="button" class="synth-choice-btn drum-acc ${stepEdit !== "hit" ? "active" : ""}" data-action="drum-edit" title="EDIT mode: ${EDIT_HELP[stepEdit]} (tap to change mode)">✎ ${EDIT_LABEL[stepEdit]}</button>
       <button type="button" class="synth-choice-btn" data-action="drum-clear" title="Clear this pattern">CLEAR</button>
+      <button type="button" class="synth-choice-btn drum-export" data-action="drum-export" draggable="true" title="${HOST_MIDI ? "Save this pattern as a MIDI file in Music/SY-1 and show it, to drag into the DAW (Shift: patterns A–H)" : "Save this pattern as a MIDI file, or drag it into your DAW (Shift: patterns A–H)"}">⤓ MIDI</button>
     </div>`;
 }
 
@@ -148,7 +172,17 @@ function renderDrumSteps(): string {
     `<button type="button" class="drum-voice-btn ${v === drumVoice ? "active" : ""}" data-action="drum-voice" data-voice="${v}">${drumLabel(v)}</button>`).join("")}</div>`;
   const steps = `<div class="drum-steps" style="--len:${pat.len}">${Array.from({ length: pat.len }, (_, i) => {
     const s = row[i];
-    return `<button type="button" class="drum-step${s ? " on" : ""}${s === 2 ? " accent" : ""}${i % (pat.len === 12 ? 3 : 4) === 0 ? " beat" : ""}" data-action="drum-step" data-index="${i}" aria-pressed="${!!s}" aria-label="Step ${i + 1}"></button>`;
+    // marks: roll count, flam, chance (shown small at the bottom of the step)
+    const marks: string[] = [];
+    if (s) {
+      const r = stepRoll(pat, drumVoice, i);
+      if (r > 1) marks.push("×" + r);
+      if (stepFlam(pat, drumVoice, i)) marks.push("FL");
+      const c = stepProb(pat, drumVoice, i);
+      if (c < 100) marks.push(c + "%");
+    }
+    const mark = marks.join(" ");
+    return `<button type="button" class="drum-step${s ? " on" : ""}${s === 2 ? " accent" : ""}${s === 3 ? " ghost" : ""}${i % (pat.len === 12 ? 3 : 4) === 0 ? " beat" : ""}"${mark ? ` data-mark="${mark}"` : ""} data-action="drum-step" data-index="${i}" aria-pressed="${!!s}" aria-label="Step ${i + 1}${s === 2 ? ", accent" : s === 3 ? ", ghost" : ""}${mark ? ", " + mark : ""}"></button>`;
   }).join("")}</div>`;
   return voices + steps;
 }
@@ -157,7 +191,9 @@ function renderDrumVoice(): string {
   const v = drumVoice;
   return `<div class="drum-voice-name">${drumLabel(v)}</div><div class="sk-row">${
     renderSynthKnob(v + "Tune", "TUNE") + renderSynthKnob(v + "Decay", "DECAY") +
-    renderSynthKnob(v + "Tone", "TONE") + renderSynthKnob(v + "Level", "LEVEL")}</div>`;
+    renderSynthKnob(v + "Tone", "TONE") + renderSynthKnob(v + "Level", "LEVEL")}</div><div class="sk-row">${
+    renderSynthKnob(v + "Pan", "PAN") + renderSynthKnob(v + "Color", "COLOR") +
+    renderSynthKnob(v + "Drive", "DRIVE") + renderSynthKnob(v + "Send", "SEND")}</div>`;
 }
 
 // ------------------------------------------------- Kashan: algorithm LCD ----
@@ -376,6 +412,7 @@ function updateVectorPadDOM(rebuildOrbit = false): void {
 
 function startVectorPadLoop(): void {
   if (vecRafId) cancelAnimationFrame(vecRafId);
+  if ((globalThis as any).__SY1_PLUGIN__) return; // driven once per native visual frame
   const tick = () => {
     if (getMachine().id !== "nishapur") {
       vecRafId = 0;
@@ -515,9 +552,19 @@ function renderDeviceOptions(): string {
 /** The preset name in the top bar: tap it to open the sound library. */
 function renderPresetButton(): string {
   const m = getMachine();
-  const cur = m.presets.find((p) => p.id === getSynthPresetId());
-  const name = cur ? cur.name : "Custom";
-  const sub = cur ? cur.group : "Edited sound";
+  let name: string;
+  let sub: string;
+  if (m.kind === "drums" && m.styles) {
+    // drum machines: STYLE on top, the KIT it plays below
+    const st = m.styles.find((x) => x.id === getSynthPresetId());
+    const kit = getDrumKitDef();
+    name = st ? st.name : "My pattern";
+    sub = (kit ? kit.name : "Custom kit") + (isDrumKitEdited() ? " · edited" : "");
+  } else {
+    const cur = m.presets.find((p) => p.id === getSynthPresetId());
+    name = cur ? cur.name : "Custom";
+    sub = cur ? cur.group : "Edited sound";
+  }
   return `<span class="pd-text"><span class="pd-name">${escapeHtml(name)}</span><span class="pd-sub">${escapeHtml(sub)}</span></span>` +
     `<svg class="pd-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg>`;
 }
@@ -615,21 +662,38 @@ export function previewPreset(presetId: string): void {
   setTimeout(() => noteOff(note), 450);
 }
 
+/** SYNC (plugin): light the button; while the DAW sets the tempo the own tempo controls are greyed. */
+export function updateSyncDOM(): void {
+  const synced = isHostSynced();
+  document.documentElement.classList.toggle("is-synced", synced);
+  document.querySelectorAll<HTMLElement>(".tempo-sync-btn").forEach((b) => {
+    b.classList.toggle("active", getSync());
+    b.setAttribute("aria-pressed", getSync() ? "true" : "false");
+  });
+  document.querySelectorAll<HTMLButtonElement>('.synth-tempo [data-action^="tempo-"]:not(.tempo-sync-btn)').forEach((b) => {
+    if (b.dataset.title === undefined) b.dataset.title = b.title;
+    b.disabled = synced;
+    b.title = synced ? "Tempo from the DAW (turn SYNC off to set your own)" : b.dataset.title;
+  });
+}
+
 export function renderSynthPanelHtml(): string {
   const m = getMachine();
   const tempo = m.tempo
     ? `<div class="synth-tempo" role="group" aria-label="Tempo">
         <button type="button" class="synth-midi-btn tempo-step-btn" data-action="tempo-down" aria-label="Slower">−</button>
-        <button type="button" class="synth-tempo-val" id="tempo-val" data-action="tempo-tap" title="Tempo (BPM). Tap in time to set it.">${getTempo()}</button>
+        <button type="button" class="synth-tempo-val" id="tempo-val" data-action="tempo-tap" title="Tempo (BPM). Tap in time to set it.">${fmtBpm(getTempo())}</button>
         <button type="button" class="synth-midi-btn tempo-step-btn" data-action="tempo-up" aria-label="Faster">+</button>
         <button type="button" class="synth-midi-btn tempo-tap-btn" data-action="tempo-tap" title="Tap in time to set the tempo">TAP</button>
+        <button type="button" class="synth-midi-btn tempo-sync-btn${getSync() ? " active" : ""}" data-action="tempo-sync" aria-pressed="${getSync() ? "true" : "false"}" title="SYNC on: tempo and Play/Stop follow the DAW. Off: SY-1 keeps its own tempo.">SYNC</button>
       </div>`
     : "";
   return `
     <div class="synth-panel" dir="ltr" data-machine="${m.id}">
       <div class="synth-top">
-        <label class="synth-brand"><span class="synth-brand-maker">SY-1 </span><select class="synth-machine-select" id="machine-select" aria-label="Instrument">${renderMachineOptions()}</select></label>
+        <div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" id="machine-btn" aria-haspopup="dialog" aria-expanded="false" title="Choose an instrument">${escapeHtml(m.name)}</button><select class="sr-only" id="machine-select" aria-hidden="true" tabindex="-1">${renderMachineOptions()}</select></div>
         <canvas class="synth-scope" width="320" height="56" aria-hidden="true"></canvas>
+        <div class="synth-out">${renderMasterKnob()}${renderRecButton()}</div>
         <div class="synth-conn-wrap">
           <button type="button" class="synth-conn-btn${connOpen ? " is-open" : ""}" id="conn-btn" data-action="conn-toggle" aria-label="Connections" aria-haspopup="dialog" aria-expanded="${connOpen ? "true" : "false"}" title="Connections">
             <svg class="conn-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -647,6 +711,7 @@ export function renderSynthPanelHtml(): string {
               <button type="button" class="synth-midi-btn" id="midi-btn" data-action="midi-enable">MIDI</button>
               <span class="midi-led" id="midi-led" title="MIDI Activity" aria-hidden="true"></span>
               <button type="button" class="synth-midi-btn" id="midi-learn-btn" data-action="midi-learn" title="Click LEARN, click a knob, then move a MIDI CC">LEARN</button>
+              <button type="button" class="synth-midi-btn midi-pickup-btn" id="midi-pickup-btn" data-action="midi-pickup" aria-pressed="false" title="PICKUP: a controller moves a knob only after it reaches the knob's position (no jumps)">PICKUP</button>
               <button type="button" class="synth-midi-btn synth-panic-btn" id="midi-panic-btn" data-action="synth-panic" title="Release all notes">PANIC</button>
               <button type="button" class="synth-midi-btn" id="engine-btn" data-action="engine-toggle" aria-pressed="false">HQ</button>
             </div>
@@ -655,6 +720,11 @@ export function renderSynthPanelHtml(): string {
               <select class="synth-midi-select" id="midi-channel" aria-label="MIDI Channel" hidden>${renderChannelOptions()}</select>
             </div>
             <div class="synth-midi-msg" id="midi-msg" role="status" aria-live="polite" hidden></div>
+            <div class="conn-pop-row">
+              <label>CC mode <select class="synth-midi-select" id="midi-mode" aria-label="MIDI CC mode">${MIDI_MODES.map((m) => `<option value="${m}"${m === getMidiMode() ? " selected" : ""}>${m === "absolute" ? "Absolute" : `Relative: ${m}`}</option>`).join("")}</select></label>
+              ${HOST_MIDI ? `<button type="button" class="synth-midi-btn" id="plugin-midi-out" data-action="plugin-midi-out" aria-pressed="${getPluginMidiOut()}">DRUM MIDI OUT ${getPluginMidiOut() ? "ON" : "OFF"}</button>` : ""}
+            </div>
+            <button type="button" class="synth-midi-btn conn-daw-btn" data-daw="open">DAW &amp; RECORDING…</button>
           </div>
         </div>
       </div>
@@ -683,7 +753,8 @@ export function updateSynthPresetDOM(): void {
 export function updateMidiBarDOM(): void {
   const unavail = isMidiUnavailable();
   const enabled = !unavail && isMidiEnabled();
-  const learning = !unavail && isLearnMode();
+  const learnUnavail = isLearnUnavailable();
+  const learning = isLearnMode();
   const midiBtn = document.getElementById("midi-btn") as HTMLButtonElement | null;
   const devSelect = document.getElementById("midi-device") as HTMLSelectElement | null;
   const chSelect = document.getElementById("midi-channel") as HTMLSelectElement | null;
@@ -699,20 +770,26 @@ export function updateMidiBarDOM(): void {
     midiBtn.setAttribute("aria-disabled", unavail ? "true" : "false");
     midiBtn.textContent = enabled ? "MIDI ON" : "MIDI";
   }
-  if (selectsWrap) selectsWrap.hidden = !enabled;
+  // in the plugin MIDI comes from the DAW: only the channel choice is shown (no devices)
+  if (selectsWrap) selectsWrap.hidden = !enabled && !HOST_MIDI;
   if (devSelect) {
     devSelect.hidden = !enabled;
     if (enabled) { devSelect.innerHTML = renderDeviceOptions(); devSelect.value = getSelectedMidiDevice(); }
   }
   if (chSelect) {
-    chSelect.hidden = !enabled;
-    if (enabled) chSelect.value = String(getSelectedMidiChannel());
+    chSelect.hidden = !enabled && !HOST_MIDI;
+    if (enabled || HOST_MIDI) chSelect.value = String(getSelectedMidiChannel());
   }
   if (learnBtn) {
-    learnBtn.disabled = unavail;
-    learnBtn.classList.toggle("is-disabled", unavail);
+    learnBtn.disabled = learnUnavail;
+    learnBtn.classList.toggle("is-disabled", learnUnavail);
     learnBtn.classList.toggle("active", learning);
-    learnBtn.setAttribute("aria-disabled", unavail ? "true" : "false");
+    learnBtn.setAttribute("aria-disabled", learnUnavail ? "true" : "false");
+  }
+  const pickupBtn = document.getElementById("midi-pickup-btn");
+  if (pickupBtn) {
+    pickupBtn.classList.toggle("active", getMidiPickup());
+    pickupBtn.setAttribute("aria-pressed", getMidiPickup() ? "true" : "false");
   }
   if (connDot) {
     connDot.className =
@@ -727,19 +804,29 @@ export function updateMidiBarDOM(): void {
   }
   if (msgEl) {
     const statusMsg = getMidiStatusMessage();
-    if (unavail) {
+    if (learning) {
+      const target = getLearnTargetParam();
+      const what = HOST_MIDI ? "a MIDI controller (or a SY-1 macro in the DAW)" : "a CC";
+      msgEl.textContent = target ? `Move ${what} to map ${target}…` : `Click a knob, then move ${what}…`;
+    } else if (HOST_MIDI) {
+      msgEl.textContent = "";
+    } else if (unavail) {
       msgEl.textContent = "MIDI needs Chrome or Edge on desktop or Android";
     } else if (statusMsg) {
       msgEl.textContent = statusMsg;
-    } else if (learning) {
-      const target = getLearnTargetParam();
-      msgEl.textContent = target ? `Move a CC to map ${target}…` : "Click a knob, then move a CC…";
     } else {
       msgEl.textContent = "";
     }
     msgEl.hidden = !msgEl.textContent;
   }
   updateMidiLearnDOM();
+  const modeSelect = document.getElementById("midi-mode") as HTMLSelectElement | null;
+  if (modeSelect) modeSelect.value = getMidiMode();
+  const outBtn = document.getElementById("plugin-midi-out");
+  if (outBtn) {
+    outBtn.textContent = `DRUM MIDI OUT ${getPluginMidiOut() ? "ON" : "OFF"}`;
+    outBtn.setAttribute("aria-pressed", String(getPluginMidiOut()));
+  }
 }
 
 function updateEngineDOM(): void {
@@ -774,6 +861,7 @@ export function renderPanel(): void {
   updateEngineDOM();
   updateMidiBarDOM();
   renderHooks.forEach((fn) => fn());
+  updateSyncDOM();
   fitPanel();
 }
 
@@ -809,6 +897,7 @@ window.addEventListener("resize", () => {
 });
 
 function bindPanelElements(): void {
+  document.getElementById("midi-mode")?.addEventListener("change", (e) => setMidiMode((e.target as HTMLSelectElement).value as MidiMode));
   const devSelect = document.getElementById("midi-device") as HTMLSelectElement | null;
   if (devSelect) devSelect.addEventListener("change", () => setSelectedMidiDevice(devSelect.value));
   const chSelect = document.getElementById("midi-channel") as HTMLSelectElement | null;
@@ -842,21 +931,33 @@ function bindPanelElements(): void {
 
 export function initPanelInteractions(): void {
   onParamChange((key) => {
-    updateSynthControlDOM(key);
-    if (key === "fmAlgo") refreshCustom("fm-algo");
-    else if (key.startsWith("euc")) refreshCustom("euclid-rings");
-    else if (key === "vecX" || key === "vecY" || key.startsWith("orbit")) updateVectorPadDOM(true);
+    queueVisualUpdate("param:" + key, () => updateSynthControlDOM(key));
+    if (key === "fmAlgo") queueVisualUpdate("fm-algo", () => refreshCustom("fm-algo"));
+    else if (key.startsWith("euc")) queueVisualUpdate("euclid-rings", () => refreshCustom("euclid-rings"));
+    else if (key === "vecX" || key === "vecY" || key.startsWith("orbit")) queueVisualUpdate("vector", () => updateVectorPadDOM(true));
   });
-  onPresetChange(() => updateSynthPresetDOM());
-  onMidiStateChange(() => updateMidiBarDOM());
+  onPresetChange(() => queueVisualUpdate("preset", updateSynthPresetDOM));
+  if ((globalThis as any).__SY1_PLUGIN__) onPluginVisualFrame(() => {
+    if (getMachine().id === "nishapur") updateVectorPadDOM(false);
+  });
+  // a new kit can rename the slots (BONGO, COWBELL...): update every slot name in place
+  onDrumKitChange(() => {
+    refreshCustom("drum-steps");
+    refreshCustom("drum-voice");
+    renderKeyboard();
+  });
+  onMidiStateChange(() => queueVisualUpdate("midi-bar", updateMidiBarDOM));
+  onDawChange(() => updateMidiBarDOM());
   onEngineChange(updateEngineDOM);
   onMachineChange(() => { connOpen = false; renderPanel(); });
   onTempoChange((bpm) => {
-    document.querySelectorAll(".synth-tempo-val").forEach((el) => (el.textContent = String(bpm)));
+    document.querySelectorAll(".synth-tempo-val").forEach((el) => (el.textContent = fmtBpm(bpm)));
   });
+  onSyncChange(updateSyncDOM);
+  updateSyncDOM();
   onDrumChange(() => {
-    refreshCustom("drum-transport");
-    refreshCustom("drum-steps");
+    queueVisualUpdate("drum-transport", () => refreshCustom("drum-transport"));
+    queueVisualUpdate("drum-steps", () => refreshCustom("drum-steps"));
   });
   onDrumStep((s) => {
     document.querySelectorAll(".drum-step.playing").forEach((el) => el.classList.remove("playing"));
@@ -892,6 +993,7 @@ export function initPanelInteractions(): void {
   });
 
   document.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement)?.closest?.("[data-daw='open']")) { setConnOpen(false); return; }
     const btn = (e.target as HTMLElement)?.closest?.("[data-action]") as HTMLElement | null;
     if (!btn) return;
     const action = btn.getAttribute("data-action");
@@ -921,12 +1023,15 @@ export function initPanelInteractions(): void {
       }
       case "preset-prev": stepPreset(-1); break;
       case "preset-next": stepPreset(1); break;
-      case "tempo-down": setTempo(getTempo() - 1); break;
-      case "tempo-up": setTempo(getTempo() + 1); break;
-      case "tempo-tap": tapTempo(); break;
+      case "tempo-down": if (!isHostSynced()) setTempo(Math.round(getTempo()) - 1); break;
+      case "tempo-up": if (!isHostSynced()) setTempo(Math.round(getTempo()) + 1); break;
+      case "tempo-tap": if (!isHostSynced()) tapTempo(); break;
+      case "tempo-sync": setSync(!getSync()); break;
       case "engine-toggle": switchEngine(getEngine() === "hq" ? "classic" : "hq"); break;
       case "midi-enable": if (!isMidiUnavailable()) requestMidi(); break;
-      case "midi-learn": if (!isMidiUnavailable()) toggleLearnMode(); break;
+      case "midi-learn": if (!isLearnUnavailable()) toggleLearnMode(); break;
+      case "midi-pickup": setMidiPickup(!getMidiPickup()); break;
+      case "plugin-midi-out": setPluginMidiOut(!getPluginMidiOut()); break;
       case "synth-panic": stopDrums(); allNotesOff(); break;
       // drum machine
       case "drum-play":
@@ -935,16 +1040,17 @@ export function initPanelInteractions(): void {
         break;
       case "drum-pattern": selectPattern(Number(btn.getAttribute("data-index"))); break;
       case "drum-len": setPatternLength(Number(btn.getAttribute("data-len"))); break;
-      case "drum-accent": accentMode = !accentMode; refreshCustom("drum-transport"); break;
+      case "drum-edit": stepEdit = STEP_EDITS[(STEP_EDITS.indexOf(stepEdit) + 1) % STEP_EDITS.length]; refreshCustom("drum-transport"); break;
       case "drum-clear": clearPattern(); break;
+      case "drum-export": exportDrumMidi((e as MouseEvent).shiftKey); break;
       case "drum-voice": {
         drumVoice = btn.getAttribute("data-voice") as DrumVoice;
         refreshCustom("drum-steps");
         refreshCustom("drum-voice");
-        triggerDrum(drumVoice, 0.9);
+        playDrum(drumVoice, 0.9);
         break;
       }
-      case "drum-step": toggleStep(drumVoice, Number(btn.getAttribute("data-index")), accentMode); break;
+      case "drum-step": editStep(drumVoice, Number(btn.getAttribute("data-index")), stepEdit); break;
       default: break;
     }
   });
