@@ -1,0 +1,89 @@
+#pragma once
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <mutex>
+#include <vector>
+#include <juce_audio_processors/juce_audio_processors.h>
+
+#include "host/sy1_engine.hpp"
+
+/** SY-1 as an instrument plugin: the web app's engine, run natively (see native/README.md). */
+class SY1Processor : public juce::AudioProcessor, private juce::Timer {
+ public:
+  SY1Processor();
+  ~SY1Processor() override;
+  // Message-thread bridge used by the WebView. Stable macro IDs remain macro1..macro16.
+  void setMacroFromUi(int slot, float value);
+  void macroGesture(int slot, bool begin);
+
+  void prepareToPlay(double sampleRate, int samplesPerBlock) override;
+  void releaseResources() override {}
+  bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
+  void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+  juce::AudioProcessorEditor* createEditor() override;
+  bool hasEditor() const override { return true; }
+
+  const juce::String getName() const override { return "SY-1"; }
+  bool acceptsMidi() const override { return true; }
+  bool producesMidi() const override { return true; }
+  bool isMidiEffect() const override { return false; }
+  double getTailLengthSeconds() const override { return 4.0; }
+
+  int getNumPrograms() override { return 1; }
+  int getCurrentProgram() override { return 0; }
+  void setCurrentProgram(int) override {}
+  const juce::String getProgramName(int) override { return {}; }
+  void changeProgramName(int, const juce::String&) override {}
+
+  void getStateInformation(juce::MemoryBlock& destData) override;
+  void setStateInformation(const void* data, int sizeInBytes) override;
+
+  /** For the window: the engine, its sample rate, and the state the window starts from. */
+  sy1::Sy1Engine& engine() { return engine_; }
+  double engineRate() const { return rate_; }
+  std::string currentState();
+  juce::String engineError() const { return error_; }
+  /** The DAW's tempo (0 = none yet) and Play state, as last sent to the engine: the window gets them
+   *  with every update, so it shows the real tempo even if it opened (or reloaded) after they were sent. */
+  double hostBpmForUi() const { return uiBpm_.load(std::memory_order_relaxed); }
+  bool hostPlayingForUi() const { return uiPlaying_.load(std::memory_order_relaxed); }
+
+ private:
+  sy1::Sy1Engine engine_;
+  std::mutex lifecycle_; // state replacement and rendering never use QuickJS concurrently
+  double rate_ = 0;
+  std::string pendingState_;
+  std::mutex pendingStateMu_;
+  juce::String error_;
+  double lastBpm_ = -1;
+  bool wasPlaying_ = false;
+  std::atomic<double> uiBpm_{0};
+  std::atomic<bool> uiPlaying_{false};
+  // the DAW's clock: sample position since prepareToPlay, the play head of the current DAW block,
+  // MIDI events waiting for their engine block, and the last drum step sent
+  int64_t dawPos_ = 0;
+  struct HostPos { bool playing = false, hasPpq = false, looping = false; double bpm = 0, ppq = 0, loopStart = 0, loopEnd = 0; } host_;
+  struct Pending { int64_t t; juce::MidiMessage m; };
+  std::vector<Pending> pending_;
+  std::vector<Pending> outPending_;  // MIDI out waiting for its DAW block (drum hits)
+  int64_t nextAllowed_ = 0;
+  static constexpr int kMacros = 16;
+  std::array<juce::AudioParameterFloat*, kMacros> macros_{};
+  std::array<float, kMacros> lastMacro_ = [] { std::array<float, kMacros> a; a.fill(std::numeric_limits<float>::quiet_NaN()); return a; }();
+  std::array<std::atomic<float>, kMacros> feedback_{};
+  std::array<std::atomic<float>, kMacros> echo_{};
+  std::array<bool, kMacros> gesturing_{};
+  void timerCallback() override;
+  void macrosToEngine();
+  void readPlayHead();
+  void hostClockFor(int64_t q0);
+  std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // lets queued UI work see that the plugin is gone
+  bool startEngine(double sampleRate, const std::string& state);
+  void handleMidi(const juce::MidiMessage& m, double at);
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SY1Processor)
+};

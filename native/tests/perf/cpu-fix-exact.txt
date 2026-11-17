@@ -1,0 +1,5 @@
+PASS: 4068864 bit-identical delay samples across 44.1/48/96 kHz, tiny/long buffers, silence, impulses, tails, parameter ramps and channel changes
+PASS: 2073600 exact IIR samples, 27 rate/tap cases, channel changes, impulses and tails
+PASS: 460800 exact oscillator frames; four rates, five shapes, signed frequencies, threshold interpolation, ramps and partial starts/stops
+PASS: 833280 bit-identical FIR samples, history, silence/impulse transitions, resets, signed zeros, subnormals, non-finite kernels
+PASS: 6912000 bit-identical stereo samples: 5 filters, 3 rates, 3 unison settings, automation, glide and release.

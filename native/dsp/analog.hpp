@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include "stereo.hpp"
 
 namespace sy1 {
 
@@ -92,6 +93,27 @@ struct Ladder {
     if (std::fabs(s4) < 1e-20) { s4 = 0; y4p = 0; fb = 0; }
   }
 };
+
+#if defined(__SSE2__) && !defined(SY1_SCALAR_FILTERS)
+inline void tickStereo(Ladder& l, Ladder& r, dsp::Stereo x) {
+  using dsp::Stereo;
+  const Stereo g(l.g, r.g), k(l.k, r.k);
+  const auto u = dsp::tanh(x - k * Stereo(l.fb, r.fb));
+  const auto s1 = Stereo(l.s1,r.s1) + g * (u - Stereo(l.t1,r.t1));
+  const auto t1 = dsp::tanh(s1);
+  const auto s2 = Stereo(l.s2,r.s2) + g * (t1 - Stereo(l.t2,r.t2));
+  const auto t2 = dsp::tanh(s2);
+  const auto s3 = Stereo(l.s3,r.s3) + g * (t2 - Stereo(l.t3,r.t3));
+  const auto t3 = dsp::tanh(s3);
+  const auto s4 = Stereo(l.s4,r.s4) + g * (t3 - Stereo(l.t4,r.t4));
+  const auto t4 = dsp::tanh(s4);
+  (Stereo(0.5) * (s4 + Stereo(l.y4p,r.y4p))).store(l.fb,r.fb);
+  s4.store(l.y4p,r.y4p);
+  u.store(l.u,r.u);
+  s1.store(l.s1,r.s1); s2.store(l.s2,r.s2); s3.store(l.s3,r.s3); s4.store(l.s4,r.s4);
+  t1.store(l.t1,r.t1); t2.store(l.t2,r.t2); t3.store(l.t3,r.t3); t4.store(l.t4,r.t4);
+}
+#endif
 
 inline double resToLadder(double res) {
   double n = std::log(std::fmax(0.1, res) / 0.1) / std::log(180.0);

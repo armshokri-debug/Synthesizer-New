@@ -1,0 +1,497 @@
+[
+  {
+    "scenario": "idle",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 431.767,
+        "median_us": 399.985,
+        "mean_thread_cpu_us": 430.413,
+        "p99_thread_cpu_us": 732.616,
+        "p95_us": 582.457,
+        "p99_us": 734.073,
+        "max_us": 3465.48,
+        "deadline_misses": 1,
+        "budget_percent": 16.1913
+      },
+      {
+        "name": "after",
+        "mean_us": 374.237,
+        "median_us": 347.307,
+        "mean_thread_cpu_us": 373.438,
+        "p99_thread_cpu_us": 597.726,
+        "p95_us": 501.706,
+        "p99_us": 599.633,
+        "max_us": 2325.84,
+        "deadline_misses": 0,
+        "budget_percent": 14.0339
+      }
+    ]
+  },
+  {
+    "scenario": "idle",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 460.368,
+        "median_us": 420.456,
+        "mean_thread_cpu_us": 459.516,
+        "p99_thread_cpu_us": 924.09,
+        "p95_us": 649.141,
+        "p99_us": 925.2,
+        "max_us": 3669.8,
+        "deadline_misses": 3,
+        "budget_percent": 17.2638
+      },
+      {
+        "name": "after",
+        "mean_us": 405.482,
+        "median_us": 362.227,
+        "mean_thread_cpu_us": 404.123,
+        "p99_thread_cpu_us": 819.464,
+        "p95_us": 582.256,
+        "p99_us": 882.367,
+        "max_us": 2449.27,
+        "deadline_misses": 0,
+        "budget_percent": 15.2056
+      }
+    ]
+  },
+  {
+    "scenario": "idle",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 468.872,
+        "median_us": 430.42,
+        "mean_thread_cpu_us": 468.037,
+        "p99_thread_cpu_us": 1057.36,
+        "p95_us": 687.863,
+        "p99_us": 1058.37,
+        "max_us": 1668.43,
+        "deadline_misses": 0,
+        "budget_percent": 17.5827
+      },
+      {
+        "name": "after",
+        "mean_us": 429.189,
+        "median_us": 372.524,
+        "mean_thread_cpu_us": 422.584,
+        "p99_thread_cpu_us": 957.129,
+        "p95_us": 619.892,
+        "p99_us": 958.606,
+        "max_us": 14279.9,
+        "deadline_misses": 2,
+        "budget_percent": 16.0946
+      }
+    ]
+  },
+  {
+    "scenario": "chord",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 692.901,
+        "median_us": 629.387,
+        "mean_thread_cpu_us": 691.983,
+        "p99_thread_cpu_us": 1767.99,
+        "p95_us": 1015.03,
+        "p99_us": 1769.08,
+        "max_us": 4426.95,
+        "deadline_misses": 3,
+        "budget_percent": 25.9838
+      },
+      {
+        "name": "after",
+        "mean_us": 624.514,
+        "median_us": 555.456,
+        "mean_thread_cpu_us": 623.315,
+        "p99_thread_cpu_us": 1554.4,
+        "p95_us": 961.2,
+        "p99_us": 1555.49,
+        "max_us": 2770.66,
+        "deadline_misses": 1,
+        "budget_percent": 23.4193
+      }
+    ]
+  },
+  {
+    "scenario": "chord",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 855.282,
+        "median_us": 701.434,
+        "mean_thread_cpu_us": 852.248,
+        "p99_thread_cpu_us": 2918.68,
+        "p95_us": 1750.98,
+        "p99_us": 2934.3,
+        "max_us": 4796.58,
+        "deadline_misses": 18,
+        "budget_percent": 32.0731
+      },
+      {
+        "name": "after",
+        "mean_us": 742.409,
+        "median_us": 620.693,
+        "mean_thread_cpu_us": 739.115,
+        "p99_thread_cpu_us": 2554.76,
+        "p95_us": 1416.24,
+        "p99_us": 2621.9,
+        "max_us": 4289.77,
+        "deadline_misses": 11,
+        "budget_percent": 27.8404
+      }
+    ]
+  },
+  {
+    "scenario": "chord",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 738.025,
+        "median_us": 635.876,
+        "mean_thread_cpu_us": 729.927,
+        "p99_thread_cpu_us": 2119.62,
+        "p95_us": 1203.38,
+        "p99_us": 2128.56,
+        "max_us": 24939.7,
+        "deadline_misses": 3,
+        "budget_percent": 27.6759
+      },
+      {
+        "name": "after",
+        "mean_us": 657.997,
+        "median_us": 581.525,
+        "mean_thread_cpu_us": 654.382,
+        "p99_thread_cpu_us": 1810.54,
+        "p95_us": 1066.08,
+        "p99_us": 1938.78,
+        "max_us": 3341.87,
+        "deadline_misses": 4,
+        "budget_percent": 24.6749
+      }
+    ]
+  },
+  {
+    "scenario": "tails",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 791.597,
+        "median_us": 604.89,
+        "mean_thread_cpu_us": 789.794,
+        "p99_thread_cpu_us": 3287.21,
+        "p95_us": 1864.13,
+        "p99_us": 3289.3,
+        "max_us": 5119.93,
+        "deadline_misses": 22,
+        "budget_percent": 29.6849
+      },
+      {
+        "name": "after",
+        "mean_us": 682.738,
+        "median_us": 523.99,
+        "mean_thread_cpu_us": 680.148,
+        "p99_thread_cpu_us": 2786.94,
+        "p95_us": 1614.59,
+        "p99_us": 2788.26,
+        "max_us": 5427.27,
+        "deadline_misses": 15,
+        "budget_percent": 25.6027
+      }
+    ]
+  },
+  {
+    "scenario": "tails",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 574.999,
+        "median_us": 496.459,
+        "mean_thread_cpu_us": 574.032,
+        "p99_thread_cpu_us": 2037.89,
+        "p95_us": 938.436,
+        "p99_us": 2039.08,
+        "max_us": 8397.28,
+        "deadline_misses": 5,
+        "budget_percent": 21.5625
+      },
+      {
+        "name": "after",
+        "mean_us": 517.271,
+        "median_us": 431.241,
+        "mean_thread_cpu_us": 510.654,
+        "p99_thread_cpu_us": 1761.73,
+        "p95_us": 857.636,
+        "p99_us": 1762.36,
+        "max_us": 16701.5,
+        "deadline_misses": 4,
+        "budget_percent": 19.3977
+      }
+    ]
+  },
+  {
+    "scenario": "tails",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 565.876,
+        "median_us": 501.837,
+        "mean_thread_cpu_us": 562.405,
+        "p99_thread_cpu_us": 1570.13,
+        "p95_us": 874.181,
+        "p99_us": 1571.25,
+        "max_us": 6526.31,
+        "deadline_misses": 4,
+        "budget_percent": 21.2204
+      },
+      {
+        "name": "after",
+        "mean_us": 484.824,
+        "median_us": 423.841,
+        "mean_thread_cpu_us": 483.655,
+        "p99_thread_cpu_us": 1377.34,
+        "p95_us": 774.201,
+        "p99_us": 1378.62,
+        "max_us": 3200.24,
+        "deadline_misses": 1,
+        "budget_percent": 18.1809
+      }
+    ]
+  },
+  {
+    "scenario": "dense-cc",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 2891.81,
+        "median_us": 2756.11,
+        "mean_thread_cpu_us": 2887.02,
+        "p99_thread_cpu_us": 5320.3,
+        "p95_us": 3956.24,
+        "p99_us": 5321.92,
+        "max_us": 8105.74,
+        "deadline_misses": 666,
+        "budget_percent": 108.443
+      },
+      {
+        "name": "after",
+        "mean_us": 2824.15,
+        "median_us": 2632.32,
+        "mean_thread_cpu_us": 2814.36,
+        "p99_thread_cpu_us": 5417.48,
+        "p95_us": 3760.59,
+        "p99_us": 5419.04,
+        "max_us": 23225,
+        "deadline_misses": 522,
+        "budget_percent": 105.906
+      }
+    ]
+  },
+  {
+    "scenario": "dense-cc",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 3011.51,
+        "median_us": 2814.03,
+        "mean_thread_cpu_us": 3005.69,
+        "p99_thread_cpu_us": 6665.19,
+        "p95_us": 4283.16,
+        "p99_us": 6814.97,
+        "max_us": 11271,
+        "deadline_misses": 732,
+        "budget_percent": 112.932
+      },
+      {
+        "name": "after",
+        "mean_us": 2958.01,
+        "median_us": 2746.55,
+        "mean_thread_cpu_us": 2952.18,
+        "p99_thread_cpu_us": 6211.51,
+        "p95_us": 4232.21,
+        "p99_us": 6214.94,
+        "max_us": 15984.4,
+        "deadline_misses": 655,
+        "budget_percent": 110.926
+      }
+    ]
+  },
+  {
+    "scenario": "dense-cc",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 2838.33,
+        "median_us": 2695.06,
+        "mean_thread_cpu_us": 2834.75,
+        "p99_thread_cpu_us": 5123.13,
+        "p95_us": 3823.81,
+        "p99_us": 5142.7,
+        "max_us": 9575.43,
+        "deadline_misses": 611,
+        "budget_percent": 106.438
+      },
+      {
+        "name": "after",
+        "mean_us": 2781.54,
+        "median_us": 2630.81,
+        "mean_thread_cpu_us": 2774.16,
+        "p99_thread_cpu_us": 5208.26,
+        "p95_us": 3919.45,
+        "p99_us": 5209.25,
+        "max_us": 9263.79,
+        "deadline_misses": 512,
+        "budget_percent": 104.308
+      }
+    ]
+  },
+  {
+    "scenario": "drums",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 1053.05,
+        "median_us": 856.603,
+        "mean_thread_cpu_us": 1051.51,
+        "p99_thread_cpu_us": 2458.13,
+        "p95_us": 1480.6,
+        "p99_us": 2459.22,
+        "max_us": 158482,
+        "deadline_misses": 10,
+        "budget_percent": 39.4895
+      },
+      {
+        "name": "after",
+        "mean_us": 1000.57,
+        "median_us": 796.654,
+        "mean_thread_cpu_us": 999.766,
+        "p99_thread_cpu_us": 2691.27,
+        "p95_us": 1387.96,
+        "p99_us": 2692.72,
+        "max_us": 166676,
+        "deadline_misses": 13,
+        "budget_percent": 37.5215
+      }
+    ]
+  },
+  {
+    "scenario": "drums",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 987.341,
+        "median_us": 804.225,
+        "mean_thread_cpu_us": 986.348,
+        "p99_thread_cpu_us": 2705.54,
+        "p95_us": 1239.9,
+        "p99_us": 2706.82,
+        "max_us": 146991,
+        "deadline_misses": 14,
+        "budget_percent": 37.0253
+      },
+      {
+        "name": "after",
+        "mean_us": 946.936,
+        "median_us": 751.928,
+        "mean_thread_cpu_us": 945.074,
+        "p99_thread_cpu_us": 2341.07,
+        "p95_us": 1146.78,
+        "p99_us": 2342.15,
+        "max_us": 173342,
+        "deadline_misses": 7,
+        "budget_percent": 35.5101
+      }
+    ]
+  },
+  {
+    "scenario": "drums",
+    "instances": 5,
+    "rate": 48000,
+    "buffer": 128,
+    "callbacks": 1125,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 1166.25,
+        "median_us": 842.833,
+        "mean_thread_cpu_us": 1158.98,
+        "p99_thread_cpu_us": 3564.26,
+        "p95_us": 1919.38,
+        "p99_us": 3565.58,
+        "max_us": 184444,
+        "deadline_misses": 28,
+        "budget_percent": 43.7345
+      },
+      {
+        "name": "after",
+        "mean_us": 1065.97,
+        "median_us": 781.081,
+        "mean_thread_cpu_us": 1064.72,
+        "p99_thread_cpu_us": 3475.83,
+        "p95_us": 1797.95,
+        "p99_us": 3488.5,
+        "max_us": 163064,
+        "deadline_misses": 27,
+        "budget_percent": 39.9738
+      }
+    ]
+  }
+]
