@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>SY-1 Synth</title>
+    <meta name="description" content="SY-1 standalone browser subtractive synthesizer built with Web Audio." />
+    <meta property="og:title" content="SY-1 Synth" />
+    <meta property="og:description" content="SY-1 standalone browser subtractive synthesizer built with Web Audio." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#17141f" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="SY-1" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="format-detection" content="telephone=no" />
+  </head>
+  <body>
+    <div class="sy1-shell">
+      <div id="sy1-panel"></div>
+      <div class="kb-area">
+        <div class="kb-bar">
+          <div class="kb-oct" role="group" aria-label="Octave">
+            <button type="button" class="kb-btn kb-oct-btn" id="oct-down" aria-label="Octave down">Oct −</button>
+            <span class="kb-range" id="kb-range"></span>
+            <button type="button" class="kb-btn kb-oct-btn" id="oct-up" aria-label="Octave up">Oct +</button>
+          </div>
+          <div class="kb-perf">
+            <button type="button" class="kb-btn kb-hold" id="kb-hold" aria-pressed="false" title="Hold: notes keep sounding after you let go">HOLD</button>
+            <button type="button" class="kb-btn kb-arp" id="kb-arp" aria-expanded="false" title="Arpeggiator settings">ARP</button>
+          </div>
+          <div class="kb-strip">
+            <button type="button" class="kb-or kb-btn" id="kb-oriental" aria-expanded="false" aria-haspopup="dialog"><span class="kb-or-dot" aria-hidden="true"></span><span class="kb-or-lbl">ORIENTAL</span><span class="kb-or-scale"></span><svg class="kb-or-caret" viewBox="0 0 10 6" width="9" height="6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            <div class="kb-scale-notes" id="kb-scale-notes" aria-live="polite"></div>
+            <div class="kb-mini" id="kb-mini" role="slider" tabindex="0" aria-label="Keyboard range" aria-valuemin="24" aria-valuemax="84"><span class="kb-mini-keys" aria-hidden="true"></span><span class="kb-mini-win" aria-hidden="true"></span></div>
+          </div>
+          <div class="kb-machine-badge" id="kb-machine-badge" data-machine="sy1" aria-live="polite">
+            <span class="kb-machine-emblem" aria-hidden="true"></span>
+            <span class="kb-machine-name" id="kb-machine-name">SY-1</span>
+            <span class="kb-machine-sep" aria-hidden="true">·</span>
+            <span class="kb-machine-role" id="kb-machine-role">All-rounder</span>
+          </div>
+        </div>
+        <div class="kb-main">
+          <div class="kb-wheels">
+            <div class="kb-wheel" data-wheel="bend" role="slider" aria-label="Pitch bend" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0" style="--v:0.5"><span class="kb-wheel-thumb"></span><span class="kb-wheel-label">PB</span></div>
+            <div class="kb-wheel" data-wheel="mod" role="slider" aria-label="Modulation" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0" style="--v:0"><span class="kb-wheel-thumb"></span><span class="kb-wheel-label">MOD</span></div>
+          </div>
+          <div class="kb-col">
+            <div class="kb" id="kb"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

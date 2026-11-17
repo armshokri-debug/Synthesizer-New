@@ -1,0 +1,1211 @@
+#!/usr/bin/env bun
+/**
+ * SY-1 Automated Layout & Spacing Audit (scripts/layout-audit)
+ *
+ * Tests every machine × every page/tab × 10 target viewports using
+ * getBoundingClientRect in headless Chromium:
+ * - No page scroll, no element overflowing its section card or the viewport
+ * - Gap between a section title's bottom and the top of the nearest control
+ *   (including knob value-ring overflow) >= 6px
+ * - No two controls overlapping; no control closer than 4px to its card border
+ * - Knobs in the same row: top difference <= 1px
+ * - Cards in the same grid row: aligned tops and equal height (<= 1px diff)
+ * - Section titles per machine: consistent font-size, weight, letter-spacing
+ */
+
+import { spawn } from "node:child_process";
+
+const VIEWPORTS = [
+  { width: 1440, height: 900, coarse: false },
+  { width: 1280, height: 720, coarse: false },
+  { width: 1024, height: 700, coarse: false },
+  { width: 1366, height: 1024, coarse: true },
+  { width: 1180, height: 820, coarse: true },
+  { width: 1024, height: 768, coarse: true },
+  { width: 768, height: 1000, coarse: true },
+  { width: 390, height: 664, coarse: true },
+  { width: 390, height: 844, coarse: true },
+  { width: 360, height: 560, coarse: true },
+  { width: 412, height: 780, coarse: true },
+  { width: 740, height: 340, coarse: true },
+  { width: 932, height: 400, coarse: true }
+];
+
+async function loadPlaywright() {
+  const candidates = [
+    "playwright",
+    "/root/.bun/install/global/node_modules/playwright/index.mjs"
+  ];
+  for (const mod of candidates) {
+    try {
+      return await import(mod);
+    } catch {}
+  }
+  throw new Error("Playwright not found");
+}
+
+async function isServerUp(url) {
+  try {
+    const res = await fetch(url);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureServer() {
+  const base = process.env.AUDIT_URL || "http://localhost:3000";
+  if (await isServerUp(base)) {
+    return { url: base, close: async () => {} };
+  }
+  const port = 4173;
+  const url = `http://localhost:${port}`;
+  const proc = spawn("npx", ["vite", "--port", String(port), "--host", "127.0.0.1"], {
+    stdio: "ignore"
+  });
+  for (let i = 0; i < 40; i++) {
+    if (await isServerUp(url)) {
+      return {
+        url,
+        close: async () => {
+          proc.kill("SIGTERM");
+        }
+      };
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  proc.kill("SIGTERM");
+  throw new Error("Failed to start Vite server for layout audit");
+}
+
+async function main() {
+  const { chromium } = await loadPlaywright();
+  const server = await ensureServer();
+  const browser = await chromium.launch();
+  const fineContext = await browser.newContext({ hasTouch: false });
+  const coarseContext = await browser.newContext({ hasTouch: true });
+  const finePage = await fineContext.newPage();
+  const coarsePage = await coarseContext.newPage();
+
+  let totalStates = 0;
+  let totalChecks = 0;
+  const failures = [];
+
+  try {
+    await finePage.setViewportSize({ width: 1440, height: 900 });
+    await finePage.goto(server.url, { waitUntil: "networkidle" });
+    await coarsePage.setViewportSize({ width: 1180, height: 820 });
+    await coarsePage.goto(server.url, { waitUntil: "networkidle" });
+
+    for (const vp of VIEWPORTS) {
+      const page = vp.coarse ? coarsePage : finePage;
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      const vpTag = `${vp.width}x${vp.height}${vp.coarse ? ":coarse" : ""}`;
+
+      const vpReport = await page.evaluate(async (vpTagIn) => {
+        window.dispatchEvent(new Event("resize"));
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const EPS = 0.5;
+        let states = 0;
+        let checks = 0;
+        const issues = [];
+
+        const sel = document.getElementById("machine-select");
+        const machines = sel ? Array.from(sel.options).map((o) => o.value) : [];
+
+        const getControlBox = (el) => {
+          const r = el.getBoundingClientRect();
+          let top = r.top;
+          let left = r.left;
+          let right = r.right;
+          let bottom = r.bottom;
+          if (el.classList.contains("sk")) {
+            const dial = el.querySelector(".sk-dial");
+            if (dial) {
+              const dr = dial.getBoundingClientRect();
+              const before = getComputedStyle(dial, "::before");
+              const insetTop = parseFloat(before.top) || 0;
+              const ringPad = insetTop < 0 ? -insetTop : 0;
+              top = Math.min(top, dr.top - ringPad);
+              left = Math.min(left, dr.left - ringPad);
+              right = Math.max(right, dr.right + ringPad);
+            }
+          }
+          return {
+            el,
+            label:
+              el.getAttribute("data-param") ||
+              (el.getAttribute("class") || "").split(" ")[0] ||
+              el.tagName,
+            top,
+            left,
+            right,
+            bottom
+          };
+        };
+
+        for (const machineId of machines) {
+          const machineSel = document.getElementById("machine-select");
+          if (machineSel && machineSel.value !== machineId) {
+            machineSel.value = machineId;
+            machineSel.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+
+          const pageIds = Array.from(document.querySelectorAll(".synth-tab")).map((t) =>
+            t.getAttribute("data-page")
+          );
+
+          for (const pageId of pageIds) {
+            const tab = document.querySelector(`.synth-tab[data-page="${pageId}"]`);
+            if (tab) tab.click();
+
+            states++;
+            const prefix = `[${vpTagIn}] [${machineId}/${pageId}] `;
+            const check = (cond, msg) => {
+              checks++;
+              if (!cond) issues.push(prefix + msg);
+            };
+
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            const docEl = document.documentElement;
+
+            // 1. Page scroll & viewport overflow
+            check(
+              docEl.scrollHeight <= vh + EPS,
+              `page vertical scroll: scrollHeight=${docEl.scrollHeight.toFixed(1)} > vh=${vh}`
+            );
+            check(
+              docEl.scrollWidth <= vw + EPS,
+              `page horizontal scroll: scrollWidth=${docEl.scrollWidth.toFixed(1)} > vw=${vw}`
+            );
+
+            const shell = document.querySelector(".sy1-shell");
+            if (shell) {
+              const sr = shell.getBoundingClientRect();
+              check(
+                sr.top >= -EPS &&
+                  sr.left >= -EPS &&
+                  sr.right <= vw + EPS &&
+                  sr.bottom <= vh + EPS,
+                `shell overflows viewport: [${sr.left.toFixed(1)}, ${sr.top.toFixed(1)}, ${sr.right.toFixed(1)}, ${sr.bottom.toFixed(1)}]`
+              );
+            }
+
+            const secsContainer = document.querySelector(".synth-sections");
+            if (secsContainer) {
+              check(
+                secsContainer.scrollHeight <= secsContainer.clientHeight + 1,
+                `.synth-sections vertical overflow: scrollHeight=${secsContainer.scrollHeight} > clientHeight=${secsContainer.clientHeight}`
+              );
+              check(
+                secsContainer.scrollWidth <= secsContainer.clientWidth + 1,
+                `.synth-sections horizontal overflow: scrollWidth=${secsContainer.scrollWidth} > clientWidth=${secsContainer.clientWidth}`
+              );
+            }
+
+            // (b) header has <= 2 rows at >= 900px wide
+            if (vw >= 900) {
+              const topEl = document.querySelector(".synth-top");
+              if (topEl) {
+                const topItems = Array.from(topEl.children).filter(
+                  (c) => getComputedStyle(c).display !== "none" && c.getBoundingClientRect().height > 0
+                );
+                const rowCenters = [];
+                for (const item of topItems) {
+                  const ir = item.getBoundingClientRect();
+                  const midY = (ir.top + ir.bottom) / 2;
+                  if (!rowCenters.some((y) => Math.abs(y - midY) < 14)) {
+                    rowCenters.push(midY);
+                  }
+                }
+                check(
+                  rowCenters.length <= 2,
+                  `header (.synth-top) has ${rowCenters.length} rows at width ${vw}px (> 2 rows)`
+                );
+              }
+            }
+
+            const kbArea = document.querySelector(".kb-area");
+            const kbBar = document.querySelector(".kb-bar");
+            const kbMain = document.querySelector(".kb-main");
+            const kbEl = document.getElementById("kb");
+            if (kbArea) {
+              const kr = kbArea.getBoundingClientRect();
+              check(
+                kr.bottom <= vh + EPS && kr.right <= vw + EPS && kr.left >= -EPS,
+                `.kb-area overflows viewport: bottom=${kr.bottom.toFixed(1)} (vh=${vh})`
+              );
+            }
+
+            // LOCKED Keyboard height rule (PART A):
+            // desktop/tablet: clamp(150px, 34vh, 320px); phone portrait (width < 600): clamp(150px, 30vh, 260px); short landscape (height < 500): clamp(110px, 38vh, 200px)
+            const expectedKeysH =
+              vh < 500
+                ? Math.min(200, Math.max(110, vh * 0.38))
+                : vw < 600
+                  ? Math.min(260, Math.max(150, vh * 0.3))
+                  : Math.min(320, Math.max(150, vh * 0.34));
+            if (kbEl && kbMain) {
+              const kbr = kbEl.getBoundingClientRect();
+              const mr = kbMain.getBoundingClientRect();
+              if (window.__refKbH == null || window.__refVpTag !== vpTagIn) {
+                window.__refKbH = kbr.height;
+                window.__refVpTag = vpTagIn;
+              }
+              check(
+                Math.abs(kbr.height - window.__refKbH) <= 1 &&
+                  Math.abs(mr.height - window.__refKbH) <= 1,
+                `keyboard height mismatch across machines: #kb=${kbr.height.toFixed(1)}px vs ref=${window.__refKbH.toFixed(1)}px`
+              );
+              check(
+                Math.abs(kbr.height - expectedKeysH) <= 1.5,
+                `keyboard height ${kbr.height.toFixed(1)}px != locked rule (${expectedKeysH.toFixed(1)}px)`
+              );
+              const whiteKey = kbEl.querySelector(".key:not(.black):not(.pad)");
+              const blackKey = kbEl.querySelector(".key.black");
+              if (whiteKey && blackKey) {
+                const wkr = whiteKey.getBoundingClientRect();
+                const bkr = blackKey.getBoundingClientRect();
+                check(
+                  Math.abs(bkr.height / wkr.height - 0.62) <= 0.025 &&
+                    Math.abs(bkr.width / wkr.width - 0.58) <= 0.035,
+                  `black key ratio mismatch: h=${(bkr.height / wkr.height).toFixed(3)} (want 0.62), w=${(bkr.width / wkr.width).toFixed(3)} (want 0.58)`
+                );
+              }
+              const wheelsEl = document.querySelector(".kb-wheels");
+              if (wheelsEl && getComputedStyle(wheelsEl).display !== "none") {
+                const wr = wheelsEl.getBoundingClientRect();
+                check(
+                  Math.abs(wr.height - kbr.height) <= 1,
+                  `pitch-bend/mod wheels height (${wr.height.toFixed(1)}px) != keyboard height (${kbr.height.toFixed(1)}px)`
+                );
+              }
+            }
+
+            // Bottom bar machine name & no overlap with keyboard
+            const badgeName = document.getElementById("kb-machine-name");
+            const badgeEl = document.getElementById("kb-machine-badge");
+            check(
+              !!badgeEl &&
+                !!badgeName &&
+                getComputedStyle(badgeEl).display !== "none" &&
+                badgeName.getBoundingClientRect().width > 4 &&
+                badgeName.getBoundingClientRect().height > 4 &&
+                (badgeName.textContent || "").trim().length > 0,
+              `machine name in bottom bar (#kb-machine-name) not visible`
+            );
+            if (kbBar && kbEl) {
+              const br = kbBar.getBoundingClientRect();
+              const kbr = kbEl.getBoundingClientRect();
+              const overlapY = Math.min(br.bottom, kbr.bottom) - Math.max(br.top, kbr.top);
+              const overlapX = Math.min(br.right, kbr.right) - Math.max(br.left, kbr.left);
+              check(
+                !(overlapX > 1 && overlapY > 1) && br.bottom <= kbr.top + 1.5,
+                `.kb-bar overlaps or sits below keyboard (#kb): bar.bottom=${br.bottom.toFixed(1)} vs kb.top=${kbr.top.toFixed(1)}`
+              );
+            }
+            if (kbMain && badgeEl) {
+              const mr = kbMain.getBoundingClientRect();
+              const bdr = badgeEl.getBoundingClientRect();
+              const overlapY = Math.min(mr.bottom, bdr.bottom) - Math.max(mr.top, bdr.top);
+              const overlapX = Math.min(mr.right, bdr.right) - Math.max(mr.left, bdr.left);
+              check(
+                !(overlapX > 1 && overlapY > 1),
+                `#kb-machine-badge overlaps keyboard (.kb-main)`
+              );
+            }
+
+            // Connections icon visible in .synth-top
+            const connBtn = document.getElementById("conn-btn");
+            const topEl = document.querySelector(".synth-top");
+            check(
+              !!connBtn &&
+                getComputedStyle(connBtn).display !== "none" &&
+                connBtn.getBoundingClientRect().width >= 24 &&
+                connBtn.getBoundingClientRect().height >= 24,
+              `Connections icon (#conn-btn) not visible`
+            );
+
+            // Tabs + preset row (.synth-subbar) directly above .synth-sections
+            const subbarEl = document.querySelector(".synth-subbar");
+            const tabsEl = document.querySelector(".synth-tabs");
+            const presetBtn = document.getElementById("preset-btn");
+            check(
+              !!subbarEl &&
+                !!tabsEl &&
+                !!presetBtn &&
+                getComputedStyle(subbarEl).display !== "none" &&
+                getComputedStyle(tabsEl).display !== "none" &&
+                tabsEl.getBoundingClientRect().height >= 24,
+              `tabs row (.synth-subbar / .synth-tabs) not visible`
+            );
+            if (subbarEl && secsContainer && topEl) {
+              const subR = subbarEl.getBoundingClientRect();
+              const secR = secsContainer.getBoundingClientRect();
+              const topR = topEl.getBoundingClientRect();
+              const gapToSecs = secR.top - subR.bottom;
+              check(
+                subR.top >= topR.bottom - 1.5 && gapToSecs >= -1.5 && gapToSecs <= 20,
+                `tabs row (.synth-subbar) not directly above knob sections (gap=${gapToSecs.toFixed(1)}px)`
+              );
+            }
+
+            // Connections popover opens, fits on screen, and does not cover keyboard (checked once per machine on first page)
+            if (pageId === pageIds[0] && connBtn) {
+              const connPop = document.getElementById("conn-pop");
+              connBtn.click();
+              const popOpen =
+                !!connPop &&
+                !connPop.hasAttribute("hidden") &&
+                getComputedStyle(connPop).display !== "none";
+              check(popOpen, `Connections popover (#conn-pop) did not open on click`);
+              if (popOpen && connPop) {
+                const pr = connPop.getBoundingClientRect();
+                check(
+                  pr.top >= -EPS &&
+                    pr.left >= -EPS &&
+                    pr.right <= vw + EPS &&
+                    pr.bottom <= vh + EPS &&
+                    pr.width >= 160 &&
+                    pr.height >= 40,
+                  `Connections popover overflows screen: [${pr.left.toFixed(1)}, ${pr.top.toFixed(1)}, ${pr.right.toFixed(1)}, ${pr.bottom.toFixed(1)}] in ${vw}x${vh}`
+                );
+                if (kbEl) {
+                  const kbr = kbEl.getBoundingClientRect();
+                  const overlapY = Math.min(pr.bottom, kbr.bottom) - Math.max(pr.top, kbr.top);
+                  const overlapX = Math.min(pr.right, kbr.right) - Math.max(pr.left, kbr.left);
+                  check(
+                    !(overlapX > 1 && overlapY > 1),
+                    `Connections popover covers keyboard (#kb): pop.bottom=${pr.bottom.toFixed(1)} > kb.top=${kbr.top.toFixed(1)}`
+                  );
+                }
+                for (const id of ["midi-btn", "midi-learn-btn", "midi-panic-btn", "engine-btn"]) {
+                  const b = document.getElementById(id);
+                  check(
+                    !!b && b.getBoundingClientRect().width > 10,
+                    `Connections popover missing button #${id}`
+                  );
+                }
+              }
+              document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+              check(
+                !!connPop && connPop.hasAttribute("hidden"),
+                `Connections popover (#conn-pop) did not close on Escape`
+              );
+            }
+
+            // Visible sections
+            const visibleSecs = Array.from(document.querySelectorAll(".synth-sec")).filter(
+              (s) => getComputedStyle(s).display !== "none"
+            );
+
+            // (c) panel empty space below the last section <= 15% of panel height on paged layouts
+            const isPaged =
+              window.matchMedia("(max-width: 760px), (max-height: 560px) and (orientation: landscape)").matches ||
+              (shell ? shell.classList.contains("is-fit-paged") : false);
+            const panelEl = document.querySelector(".synth-panel");
+            if (isPaged && panelEl && visibleSecs.length > 0) {
+              const pr = panelEl.getBoundingClientRect();
+              const maxSecBottom = Math.max(
+                ...visibleSecs.map((s) => s.getBoundingClientRect().bottom)
+              );
+              const emptyBelow = Math.max(0, pr.bottom - maxSecBottom);
+              const maxAllowed = pr.height * 0.15;
+              check(
+                emptyBelow <= maxAllowed + EPS,
+                `paged panel empty space below last section ${emptyBelow.toFixed(1)}px > 15% of panel height (${maxAllowed.toFixed(1)}px / ${pr.height.toFixed(1)}px)`
+              );
+            }
+
+            // Section title consistency across the machine
+            let refTitleStyle = null;
+            for (const sec of visibleSecs) {
+              const h4 = sec.querySelector("h4");
+              if (!h4) continue;
+              const cs = getComputedStyle(h4);
+              const sr = sec.getBoundingClientRect();
+              const hr = h4.getBoundingClientRect();
+              const cur = {
+                fontSize: cs.fontSize,
+                fontWeight: cs.fontWeight,
+                letterSpacing: cs.letterSpacing,
+                relTop: hr.top - sr.top
+              };
+              if (!refTitleStyle) {
+                refTitleStyle = cur;
+              } else {
+                check(
+                  cur.fontSize === refTitleStyle.fontSize &&
+                    cur.fontWeight === refTitleStyle.fontWeight &&
+                    cur.letterSpacing === refTitleStyle.letterSpacing &&
+                    Math.abs(cur.relTop - refTitleStyle.relTop) <= 1.2,
+                  `section title "${h4.textContent}" style/pos mismatch`
+                );
+              }
+            }
+
+            // Group visible sections by grid row (top within 6px)
+            const secRows = [];
+            for (const sec of visibleSecs) {
+              const r = sec.getBoundingClientRect();
+              const existingRow = secRows.find((row) => Math.abs(row[0].rect.top - r.top) < 6);
+              if (existingRow) existingRow.push({ sec, rect: r });
+              else secRows.push([{ sec, rect: r }]);
+            }
+            for (const row of secRows) {
+              if (row.length > 1) {
+                const top0 = row[0].rect.top;
+                const h0 = row[0].rect.height;
+                for (let i = 1; i < row.length; i++) {
+                  check(
+                    Math.abs(row[i].rect.top - top0) <= 1.2,
+                    `cards in row top mismatch: ${row[i].rect.top.toFixed(1)} vs ${top0.toFixed(1)}`
+                  );
+                  const span0 = getComputedStyle(row[0].sec).gridRowEnd;
+                  const spanI = getComputedStyle(row[i].sec).gridRowEnd;
+                  if (span0 === spanI) {
+                    check(
+                      Math.abs(row[i].rect.height - h0) <= 1.5,
+                      `cards in row height mismatch: ${row[i].rect.height.toFixed(1)} vs ${h0.toFixed(1)}`
+                    );
+                  }
+                }
+              }
+            }
+
+            for (const sec of visibleSecs) {
+              const secTitle = sec.querySelector("h4")?.textContent || "sec";
+              const sr = sec.getBoundingClientRect();
+
+              // (a) no element inside .synth-sections has scrollHeight > clientHeight + 1 (no inner scroll)
+              for (const el of [
+                sec,
+                ...Array.from(
+                  sec.querySelectorAll(
+                    ".synth-custom, .fm-lcd, .eu-wrap, .vec-wrap, .sk-row, .drum-transport, .drum-voices, .drum-steps"
+                  )
+                )
+              ]) {
+                if (getComputedStyle(el).display === "none") continue;
+                check(
+                  el.scrollHeight <= el.clientHeight + 1,
+                  `section "${secTitle}" inner scroll on ${el.className || el.tagName}: scrollHeight=${el.scrollHeight} > clientHeight=${el.clientHeight}`
+                );
+              }
+
+              check(
+                sr.top >= -EPS &&
+                  sr.left >= -EPS &&
+                  sr.right <= vw + EPS &&
+                  sr.bottom <= vh + EPS,
+                `section "${secTitle}" overflows viewport`
+              );
+
+              const h4 = sec.querySelector("h4");
+              const hr = h4 ? h4.getBoundingClientRect() : null;
+
+              if (hr) {
+                check(
+                  hr.top - sr.top >= 4 - EPS &&
+                    hr.left - sr.left >= 4 - EPS &&
+                    sr.right - hr.right >= 4 - EPS,
+                  `section "${secTitle}" title closer than 4px to card border (T=${(hr.top - sr.top).toFixed(1)}, L=${(hr.left - sr.left).toFixed(1)}, R=${(sr.right - hr.right).toFixed(1)})`
+                );
+              }
+
+              const controls = Array.from(
+                sec.querySelectorAll(
+                  ".synth-choice, .synth-param-select-wrap, .sk, .fm-lcd, .eu-svg, .vec-svg, .eu-hint, .drum-transport, .drum-voices, .drum-steps, .drum-voice-name"
+                )
+              ).filter((el) => {
+                if (el.classList.contains("synth-choice") && el.closest(".drum-transport")) {
+                  return false;
+                }
+                return getComputedStyle(el).display !== "none";
+              });
+
+              const boxes = controls.map(getControlBox);
+
+              for (const box of boxes) {
+                if (hr) {
+                  const titleGap = box.top - hr.bottom;
+                  check(
+                    titleGap >= 6 - EPS,
+                    `section "${secTitle}" -> "${box.label}" title gap ${titleGap.toFixed(1)}px < 6px`
+                  );
+                }
+
+                const dTop = box.top - sr.top;
+                const dLeft = box.left - sr.left;
+                const dRight = sr.right - box.right;
+                const dBottom = sr.bottom - box.bottom;
+                check(
+                  dTop >= 4 - EPS &&
+                    dLeft >= 4 - EPS &&
+                    dRight >= 4 - EPS &&
+                    dBottom >= 4 - EPS,
+                  `section "${secTitle}" control "${box.label}" closer than 4px to card border (T=${dTop.toFixed(1)}, L=${dLeft.toFixed(1)}, R=${dRight.toFixed(1)}, B=${dBottom.toFixed(1)})`
+                );
+              }
+
+              for (let i = 0; i < boxes.length; i++) {
+                const a = boxes[i];
+                for (let j = i + 1; j < boxes.length; j++) {
+                  const b = boxes[j];
+                  const overlapX = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+                  const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+                  check(
+                    !(overlapX > 1 && overlapY > 1),
+                    `section "${secTitle}" controls overlap (${a.label} vs ${b.label}: ${overlapX.toFixed(1)}x${overlapY.toFixed(1)})`
+                  );
+                }
+              }
+
+              // Check vertical gap between stacked control rows inside the section
+              const rowEls = Array.from(
+                sec.querySelectorAll(
+                  ":scope > .synth-choice, :scope > .synth-param-select-wrap, :scope > .sk-caption, :scope > .sk-row, :scope > .synth-custom > *"
+                )
+              ).filter((el) => getComputedStyle(el).display !== "none");
+              for (let i = 0; i < rowEls.length - 1; i++) {
+                const rA = rowEls[i].getBoundingClientRect();
+                const rB = rowEls[i + 1].getBoundingClientRect();
+                // Only check rows that are stacked vertically (not side-by-side)
+                if (rB.top >= rA.bottom - 2) {
+                  const rowGap = rB.top - rA.bottom;
+                  check(
+                    rowGap >= 6 - EPS,
+                    `section "${secTitle}" control row gap ${rowGap.toFixed(1)}px < 6px`
+                  );
+                }
+              }
+
+              const rows = Array.from(sec.querySelectorAll(".sk-row")).filter(
+                (r) => getComputedStyle(r).display !== "none"
+              );
+              for (const row of rows) {
+                const knobs = Array.from(row.querySelectorAll(":scope > .sk"));
+                if (knobs.length > 1) {
+                  const tops = knobs.map((k) => k.getBoundingClientRect().top);
+                  const dialTops = knobs.map((k) =>
+                    k.querySelector(".sk-dial")!.getBoundingClientRect().top
+                  );
+                  const diff = Math.max(...tops) - Math.min(...tops);
+                  const dialDiff = Math.max(...dialTops) - Math.min(...dialTops);
+                  check(
+                    diff <= 1 && dialDiff <= 1,
+                    `section "${secTitle}" knob row top diff=${Math.max(diff, dialDiff).toFixed(2)}px > 1px`
+                  );
+                }
+                for (const k of knobs) {
+                  const dial = k.querySelector(".sk-dial");
+                  const lbl = k.querySelector(".sk-label");
+                  const val = k.querySelector(".sk-val");
+                  if (dial && lbl && val) {
+                    const dr = dial.getBoundingClientRect();
+                    const lr = lbl.getBoundingClientRect();
+                    const vr = val.getBoundingClientRect();
+                    const dCenter = (dr.left + dr.right) / 2;
+                    const lCenter = (lr.left + lr.right) / 2;
+                    const vCenter = (vr.left + vr.right) / 2;
+                    check(
+                      Math.abs(dCenter - lCenter) <= 1.5 &&
+                        Math.abs(dCenter - vCenter) <= 1.5,
+                      `section "${secTitle}" knob label/value not centered under dial`
+                    );
+                    if (machineId === "sy1") {
+                      const ticks = dial.querySelectorAll(".sk-scale .sk-tick");
+                      const skirt = dial.querySelector(".sk-skirt");
+                      const cap = dial.querySelector(".sk-cap");
+                      const rotor = dial.querySelector(".sk-rotor");
+                      check(
+                        ticks.length === 11 &&
+                          !!skirt &&
+                          !!cap &&
+                          !!rotor &&
+                          getComputedStyle(cap).display !== "none",
+                        `SY-1 knob "${k.getAttribute("data-param")}" missing 3D scale/skirt/cap/rotor layers`
+                      );
+                      if (vw >= 761 && vh >= 561) {
+                        if (row.classList.contains("sk-row-lg")) {
+                          check(
+                            dr.width >= 72 - EPS && dr.width <= 96 + EPS,
+                            `SY-1 big knob "${k.getAttribute("data-param")}" width=${dr.width.toFixed(1)}px not in [72, 96]`
+                          );
+                        } else if (row.classList.contains("sk-row-small")) {
+                          check(
+                            dr.width >= 44 - EPS && dr.width <= 56 + EPS,
+                            `SY-1 small knob "${k.getAttribute("data-param")}" width=${dr.width.toFixed(1)}px not in [44, 56]`
+                          );
+                        } else {
+                          check(
+                            dr.width >= 56 - EPS && dr.width <= 72 + EPS,
+                            `SY-1 standard knob "${k.getAttribute("data-param")}" width=${dr.width.toFixed(1)}px not in [56, 72]`
+                          );
+                        }
+                      } else if (vw < 600) {
+                        check(
+                          dr.width >= 44 - EPS,
+                          `SY-1 phone knob "${k.getAttribute("data-param")}" width=${dr.width.toFixed(1)}px < 44px`
+                        );
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Drum steps: min 32px tall
+              const stepEls = Array.from(sec.querySelectorAll(".drum-step")).filter(
+                (el) => getComputedStyle(el).display !== "none"
+              );
+              for (const st of stepEls) {
+                const str = st.getBoundingClientRect();
+                check(
+                  str.height >= 32 - EPS,
+                  `section "${secTitle}" .drum-step height ${str.height.toFixed(1)}px < 32px`
+                );
+              }
+
+              // Konya RINGS & Nishapur VECTOR PAD: square SVG fills card and side >= 80% of min(cardInnerW, cardInnerH)
+              const squareSvg = sec.querySelector(".eu-svg, .vec-svg");
+              const squareCustom = sec.querySelector(
+                '.synth-custom[data-custom="euclid-rings"], .synth-custom[data-custom="vector-pad"]'
+              );
+              if (squareSvg && squareCustom && getComputedStyle(squareSvg).display !== "none") {
+                const er = squareSvg.getBoundingClientRect();
+                const cr = squareCustom.getBoundingClientRect();
+                const fitDim = Math.min(cr.width, cr.height);
+                const csSec = getComputedStyle(sec);
+                const cardInnerW =
+                  sec.clientWidth -
+                  (parseFloat(csSec.paddingLeft) || 0) -
+                  (parseFloat(csSec.paddingRight) || 0);
+                const cardInnerH =
+                  sec.clientHeight -
+                  (parseFloat(csSec.paddingTop) || 0) -
+                  (parseFloat(csSec.paddingBottom) || 0);
+                const minInner = Math.min(cardInnerW, cardInnerH);
+                const side = Math.min(er.width, er.height);
+                check(
+                  Math.abs(er.width - er.height) <= 1.5 && er.height >= fitDim - 2,
+                  `section "${secTitle}" square SVG (${er.width.toFixed(1)}x${er.height.toFixed(1)}) does not fill custom box (${cr.width.toFixed(1)}x${cr.height.toFixed(1)})`
+                );
+                check(
+                  side >= 0.8 * minInner - EPS,
+                  `section "${secTitle}" compass/pad side ${side.toFixed(1)}px < 80% of min card inner (${minInner.toFixed(1)}px)`
+                );
+              }
+
+              // Kashan ALGORITHM: .fm-lcd svg fills the LCD height
+              const fmLcd = sec.querySelector(".fm-lcd");
+              const fmSvg = sec.querySelector(".fm-lcd svg");
+              const fmHead = sec.querySelector(".fm-lcd-head");
+              if (fmLcd && fmSvg && fmHead && getComputedStyle(fmLcd).display !== "none") {
+                const lr = fmLcd.getBoundingClientRect();
+                const svr = fmSvg.getBoundingClientRect();
+                const hdr = fmHead.getBoundingClientRect();
+                const availH = lr.bottom - hdr.bottom - 8;
+                check(
+                  svr.height >= availH - 4 && svr.height >= 40,
+                  `section "${secTitle}" .fm-lcd svg height ${svr.height.toFixed(1)}px too small for LCD (avail ${availH.toFixed(1)}px)`
+                );
+              }
+            }
+
+            // Drum pads: pad labels never clip or touch the pad edge
+            const pads = Array.from(document.querySelectorAll(".kb.is-pads .key.pad"));
+            for (const pad of pads) {
+              const pr = pad.getBoundingClientRect();
+              const nameEl = pad.querySelector(".pad-name");
+              if (nameEl) {
+                const nr = nameEl.getBoundingClientRect();
+                check(
+                  nameEl.scrollWidth <= nameEl.clientWidth + 1 &&
+                    nr.left - pr.left >= 4 - EPS &&
+                    pr.right - nr.right >= 4 - EPS &&
+                    nr.top - pr.top >= 4 - EPS &&
+                    pr.bottom - nr.bottom >= 4 - EPS,
+                  `drum pad "${nameEl.textContent}" label clips or touches pad edge (L=${(nr.left - pr.left).toFixed(1)}, R=${(pr.right - nr.right).toFixed(1)}, T=${(nr.top - pr.top).toFixed(1)}, B=${(pr.bottom - nr.bottom).toFixed(1)})`
+                );
+              }
+            }
+          }
+        }
+
+        return { states, checks, issues };
+      }, vpTag);
+
+      totalStates += vpReport.states;
+      totalChecks += vpReport.checks;
+      failures.push(...vpReport.issues);
+    }
+
+    // Multi-pointer & computer-keyboard HOLD / ARP verification on coarsePage (1180x820)
+    await coarsePage.setViewportSize({ width: 1180, height: 820 });
+    const holdReport = await coarsePage.evaluate(() => {
+      const issues = [];
+      let checks = 0;
+      const check = (cond, msg) => {
+        checks++;
+        if (!cond) issues.push(`[HOLD-test] ${msg}`);
+      };
+
+      const machineSel = document.getElementById("machine-select");
+      if (machineSel) {
+        machineSel.value = "sy1";
+        machineSel.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      const holdBtn = document.getElementById("kb-hold");
+      const arpBtn = document.getElementById("kb-arp");
+      const kb = document.getElementById("kb");
+      const c4 = document.querySelector('.key[data-midi="60"]');
+      const e4 = document.querySelector('.key[data-midi="64"]');
+
+      check(
+        !!holdBtn && getComputedStyle(holdBtn).touchAction === "none",
+        "#kb-hold must have touch-action: none"
+      );
+      check(
+        !!arpBtn && getComputedStyle(arpBtn).touchAction === "none",
+        "#kb-arp must have touch-action: none"
+      );
+      check(
+        holdBtn?.getAttribute("aria-pressed") === "false",
+        "HOLD must start off"
+      );
+
+      if (kb && c4 && e4 && holdBtn && arpBtn) {
+        const rC4 = c4.getBoundingClientRect();
+        const rE4 = e4.getBoundingClientRect();
+        const rHold = holdBtn.getBoundingClientRect();
+
+        // Pointer 1 holds C4 (60), Pointer 2 holds E4 (64)
+        kb.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 11,
+            pointerType: "touch",
+            clientX: rC4.left + rC4.width / 2,
+            clientY: rC4.bottom - 10
+          })
+        );
+        kb.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 12,
+            pointerType: "touch",
+            clientX: rE4.left + rE4.width / 2,
+            clientY: rE4.bottom - 10
+          })
+        );
+        check(
+          c4.classList.contains("is-pressed") && e4.classList.contains("is-pressed"),
+          "C4 and E4 should be pressed while pointers 11 & 12 hold them"
+        );
+
+        // Pointer 3 taps HOLD while Pointers 1 & 2 are still holding C4 & E4 (no click event dispatched!)
+        holdBtn.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 13,
+            pointerType: "touch",
+            clientX: rHold.left + rHold.width / 2,
+            clientY: rHold.top + rHold.height / 2
+          })
+        );
+        holdBtn.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 13,
+            pointerType: "touch"
+          })
+        );
+        check(
+          holdBtn.getAttribute("aria-pressed") === "true" && holdBtn.classList.contains("active"),
+          "HOLD should toggle on via pointerdown while keys are held"
+        );
+
+        // Lift Pointers 1 & 2 -> C4 and E4 must remain latched and sounding (.is-pressed)
+        kb.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 11,
+            pointerType: "touch"
+          })
+        );
+        kb.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 12,
+            pointerType: "touch"
+          })
+        );
+        check(
+          c4.classList.contains("is-pressed") && e4.classList.contains("is-pressed"),
+          "C4 and E4 must remain latched (.is-pressed) after lifting pointers 11 & 12"
+        );
+
+        // Re-pressing a latched note (C4) stops it while E4 stays latched
+        kb.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 14,
+            pointerType: "touch",
+            clientX: rC4.left + rC4.width / 2,
+            clientY: rC4.bottom - 10
+          })
+        );
+        kb.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 14,
+            pointerType: "touch"
+          })
+        );
+        check(
+          !c4.classList.contains("is-pressed") && e4.classList.contains("is-pressed"),
+          "Re-pressing latched C4 should stop C4 while keeping E4 latched"
+        );
+
+        // Tap HOLD again -> E4 stops and HOLD turns off
+        holdBtn.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 15,
+            pointerType: "touch"
+          })
+        );
+        check(
+          holdBtn.getAttribute("aria-pressed") === "false" &&
+            !c4.classList.contains("is-pressed") &&
+            !e4.classList.contains("is-pressed"),
+          "Tapping HOLD again must release latched notes and turn HOLD off"
+        );
+
+        // Computer keyboard + mouse test: hold 'a' (C3=48) and 'd' (E3=52), mouse pointerdown on HOLD, release keys
+        const c3 = document.querySelector('.key[data-midi="48"]');
+        const e3 = document.querySelector('.key[data-midi="52"]');
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true }));
+        check(
+          !!c3 && !!e3 && c3.classList.contains("is-pressed") && e3.classList.contains("is-pressed"),
+          "Computer keys 'a' and 'd' should press C3 and E3"
+        );
+        holdBtn.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 1,
+            pointerType: "mouse",
+            button: 0
+          })
+        );
+        document.dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true }));
+        document.dispatchEvent(new KeyboardEvent("keyup", { key: "d", bubbles: true }));
+        check(
+          holdBtn.getAttribute("aria-pressed") === "true" &&
+            !!c3 &&
+            !!e3 &&
+            c3.classList.contains("is-pressed") &&
+            e3.classList.contains("is-pressed"),
+          "C3 and E3 should stay latched after releasing computer keys 'a' and 'd'"
+        );
+
+        // Keyboard Space on HOLD toggles it off
+        holdBtn.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+        check(
+          holdBtn.getAttribute("aria-pressed") === "false" &&
+            !!c3 &&
+            !!e3 &&
+            !c3.classList.contains("is-pressed") &&
+            !e3.classList.contains("is-pressed"),
+          "Space key on #kb-hold should toggle HOLD off and release notes"
+        );
+
+        // ARP button pointerdown toggles popover while key is held
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+        arpBtn.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 16,
+            pointerType: "touch"
+          })
+        );
+        check(
+          arpBtn.getAttribute("aria-expanded") === "true",
+          "ARP button should open on pointerdown while a key is held"
+        );
+        arpBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        check(
+          arpBtn.getAttribute("aria-expanded") === "false",
+          "ARP button should close on Enter keydown"
+        );
+        document.dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true }));
+
+        // Mono mode (Tabriz): pointer holds C4, pointer B taps HOLD, lift A -> stays sounding; preset load resets HOLD
+        if (machineSel) {
+          machineSel.value = "tabriz";
+          machineSel.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        const mHold = document.getElementById("kb-hold")!;
+        const mKb = document.getElementById("kb")!;
+        const mC4 = document.querySelector('.key[data-midi="60"]')!;
+        const rMC4 = mC4.getBoundingClientRect();
+        mKb.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 21,
+            pointerType: "touch",
+            clientX: rMC4.left + rMC4.width / 2,
+            clientY: rMC4.bottom - 10
+          })
+        );
+        mHold.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 22,
+            pointerType: "touch"
+          })
+        );
+        mKb.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 21,
+            pointerType: "touch"
+          })
+        );
+        check(
+          mHold.getAttribute("aria-pressed") === "true" && mC4.classList.contains("is-pressed"),
+          "Mono mode (Tabriz): C4 should remain latched after lifting pointer 21"
+        );
+        // Step preset -> resets HOLD to off and releases latched note
+        const nextPresetBtn = document.querySelector('[data-action="preset-next"]') as HTMLElement | null;
+        if (nextPresetBtn) nextPresetBtn.click();
+        check(
+          mHold.getAttribute("aria-pressed") === "false" && !mC4.classList.contains("is-pressed"),
+          "Loading a preset must turn HOLD off and release latched notes"
+        );
+
+        // Arpeggiator mode (Baku): pointers hold C4 & E4, pointer taps HOLD, lift pointers -> stays latched; machine switch resets HOLD
+        if (machineSel) {
+          machineSel.value = "baku";
+          machineSel.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        const aHold = document.getElementById("kb-hold")!;
+        const aKb = document.getElementById("kb")!;
+        const aC4 = document.querySelector('.key[data-midi="60"]')!;
+        const aE4 = document.querySelector('.key[data-midi="64"]')!;
+        const rAC4 = aC4.getBoundingClientRect();
+        const rAE4 = aE4.getBoundingClientRect();
+        aKb.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 31,
+            pointerType: "touch",
+            clientX: rAC4.left + rAC4.width / 2,
+            clientY: rAC4.bottom - 10
+          })
+        );
+        aKb.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 32,
+            pointerType: "touch",
+            clientX: rAE4.left + rAE4.width / 2,
+            clientY: rAE4.bottom - 10
+          })
+        );
+        aHold.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 33,
+            pointerType: "touch"
+          })
+        );
+        aKb.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 31,
+            pointerType: "touch"
+          })
+        );
+        aKb.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 32,
+            pointerType: "touch"
+          })
+        );
+        check(
+          aHold.getAttribute("aria-pressed") === "true" &&
+            aC4.classList.contains("is-pressed") &&
+            aE4.classList.contains("is-pressed"),
+          "Arp mode (Baku): C4 & E4 should remain latched after lifting pointers 31 & 32"
+        );
+        // Switch machine -> resets HOLD to off
+        if (machineSel) {
+          machineSel.value = "sy1";
+          machineSel.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        const sHold = document.getElementById("kb-hold")!;
+        const sC4 = document.querySelector('.key[data-midi="60"]')!;
+        check(
+          sHold.getAttribute("aria-pressed") === "false" && !sC4.classList.contains("is-pressed"),
+          "Switching machine must turn HOLD off and release latched notes"
+        );
+
+        // ARP <-> HOLD handover test on SY-1 (poly) and Tabriz (mono) via window.SY1 and UI
+        const SY1 = (window as any).SY1;
+        for (const mId of ["sy1", "tabriz"]) {
+          SY1.setMachine(mId);
+          SY1.setParam("arpOn", "off");
+          SY1.setParam("hold", "on");
+          const kC = document.querySelector('.key[data-midi="60"]')!;
+          const kE = document.querySelector('.key[data-midi="64"]')!;
+          const kG = document.querySelector('.key[data-midi="67"]')!;
+          const hBtn = document.getElementById("kb-hold")!;
+
+          // Play C-E-G, lift -> sounding & latched
+          SY1.noteOn(60);
+          SY1.noteOn(64);
+          SY1.noteOn(67);
+          SY1.noteOff(60);
+          SY1.noteOff(64);
+          SY1.noteOff(67);
+          check(
+            SY1.getPatch().hold === "on" &&
+              hBtn.getAttribute("aria-pressed") === "true" &&
+              kC.classList.contains("is-pressed") &&
+              kE.classList.contains("is-pressed") &&
+              kG.classList.contains("is-pressed"),
+            `[${mId}] HOLD on, play C-E-G, lift -> C-E-G latched & highlighted`
+          );
+
+          // ARP on -> arpeggio of C-E-G, HOLD still on
+          SY1.setParam("arpOn", "on");
+          check(
+            SY1.getPatch().arpOn === "on" &&
+              SY1.getPatch().hold === "on" &&
+              hBtn.getAttribute("aria-pressed") === "true" &&
+              kC.classList.contains("is-pressed") &&
+              kE.classList.contains("is-pressed") &&
+              kG.classList.contains("is-pressed"),
+            `[${mId}] ARP on -> C-E-G handed over to arp, HOLD still on`
+          );
+
+          // ARP off -> C-E-G sustained voices (or priority note in mono), HOLD still on, notes still latched
+          SY1.setParam("arpOn", "off");
+          check(
+            SY1.getPatch().arpOn === "off" &&
+              SY1.getPatch().hold === "on" &&
+              hBtn.getAttribute("aria-pressed") === "true" &&
+              kC.classList.contains("is-pressed") &&
+              kE.classList.contains("is-pressed") &&
+              kG.classList.contains("is-pressed"),
+            `[${mId}] ARP off -> C-E-G stay latched, HOLD still on`
+          );
+
+          // Re-press E -> only E stops
+          SY1.noteOn(64);
+          SY1.noteOff(64);
+          check(
+            kC.classList.contains("is-pressed") &&
+              !kE.classList.contains("is-pressed") &&
+              kG.classList.contains("is-pressed"),
+            `[${mId}] Re-pressing E removes only E while C and G stay latched`
+          );
+
+          // HOLD off -> silence
+          SY1.setParam("hold", "off");
+          check(
+            SY1.getPatch().hold === "off" &&
+              hBtn.getAttribute("aria-pressed") === "false" &&
+              !kC.classList.contains("is-pressed") &&
+              !kE.classList.contains("is-pressed") &&
+              !kG.classList.contains("is-pressed"),
+            `[${mId}] HOLD off releases all latched notes`
+          );
+
+          // Physically held keys across ARP on -> off -> on, and PANIC cleanup
+          SY1.noteOn(60);
+          SY1.noteOn(64);
+          SY1.setParam("arpOn", "on");
+          check(
+            kC.classList.contains("is-pressed") && kE.classList.contains("is-pressed"),
+            `[${mId}] Physically held C & E stay active when ARP turned on`
+          );
+          SY1.setParam("arpOn", "off");
+          if (mId === "tabriz") {
+            check(
+              kE.classList.contains("is-pressed"),
+              `[${mId}] Physically held priority note E stays active when ARP turned off`
+            );
+            SY1.noteOff(64);
+            check(
+              kC.classList.contains("is-pressed") && !kE.classList.contains("is-pressed"),
+              `[${mId}] Releasing E falls back to physically held C in mono mode`
+            );
+          } else {
+            check(
+              kC.classList.contains("is-pressed") && kE.classList.contains("is-pressed"),
+              `[${mId}] Physically held C & E stay active when ARP turned off`
+            );
+          }
+          SY1.allNotesOff();
+          check(
+            !kC.classList.contains("is-pressed") && !kE.classList.contains("is-pressed"),
+            `[${mId}] No stuck notes after PANIC (allNotesOff)`
+          );
+        }
+      }
+      return { checks, issues };
+    });
+    totalChecks += holdReport.checks;
+    failures.push(...holdReport.issues);
+  } finally {
+    await browser.close();
+    await server.close();
+  }
+
+  console.log(
+    `Layout Audit Summary: ${totalStates} states (${VIEWPORTS.length} viewports), ${totalChecks} checks run, ${failures.length} failures.`
+  );
+  if (failures.length > 0) {
+    console.log("\nSample failures:");
+    const seen = new Set();
+    for (const f of failures) {
+      const key = f.replace(/^\[[^\]]+\]\s+\[[^\]]+\]\s+/, "");
+      if (!seen.has(key)) {
+        seen.add(key);
+        console.log("  - " + f);
+        if (seen.size >= 30) break;
+      }
+    }
+    process.exit(1);
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

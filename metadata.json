@@ -1,0 +1,6 @@
+{
+  "name": "Synthesizer New",
+  "description": "SY-1 standalone browser subtractive synthesizer built with Web Audio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

@@ -1,0 +1,403 @@
+/* LOCKED: do not change keyboard size or styling unless the user explicitly asks. */
+
+:root {
+  --keys-h: clamp(150px, 34vh, 320px);
+  --kb-white-top: #dfdad0;
+  --kb-white-bottom: #beb39e;
+  --kb-black-top: #4c4c55;
+  --kb-black-bottom: #141418;
+  --kb-accent: var(--accent, #f2b33d);
+  --kb-pattern: none;
+  --kb-frame: #09090c;
+  --kb-wheel: #2f2f38;
+}
+
+@media (max-width: 599px) {
+  :root {
+    --keys-h: clamp(150px, 30vh, 260px);
+  }
+}
+
+@media (max-height: 499px) {
+  :root {
+    --keys-h: clamp(110px, 38vh, 200px);
+  }
+}
+
+.kb-area {
+  flex: 0 0 auto !important;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+}
+
+.kb-main {
+  flex: 0 0 var(--keys-h) !important;
+  min-width: 0;
+  height: var(--keys-h) !important;
+  min-height: var(--keys-h) !important;
+  max-height: var(--keys-h) !important;
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-2);
+  container-type: size;
+}
+
+.kb-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.kb-col > .kb {
+  flex: 1 1 auto;
+  height: 100%;
+}
+
+/* ============================================================
+   3D Piano Keybed & Keys (White Ivory + Bevelled Ebony)
+   ============================================================ */
+.kb {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid var(--kb-frame, #09090c);
+  background: var(--kb-frame, #09090c);
+  box-shadow:
+    inset 0 3px 6px rgba(0, 0, 0, 0.85),
+    0 -1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 24px rgba(0, 0, 0, 0.55);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  direction: ltr;
+}
+
+/* Subtle dark red/burgundy keybed felt strip along top of keys */
+.kb:not(.is-pads)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(180deg, #2a090d 0%, #56141c 55%, #160507 100%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* 3D White Keys: warm ivory gradient, soft bottom lip, side shadow */
+.key:not(.black):not(.pad) {
+  position: relative;
+  flex: 1 1 0;
+  border-right: 1px solid #161512;
+  border-radius: 0 0 6px 6px;
+  background: linear-gradient(
+    180deg,
+    var(--kb-white-top, #dfdad0) 0%,
+    color-mix(in srgb, var(--kb-white-top, #f6f2e8) 60%, #ffffff 40%) 6%,
+    #fdfbf5 22%,
+    #f5f0e4 74%,
+    color-mix(in srgb, var(--kb-white-bottom, #e8e0d0) 70%, #ffffff 30%) 90%,
+    var(--kb-white-bottom, #d4cbb9) 95%,
+    color-mix(in srgb, var(--kb-white-bottom, #beb39e) 80%, #000000 20%) 100%
+  );
+  box-shadow:
+    inset 0 4px 5px rgba(0, 0, 0, 0.28),
+    inset 1px 0 0 rgba(255, 255, 255, 0.92),
+    inset -1px 0 2px rgba(0, 0, 0, 0.18),
+    inset 0 -7px 0 color-mix(in srgb, var(--kb-white-bottom, #c7bda8) 85%, #000000 15%),
+    inset 0 -8px 0 rgba(255, 255, 255, 0.8),
+    0 2px 4px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 10px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: #5c574f;
+  cursor: pointer;
+  transform: translateY(0);
+  transition: transform 45ms ease, background 60ms ease, box-shadow 60ms ease;
+}
+
+/* Optional motif on the lower third of white keys (max 6% opacity) */
+.key:not(.black):not(.pad)::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 33%;
+  background: var(--kb-pattern, none);
+  opacity: 0.05;
+  pointer-events: none;
+  border-radius: 0 0 6px 6px;
+  z-index: 1;
+}
+
+/* Pressed White Key: sinks 2px, filled with vivid gradient of machine accent (30% top -> 70% bottom), bright bottom accent line, soft outer glow */
+.key:not(.black):not(.pad).is-pressed {
+  transform: translateY(2px);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--kb-accent, var(--accent)) 30%, var(--kb-white-top, #dfdad0)) 0%,
+    color-mix(in srgb, var(--kb-accent, var(--accent)) 42%, #f5f0e4) 30%,
+    color-mix(in srgb, var(--kb-accent, var(--accent)) 58%, #ede2cb) 65%,
+    color-mix(in srgb, var(--kb-accent, var(--accent)) 70%, var(--kb-white-bottom, #d4cbb9)) 90%,
+    var(--kb-accent, var(--accent)) 100%
+  ) !important;
+  color: #1a1612 !important;
+  box-shadow:
+    inset 0 4px 6px rgba(0, 0, 0, 0.35),
+    inset 1px 0 0 rgba(255, 255, 255, 0.65),
+    inset -1px 0 2px rgba(0, 0, 0, 0.25),
+    inset 0 -3px 0 #ffffff,
+    inset 0 -6px 0 var(--kb-accent, var(--accent)),
+    0 0 16px var(--accent-glow, rgba(242, 179, 61, 0.75)),
+    0 2px 5px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* 3D Black Keys: 62% of white key height, 58% of white key width */
+.key.black {
+  position: absolute;
+  top: 0;
+  width: calc(100% / var(--whites) * 0.58);
+  height: 62%;
+  z-index: 2;
+  border: 1px solid #050507;
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  background: linear-gradient(
+    180deg,
+    var(--kb-black-bottom, #141418) 0%,
+    color-mix(in srgb, var(--kb-black-bottom, #1f1f25) 80%, #000000 20%) 72%,
+    #0c0c10 88%,
+    color-mix(in srgb, var(--kb-black-top, #25252c) 70%, #000000 30%) 96%,
+    #08080a 100%
+  );
+  color: #b8b5ad;
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 10px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow:
+    3px 8px 9px rgba(0, 0, 0, 0.58),
+    -1px 5px 5px rgba(0, 0, 0, 0.42),
+    inset 0 -9px 0 #0a0a0d,
+    inset 1px 0 0 rgba(255, 255, 255, 0.15),
+    inset -1px 0 0 rgba(0, 0, 0, 0.75);
+  transform: translateY(0);
+  transition: transform 45ms ease, box-shadow 60ms ease;
+}
+
+/* Lighter bevelled top face on black keys */
+.key.black::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: calc(100% - 9px);
+  border-radius: 0 0 3.5px 3.5px;
+  background: linear-gradient(
+    180deg,
+    var(--kb-black-top, #4c4c55) 0%,
+    color-mix(in srgb, var(--kb-black-top, #35353d) 80%, #000000 20%) 14%,
+    var(--kb-black-bottom, #24242a) 80%,
+    color-mix(in srgb, var(--kb-black-top, #3e3e47) 90%, #ffffff 10%) 95%,
+    #1b1b20 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    inset 1px 0 0 rgba(255, 255, 255, 0.14),
+    inset -1px 0 0 rgba(0, 0, 0, 0.5),
+    0 2px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Pressed Black Key: sinks 2px, accent colour on top face (::before) plus glow */
+.key.black.is-pressed {
+  transform: translateY(2px);
+  background: linear-gradient(
+    180deg,
+    #0a0a0d 0%,
+    #141418 75%,
+    #08080a 90%,
+    var(--kb-black-bottom, #141418) 100%
+  ) !important;
+  color: #ffffff !important;
+  box-shadow:
+    1px 3px 4px rgba(0, 0, 0, 0.75),
+    0 0 16px var(--accent-glow, rgba(242, 179, 61, 0.75)),
+    inset 0 -3px 0 var(--kb-accent, var(--accent)),
+    inset 0 -6px 0 #070709,
+    inset 1px 0 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.key.black.is-pressed::before {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--kb-accent, var(--accent)) 70%, #ffffff 30%) 0%,
+    var(--kb-accent, var(--accent)) 30%,
+    color-mix(in srgb, var(--kb-accent, var(--accent)) 85%, #000000 15%) 80%,
+    color-mix(in srgb, var(--kb-accent, var(--accent)) 65%, #000000 35%) 100%
+  ) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    inset 1px 0 0 rgba(255, 255, 255, 0.35),
+    0 0 12px var(--accent-glow, rgba(242, 179, 61, 0.75)) !important;
+}
+
+/* ============================================================
+   Recessed Ribbed Pitch-Bend & Modulation Wheels
+   ============================================================ */
+.kb-wheels {
+  flex: none;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-1);
+  padding: 4px;
+  border-radius: 9px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--kb-frame, #16161a) 85%, #ffffff 15%) 0%,
+    var(--kb-frame, #0e0e11) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.85),
+    0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.kb-wheel {
+  position: relative;
+  width: 28px;
+  height: 100%;
+  border-radius: 6px;
+  border: 1px solid #050507;
+  background:
+    radial-gradient(ellipse at 50% 50%, rgba(255, 255, 255, 0.11) 0%, transparent 68%),
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.08) 0px,
+      rgba(255, 255, 255, 0.08) 1.5px,
+      rgba(0, 0, 0, 0.65) 1.5px,
+      rgba(0, 0, 0, 0.65) 4px
+    ),
+    linear-gradient(
+      180deg,
+      #050507 0%,
+      color-mix(in srgb, var(--kb-wheel, #1b1b21) 70%, #000000 30%) 20%,
+      var(--kb-wheel, #2f2f38) 48%,
+      color-mix(in srgb, var(--kb-wheel, #383842) 85%, #ffffff 15%) 52%,
+      color-mix(in srgb, var(--kb-wheel, #1b1b21) 70%, #000000 30%) 80%,
+      #050507 100%
+    );
+  box-shadow:
+    inset 0 10px 14px rgba(0, 0, 0, 0.9),
+    inset 0 -10px 14px rgba(0, 0, 0, 0.9),
+    inset 2px 0 4px rgba(0, 0, 0, 0.75),
+    inset -2px 0 4px rgba(0, 0, 0, 0.75),
+    0 1px 0 rgba(255, 255, 255, 0.1);
+  touch-action: none;
+  cursor: ns-resize;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.kb-wheel[data-wheel="bend"]::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 50%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.kb-wheel[data-wheel="mod"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    var(--accent-glow-soft) calc(var(--v) * 100%),
+    transparent calc(var(--v) * 100% + 12%)
+  );
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.kb-wheel-thumb {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 16%;
+  min-height: 14px;
+  bottom: calc(var(--v) * 84%);
+  border-radius: 3px;
+  background: linear-gradient(
+    180deg,
+    #1c1c22 0%,
+    #575762 22%,
+    #d8d5ce 46%,
+    #ffffff 50%,
+    #a8a49c 56%,
+    #3b3b44 82%,
+    #141418 100%
+  );
+  border: 1px solid #09090c;
+  box-shadow:
+    0 4px 7px rgba(0, 0, 0, 0.85),
+    0 -2px 4px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  z-index: 1;
+}
+
+.kb-wheel-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3px;
+  text-align: center;
+  font-size: 0.48rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: rgba(236, 230, 218, 0.72);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
+  pointer-events: none;
+  z-index: 2;
+}
+
+@media (pointer: coarse) and (min-width: 761px) and (min-height: 761px) {
+  .kb-wheel { width: 32px; }
+}
+
+@media (max-width: 760px) and (orientation: portrait) {
+  .kb-wheel { width: 24px; }
+}
+
+@media (max-height: 499px) {
+  .kb-wheel { width: 22px; }
+}
