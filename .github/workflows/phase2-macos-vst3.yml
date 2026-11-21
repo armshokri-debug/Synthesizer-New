@@ -1,0 +1,126 @@
+name: Phase 2 - pinned Intel VST3 validation
+on:
+  push:
+    branches: [fix/realtime-state-publication]
+    paths: [.github/workflows/phase2-macos-vst3.yml]
+permissions:
+  contents: read
+jobs:
+  validate-intel:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    env:
+      SOURCE_SHA: b29402efe2cfa6085dc4c874a5fa87ac554d1d62
+      BASELINE_SHA: c3f7c3e883b8185c543144cfa1b46c18883a6e5d
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b29402efe2cfa6085dc4c874a5fa87ac554d1d62
+          fetch-depth: 0
+      - name: Confirm source and Intel architecture
+        run: |
+          mkdir -p validation
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(uname -m)" = x86_64
+          {
+            echo "SOURCE_SHA=$SOURCE_SHA"
+            echo "WORKFLOW_SHA=$GITHUB_SHA"
+            echo "TARGET_ARCH=x86_64"
+            echo "Target evidence: user's original Mac report, Intel Core i5-8257U, x86_64"
+            sw_vers
+            uname -m
+            xcodebuild -version
+            clang++ --version
+          } | tee validation/environment.txt
+          git worktree add --detach "$RUNNER_TEMP/sy1-baseline" "$BASELINE_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.3'
+      - name: Prepare embedded resources
+        run: |
+          npm ci 2>&1 | tee validation/npm-ci.txt
+          npm run lint 2>&1 | tee validation/lint.txt
+          bash plugin/prepare.sh 2>&1 | tee validation/resources.txt
+      - name: Native DSP, QuickJS dispatch and timer regressions
+        run: |
+          bash native/tests/perf/check_cpu_fix.sh 2>&1 | tee validation/dsp.txt
+          node native/tests/timer_cancel.mjs 2>&1 | tee validation/timers.txt
+          bash native/tests/perf/build.sh "$RUNNER_TEMP/sy1-baseline" "$RUNNER_TEMP/sy1-tests" 2>&1 | tee validation/dispatch-and-pair-build.txt
+          c++ -O3 -ffp-contract=off -std=c++17 native/tests/perf/engine_exact.cpp "$RUNNER_TEMP/sy1-tests/before-pair.o" "$RUNNER_TEMP/sy1-tests/after-pair.o" "$RUNNER_TEMP"/sy1-tests/obj/*.o -lm -pthread -o "$RUNNER_TEMP/sy1-tests/engine-exact"
+          "$RUNNER_TEMP/sy1-tests/engine-exact" "$RUNNER_TEMP/sy1-baseline/native/js/wa-shim.js" 2>&1 | tee validation/engine-exact.txt
+      - name: Configure Release VST3 and C++ tests
+        run: |
+          cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DSY1_TESTS=ON 2>&1 | tee validation/configure.txt
+      - name: Build Release
+        run: |
+          cmake --build plugin/build --config Release --target SY1_VST3 SY1HostTest SY1UiScopeTest SY1UiEventsTest SY1StateSnapshotsTest SY1StateRuntimeTest --parallel 3 2>&1 | tee validation/build.txt
+      - name: CTest state, QuickJS and concurrency tests
+        run: |
+          ctest --test-dir plugin/build -C Release --output-on-failure --timeout 120 2>&1 | tee validation/ctest.txt
+      - name: JUCE host MIDI, automation and project-state regressions
+        run: |
+          plugin/build/SY1HostTest_artefacts/Release/SY1HostTest 2>&1 | tee validation/host.txt
+      - name: Verify architecture and sign test binary
+        run: |
+          bundle="plugin/build/SY1_artefacts/Release/VST3/SY-1.vst3"
+          binary="$bundle/Contents/MacOS/SY-1"
+          test "$(lipo -archs "$binary")" = x86_64
+          codesign --force --deep --sign - "$bundle"
+          codesign --verify --deep --strict "$bundle"
+          file "$binary" | tee validation/binary.txt
+          shasum -a 256 "$binary" | tee validation/binary-sha256.txt
+          otool -l "$binary" > validation/macho.txt
+      - name: pluginval strictness 5
+        run: |
+          curl --fail --location --retry 3 https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip -o "$RUNNER_TEMP/pluginval.zip"
+          echo "3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f  $RUNNER_TEMP/pluginval.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/pluginval.zip" "$RUNNER_TEMP/pluginval"
+          "$RUNNER_TEMP/pluginval/pluginval.app/Contents/MacOS/pluginval" --strictness-level 5 --validate "$PWD/plugin/build/SY1_artefacts/Release/VST3/SY-1.vst3" 2>&1 | tee validation/pluginval.txt
+      - name: Package validated VST3 with source identity and report
+        run: |
+          package="$RUNNER_TEMP/SY1-Phase2-Intel"
+          mkdir -p "$package/VST3"
+          ditto plugin/build/SY1_artefacts/Release/VST3/SY-1.vst3 "$package/VST3/SY-1.vst3"
+          cp -R validation "$package/validation"
+          export PACKAGE_PATH="$package"
+          python3 - <<'PY'
+          import hashlib, os, pathlib
+          p = pathlib.Path(os.environ['PACKAGE_PATH'])
+          binary = p / 'VST3/SY-1.vst3/Contents/MacOS/SY-1'
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          report = f'''# SY-1 Phase 2 — validated test candidate
+          Source commit: {os.environ['SOURCE_SHA']}
+          Workflow commit: {os.environ['GITHUB_SHA']}
+          Target: Intel x86_64, macOS 11.0 or later
+          Configuration: Release, JUCE 8.0.15, Bun 1.3.3
+          Binary SHA-256: {digest}
+          Signing: local ad-hoc signature, verified. This package is not notarized.
+          Passed: DSP component and HQ equivalence tests; QuickJS synchronous/deferred dispatch; timer cancellation; 40 full-engine bit-identical comparisons against c3f7c3e, including rapid cutoff/resonance and buffers 32/64/128/256/512; four CTest state/UI tests; JUCE host MIDI/automation/state regressions; pluginval v1.0.4 strictness 5; Mach-O x86_64 and signature checks.
+          Detailed command output is in validation/.
+          This archive contains a VST3 test bundle and no automatic installer.
+          No Ableton hardware playback or CPU improvement has been validated.
+          Remaining acceptance: separately authorize test installation, confirm loaded path/hash, compare the same project with one and 6–8 instances at identical device/rate/buffer, open/closed editor, rapid knob changes and recorded automation, save/reopen and preset/MIDI recall. Record overload/glitches and callback timing where available.
+          '''
+          (p / 'BUILD-REPORT.md').write_text(report)
+          (p / 'SHA256.txt').write_text(f'{digest}  VST3/SY-1.vst3/Contents/MacOS/SY-1\n')
+          print(report)
+          PY
+          ditto -c -k --keepParent "$package" SY1-Phase2-Intel-b29402e.zip
+          shasum -a 256 SY1-Phase2-Intel-b29402e.zip | tee validation/archive-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SY1-Phase2-Intel-b29402e
+          path: SY1-Phase2-Intel-b29402e.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SY1-Phase2-validation-logs
+          path: validation/
+          if-no-files-found: warn
