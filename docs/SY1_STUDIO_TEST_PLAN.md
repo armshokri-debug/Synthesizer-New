@@ -1,3 +1,5 @@
+> **Phase 5 — 2026-11-21:** Synth-view MIDI recording and shared audio-clock metronome implemented on `feat/synth-recording-workflow`; fresh results and limitations: [Phase 5 report](SY1_STUDIO_PHASE5.md). Review only; no merge/deploy.
+
 > **2026-11-21 recovery update:** Fresh main `23cd2f2` audit and repair evidence: [Studio recovery report](SY1_STUDIO_RECOVERY_2026-11-21.md). The historical sections below are retained; their test counts and seven-machine scope are superseded by that report.
 
 # SY-1 Studio (Web) — Master Acceptance Test Plan
