@@ -39,6 +39,7 @@ import { initOrientalPanel } from "./ui/oriental-panel";
 import { initLibrary } from "./ui/library";
 import { initMachineBrowser } from "./ui/machine-browser";
 import { initDawPanel } from "./ui/daw-panel";
+import { initSynthRecording } from "./ui/synth-recording";
 import { setMirrorSink } from "./engine/mirror";
 import { applyEngineCall } from "./engine/calls";
 import { getParamMacro, paramNorm } from "./engine/cc-map";
@@ -60,6 +61,7 @@ import {
   initStudioPanel,
   isStudioPlayheadLoopActive,
   saveStudioProjectNow,
+  scheduleAutosave,
   showStudioPanel
 } from "./ui/studio-panel";
 
@@ -130,6 +132,7 @@ function initApp(): void {
 
   // Web-only SY-1 Studio initialization (strictly disabled inside AU/VST3 plugin)
   if (!plugin) {
+    let synthRecording: ReturnType<typeof initSynthRecording>;
     const enterStudioMode = () => {
       allNotesOff();
       studioEngine.setActive(true);
@@ -179,7 +182,7 @@ function initApp(): void {
     const exitStudioMode = () => {
       studioEngine.setActive(false);
       studioEngine.setKeyHighlightListener(null);
-      setMidiInputInterceptor(null);
+      setMidiInputInterceptor((cmd,d1,d2,ch)=>synthRecording.captureController(cmd,d1,d2,ch));
       setKeyboardTarget(null);
       hideStudioPanel();
       fitPanel();
@@ -188,6 +191,8 @@ function initApp(): void {
     initStudioPanel({ onClose: exitStudioMode });
     setStudioOpenHandler(enterStudioMode);
     const readyHydrate = hydrateStudioFromStorage();
+    synthRecording = initSynthRecording(studioEngine, { ready: readyHydrate, openStudio: enterStudioMode, autosave: scheduleAutosave, save: saveStudioProjectNow });
+    setMidiInputInterceptor((cmd,d1,d2,ch)=>synthRecording.captureController(cmd,d1,d2,ch));
     studioEngine.onChange(() => {
       if (studioEngine.isActive()) {
         const ft = studioEngine.getFocusedTrack();

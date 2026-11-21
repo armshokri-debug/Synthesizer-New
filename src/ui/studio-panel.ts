@@ -245,7 +245,7 @@ export async function hydrateStudioFromStorage(): Promise<boolean> {
   }
 }
 
-function scheduleAutosave(): void {
+export function scheduleAutosave(): void {
   if (suppressNextAutosave || !studioStorage.isAvailable()) return;
   if (autosaveTimer !== null) clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
@@ -532,6 +532,9 @@ function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEng
           </div>
         </div>
         <div class="st-mix-db" data-st-db-lbl="${escapeHtml(t.id)}">${fmtDb(t.volume)}</div>
+        <label class="st-mix-routing">MIDI input
+          <select class="st-select" data-st-select="channel" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(mDef.name)} MIDI input channel">${midiChannelOptionsHtml(t.midiChannel)}</select>
+        </label>
       </div>`;
     })
     .join("");
@@ -594,7 +597,7 @@ function renderStudioHtml(): string {
       return `<div class="st-track${isFocused ? " is-focused" : ""}" data-track-id="${escapeHtml(t.id)}" data-track-idx="${idx}" style="--trk-color:${color}">
         <div class="st-track-ctl">
           <div class="st-track-top">
-            <button type="button" class="st-track-title" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}" title="Focus ${escapeHtml(t.name)}">${escapeHtml(t.name)}</button>
+            <button type="button" class="st-track-title st-track-focus" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}" aria-label="Focus ${escapeHtml(mDef.name)}" title="Focus instrument">●</button>
             <select class="st-select st-machine-sel" data-st-select="machine" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} instrument" title="Select instrument for ${escapeHtml(t.name)}">
               ${machineOptionsHtml(t.machineId)}
             </select>
@@ -622,9 +625,6 @@ function renderStudioHtml(): string {
             <div class="st-hdr-meter" aria-hidden="true"><span class="st-hdr-meter-fill" data-st-hdr-meter="${escapeHtml(t.id)}" style="transform:scaleX(0)"></span></div>
             <span class="st-track-stats" data-st-meta="${escapeHtml(t.id)}">${noteCount} ${noteUnit}</span>
             <div class="st-track-tools">
-              <select class="st-select st-ch-select" data-st-select="channel" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} MIDI input channel">
-                ${midiChannelOptionsHtml(t.midiChannel)}
-              </select>
               <button type="button" class="st-btn st-tiny-btn" data-st-action="clear-track" data-track-id="${escapeHtml(t.id)}"${t.events.length === 0 ? " disabled" : ""}>Clear</button>
             </div>
           </div>
@@ -682,7 +682,7 @@ function renderStudioHtml(): string {
           <button type="button" class="st-btn" id="st-save-btn" data-st-action="save-project">Save</button>
           <button type="button" class="st-btn${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer">Open</button>
           <div class="st-export-wrap">
-            <button type="button" class="st-btn${exportMenuOpen ? " is-active" : ""}" id="st-export-menu-btn" data-st-action="toggle-export-menu" aria-haspopup="menu" aria-expanded="${exportMenuOpen}">${exporting ? "Rendering…" : exportingStems ? "Stems…" : "Export ▾"}</button>
+            <button type="button" class="st-btn${exportMenuOpen ? " is-active" : ""}" id="st-export-menu-btn" data-st-action="toggle-export-menu" aria-haspopup="menu" aria-expanded="${exportMenuOpen}">${exporting ? "Rendering…" : exportingStems ? "Stems…" : "More ▾"}</button>
             <div class="st-export-menu" id="st-export-menu" role="menu"${exportMenuOpen ? "" : " hidden"}>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-wav" data-st-action="export-wav"${exporting || exportingStems ? " disabled" : ""}>24-bit WAV Mix</button>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-stems" data-st-action="export-stems"${exporting || exportingStems ? " disabled" : ""}>24-bit WAV Stems</button>
@@ -691,6 +691,10 @@ function renderStudioHtml(): string {
               <div class="st-menu-sep"></div>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-project" data-st-action="export-project">Export .sy1studio</button>
               <button type="button" class="st-menu-item" role="menuitem" id="st-import-project-btn" data-st-action="trigger-import-project">Import .sy1studio</button>
+              <div class="st-menu-sep"></div>
+              <button type="button" class="st-menu-item" role="menuitem" data-st-action="metronome" aria-pressed="${studioEngine.getRecordingSettings().metronome}">Metronome: ${studioEngine.getRecordingSettings().metronome ? "On" : "Off"}</button>
+              <button type="button" class="st-menu-item" role="menuitem" data-st-action="count-in" aria-pressed="${studioEngine.getRecordingSettings().countIn}">1-bar Count-in: ${studioEngine.getRecordingSettings().countIn ? "On" : "Off"}</button>
+              <label class="st-click-level">Click volume <input id="st-click-volume" type="range" min="0" max="1" step="0.01" value="${studioEngine.getRecordingSettings().clickVolume}" aria-label="Metronome volume"></label>
             </div>
             <input type="file" id="st-import-file" accept=".sy1studio,.json,application/json" hidden />
           </div>
@@ -808,8 +812,8 @@ function renderStudioHtml(): string {
                 <button type="button" class="st-dock-tab${activeDockTab === "instrument" && !dockCollapsed ? " is-active" : ""}" id="st-tab-instrument" role="tab" aria-selected="${activeDockTab === "instrument" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="instrument">Instrument</button>
               </div>
               <div class="st-dock-focused">
-                <span class="st-dock-track-name">${escapeHtml(focused.name)}</span>
-                <span class="st-dock-track-sub">${escapeHtml(focusedMachine.name)} · ${escapeHtml(focused.presetName)}</span>
+                <span class="st-dock-track-name">${escapeHtml(focusedMachine.name)}</span>
+                <span class="st-dock-track-sub">${escapeHtml(focused.presetName)}</span>
               </div>
               <div class="st-dock-actions">
                 <button type="button" class="st-btn st-tiny-btn${dockExpanded ? " is-active" : ""}" id="st-dock-expand" data-st-action="dock-expand" aria-pressed="${dockExpanded}" title="Toggle full-height focused view">${dockExpanded ? "Split" : "Expand"}</button>
@@ -857,7 +861,8 @@ function updatePlayheadOnly(): void {
       cachedPlayheadEls[i].style.left = pctStr;
     }
   }
-  const clockStr = `${String(pos.currentBar).padStart(2, "0")} : ${pos.currentBeat}`;
+  const countInBeat = studioEngine.getCountInBeat();
+  const clockStr = countInBeat ? `IN : ${countInBeat}` : `${String(pos.currentBar).padStart(2, "0")} : ${pos.currentBeat}`;
   if (cachedClockEl && clockStr !== lastClockStr) {
     lastClockStr = clockStr;
     cachedClockEl.textContent = clockStr;
@@ -1072,10 +1077,10 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
 
   // Flush pending autosave cleanly on page hide / tab switch
   window.addEventListener("pagehide", () => {
-    if (studioEngine.isActive()) void flushAutosave();
+    if (studioEngine.isActive() || studioEngine.getTransportSnapshot().recording) void flushAutosave();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && studioEngine.isActive()) void flushAutosave();
+    if (document.hidden && (studioEngine.isActive() || studioEngine.getTransportSnapshot().recording)) void flushAutosave();
   });
 
   // Close Export menu on outside click
@@ -1115,6 +1120,14 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           exportMenuOpen = !exportMenuOpen;
           renderStudioPanel();
           container.querySelector<HTMLElement>(exportMenuOpen ? "#st-export-menu [role='menuitem']:not(:disabled)" : "#st-export-menu-btn")?.focus();
+          break;
+        case "metronome":
+          studioEngine.setRecordingSettings({metronome:!studioEngine.getRecordingSettings().metronome});
+          container.querySelector<HTMLElement>("[data-st-action='metronome']")?.focus();
+          break;
+        case "count-in":
+          studioEngine.setRecordingSettings({countIn:!studioEngine.getRecordingSettings().countIn});
+          container.querySelector<HTMLElement>("[data-st-action='count-in']")?.focus();
           break;
         case "play":
           if (studioEngine.getTransportSnapshot().playing) void studioEngine.stop();
@@ -1502,6 +1515,11 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   container.addEventListener("change", (e) => {
     const el = e.target as HTMLInputElement | HTMLSelectElement | null;
     if (!el) return;
+
+    if (el.id === "st-click-volume") {
+      studioEngine.setRecordingSettings({clickVolume:Number(el.value)});
+      return;
+    }
 
     if (el.id === "st-browser-category") {
       browserCategory = el.value;
