@@ -98,9 +98,9 @@ describe("SY-1 Studio Phase 4 — Piano Roll MIDI Editing & Quantize", () => {
 });
 
 describe("SY-1 Studio Phase 4 — Iranian City Synthesizers & Persistence", () => {
-  test("All 7 HQEngine Iranian city synths are available and load isolated patches per track", () => {
+  test("All 11 city synths are available and load isolated patches per track", () => {
     const ids = STUDIO_SYNTH_MACHINES.map((m) => m.id);
-    expect(ids).toEqual(["sy1", "yazd", "baku", "merv", "isfahan", "konya", "bam"]);
+    expect(ids).toEqual(["sy1", "yazd", "tabriz", "baku", "merv", "isfahan", "shiraz", "kashan", "konya", "nishapur", "bam"]);
 
     for (const m of STUDIO_SYNTH_MACHINES) {
       expect(m.presets.length).toBeGreaterThan(0);

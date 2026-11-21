@@ -2,18 +2,14 @@
  * Bun test preload plugin to handle Vite's `?worker&url` / `?url` query imports
  * when executing engine modules directly under `bun test` (outside Vite).
  */
-import { plugin } from "bun";
+import { mock } from "bun:test";
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-plugin({
-  name: "vite-worker-url-stub",
-  setup(build) {
-    build.onResolve({ filter: /\?(worker&url|url)$/ }, (args) => ({
-      path: args.path,
-      namespace: "vite-url-stub"
-    }));
-    build.onLoad({ filter: /.*/, namespace: "vite-url-stub" }, (args) => ({
-      contents: `export default ${JSON.stringify(args.path)};`,
-      loader: "js"
-    }));
-  }
-});
+// Explicit URL mocks avoid Bun's transitive virtual-namespace resolution bug.
+// These CPU-only tests do not execute worklets; Chromium tests use real modules.
+const worklets = new URL("../src/engine/worklet/", import.meta.url);
+for (const name of readdirSync(worklets)) {
+  if (!name.endsWith(".ts")) continue;
+  mock.module(`${fileURLToPath(new URL(name, worklets))}?worker&url`, () => ({ default: name }));
+}
