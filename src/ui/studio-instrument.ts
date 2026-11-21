@@ -1,0 +1,429 @@
+/**
+ * SY-1 Studio — Embedded Original Synthesizer & Drum Machine Interface
+ *
+ * Renders the focused track's authentic SY-1 / Iranian city synthesizer or drum
+ * machine faceplate UNCHANGED (exact .synth-panel, .synth-sections, .synth-sec,
+ * 3D .sk knobs with radial tick scales, .synth-choice switches, Kashan .fm-lcd,
+ * Nishapur .vec-svg XY pad, Konya .eu-svg rings, Kerman/Bushehr/Rasht/Hormoz
+ * .drum-voice 8-knob editor, and [data-machine] / [data-skin] tokens), bound
+ * exclusively to the focused SY1TrackEngine without touching standalone synth.ts.
+ */
+
+import { euclidHit } from "../engine/arp";
+import { DRUM_NOTES, DRUM_VOICES, DrumVoice } from "../engine/drums";
+import { escapeHtml, SYNTH_PARAMS, synthNorm } from "../engine/params";
+import { evalOrbitPoint } from "../engine/vector";
+import type { ControlDef, MachineDef, SectionDef } from "../machines/types";
+import { getDrumLabelsForTrack, getStudioMachineDef, SY1TrackEngine } from "../studio/track-engine";
+import { BIPOLAR_SCALE_SVG, UNIPOLAR_SCALE_SVG } from "./knob";
+
+// Per-track selected drum voice in the Studio drum editor (never touches standalone drums.ts)
+const selectedDrumVoiceByTrack = new Map<string, DrumVoice>();
+
+export function getStudioSelectedDrumVoice(trackId: string): DrumVoice {
+  return selectedDrumVoiceByTrack.get(trackId) || "kick";
+}
+
+export function setStudioSelectedDrumVoice(trackId: string, voice: DrumVoice): void {
+  selectedDrumVoiceByTrack.set(trackId, voice);
+}
+
+// Kashan FM algorithm operator layout (identical to panel.ts)
+const FM_LAYOUT: { pos: [number, number][]; edges: [number, number][]; car: number[] }[] = [
+  { pos: [[100, 100], [100, 72], [100, 44], [100, 16]], edges: [[2, 1], [3, 2], [4, 3]], car: [1] },
+  { pos: [[100, 100], [100, 66], [70, 28], [130, 28]], edges: [[2, 1], [3, 2], [4, 2]], car: [1] },
+  { pos: [[100, 100], [70, 66], [70, 28], [130, 66]], edges: [[2, 1], [3, 2], [4, 1]], car: [1] },
+  { pos: [[100, 100], [70, 66], [130, 66], [130, 28]], edges: [[2, 1], [3, 1], [4, 3]], car: [1] },
+  { pos: [[70, 100], [70, 58], [130, 100], [130, 58]], edges: [[2, 1], [4, 3]], car: [1, 3] },
+  { pos: [[50, 100], [100, 100], [150, 100], [100, 52]], edges: [[4, 1], [4, 2], [4, 3]], car: [1, 2, 3] },
+  { pos: [[40, 100], [90, 100], [150, 100], [150, 58]], edges: [[4, 3]], car: [1, 2, 3] },
+  { pos: [[34, 100], [78, 100], [122, 100], [166, 100]], edges: [], car: [1, 2, 3, 4] }
+];
+
+const VEC_PAD_MIN = 12;
+const VEC_PAD_SPAN = 176;
+const toSvgCoord = (norm: number): number => VEC_PAD_MIN + Math.max(0, Math.min(1, norm)) * VEC_PAD_SPAN;
+
+function renderStudioSynthKnob(track: SY1TrackEngine, key: string, label: string): string {
+  const def = SYNTH_PARAMS[key];
+  const raw = track.patch[key];
+  const v = typeof raw === "number" ? raw : Number(def?.def ?? 0);
+  const n = Math.max(0, Math.min(1, synthNorm(key, v)));
+  const fmtVal = def && def.fmt ? def.fmt(v) : String(v);
+  const isBipolar = typeof def?.min === "number" && typeof def?.max === "number" && def.min < 0 && def.max > 0;
+  const scaleSvg = isBipolar ? BIPOLAR_SCALE_SVG : UNIPOLAR_SCALE_SVG;
+
+  return `<div class="sk st-inst-knob" data-st-param="${escapeHtml(key)}" role="slider" tabindex="0" aria-label="${escapeHtml(label)}" aria-valuetext="${escapeHtml(fmtVal)}">
+      <div class="sk-dial" style="--n:${n.toFixed(4)}">${scaleSvg}<span class="sk-skirt"></span><span class="sk-cap"></span><span class="sk-rotor"><span class="sk-ind"></span></span><span class="sk-dot"></span></div>
+      <div class="sk-label">${escapeHtml(label)}</div>
+      <div class="sk-val">${escapeHtml(fmtVal)}</div>
+    </div>`;
+}
+
+function renderStudioSynthChoice(track: SY1TrackEngine, key: string, options: [string, string, string?][]): string {
+  const cur = String(track.patch[key]);
+  return `<div class="synth-choice" data-st-choice="${escapeHtml(key)}">` +
+    options
+      .map(([val, txt, title]) =>
+        `<button type="button" class="synth-choice-btn${cur === val ? " active" : ""}" data-st-action="param-choice" data-st-param="${escapeHtml(key)}" data-st-value="${escapeHtml(val)}" title="${escapeHtml(title || val)}">${txt}</button>`
+      )
+      .join("") +
+    `<span class="sk-dot"></span></div>`;
+}
+
+function renderStudioEuclidRings(track: SY1TrackEngine): string {
+  const RING_R = [28, 49, 70];
+  const p = track.patch;
+  let svg = "";
+  for (let r = 1; r <= 3; r++) {
+    const steps = Math.max(1, Math.round(Number(p[`euc${r}Steps`]) || 16));
+    const pulses = Number(p[`euc${r}Pulses`]) || 0;
+    const rot = Number(p[`euc${r}Rot`]) || 0;
+    const on = p[`euc${r}On`] !== "off";
+    const rad = RING_R[r - 1];
+    let dots = "";
+    for (let i = 0; i < steps; i++) {
+      const a = (i / steps) * Math.PI * 2 - Math.PI / 2;
+      const x = 80 + Math.cos(a) * rad;
+      const y = 80 + Math.sin(a) * rad;
+      const hit = euclidHit(steps, pulses, rot, i);
+      dots += `<circle class="eu-dot${hit ? " hit" : ""}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${hit ? 5.2 : 3}" />`;
+    }
+    svg += `<g class="eu-ring eu-ring-${r}${on ? "" : " is-off"}"><circle class="eu-track" cx="80" cy="80" r="${rad}" />${dots}</g>`;
+  }
+  return `<div class="eu-wrap"><svg class="eu-svg" viewBox="0 0 160 160" aria-label="Euclidean rings">${svg}<circle class="eu-hub-rim" cx="80" cy="80" r="14" /><circle class="eu-hub" cx="80" cy="80" r="9" /></svg></div>`;
+}
+
+function renderStudioFmAlgo(track: SY1TrackEngine): string {
+  const n = Math.max(1, Math.min(8, Number(track.patch.fmAlgo) || 1));
+  const L = FM_LAYOUT[n - 1];
+  const R = 12;
+  const lines = L.edges
+    .map(([a, b]) => {
+      const [x1, y1] = L.pos[a - 1];
+      const [x2, y2] = L.pos[b - 1];
+      return `<line x1="${x1}" y1="${y1 + R}" x2="${x2}" y2="${y2 - R}" />`;
+    })
+    .join("");
+  const outY = 118;
+  const outs = L.car
+    .map((c) => {
+      const [x, y] = L.pos[c - 1];
+      return `<line x1="${x}" y1="${y + R}" x2="${x}" y2="${outY}" />`;
+    })
+    .join("");
+  const xs = L.car.map((c) => L.pos[c - 1][0]);
+  const bus = `<line x1="${Math.min(...xs) - 8}" y1="${outY}" x2="${Math.max(...xs) + 8}" y2="${outY}" />`;
+  const [fx, fy] = L.pos[3];
+  const fb = `<path class="fb" d="M ${fx + R} ${fy} C ${fx + 28} ${fy - 4}, ${fx + 28} ${fy - 24}, ${fx} ${fy - R}" />`;
+  const ops = L.pos
+    .map(
+      ([x, y], i) =>
+        `<g class="op${L.car.includes(i + 1) ? " car" : ""}"><rect x="${x - R}" y="${y - R}" width="${R * 2}" height="${R * 2}" rx="2.5" /><text x="${x}" y="${y + 4.5}">${i + 1}</text></g>`
+    )
+    .join("");
+  const allX = L.pos.map((p) => p[0]);
+  const allY = L.pos.map((p) => p[1]);
+  const minX = Math.min(...allX) - R - 6;
+  const maxX = Math.max(...allX, fx + 22) + R + 6;
+  const minY = Math.min(...allY.map((y) => y - R), fy - 22) - 2;
+  const maxY = outY + 3;
+  const vbW = Math.max(116, maxX - minX);
+  const vbH = maxY - minY;
+  const vbX = (minX + maxX) / 2 - vbW / 2;
+
+  return `<div class="fm-lcd" role="img" aria-label="Algorithm ${n}">
+      <div class="fm-lcd-head"><span>ALGORITHM</span><b>${n}</b></div>
+      <svg viewBox="${vbX.toFixed(1)} ${minY.toFixed(1)} ${vbW.toFixed(1)} ${vbH.toFixed(1)}" preserveAspectRatio="xMidYMid meet" shape-rendering="geometricPrecision" aria-hidden="true"><g class="wires">${lines}${outs}${bus}${fb}</g>${ops}</svg>
+    </div>
+    ${renderStudioSynthChoice(
+      track,
+      "fmAlgo",
+      [1, 2, 3, 4, 5, 6, 7, 8].map((k) => [String(k), String(k), `Algorithm ${k}`] as [string, string, string])
+    )}`;
+}
+
+function buildStudioOrbitPathD(track: SY1TrackEngine): string {
+  const p = track.patch;
+  const mode = String(p.orbitMode || "off");
+  const effSize = Math.min(1, Number(p.orbitSize ?? 0.55) + track.getModWheel());
+  if (mode === "off" || effSize <= 0.005) return "";
+  const cx = Math.max(0, Math.min(1, Number(p.vecX ?? 0.5)));
+  const cy = Math.max(0, Math.min(1, Number(p.vecY ?? 0.5)));
+  const steps = 64;
+  let d = "";
+  for (let i = 0; i <= steps; i++) {
+    const [x, y] = evalOrbitPoint(mode, i / steps, cx, cy, effSize);
+    d += `${i === 0 ? "M" : "L"}${toSvgCoord(x).toFixed(1)} ${toSvgCoord(y).toFixed(1)} `;
+  }
+  return d + "Z";
+}
+
+function renderStudioVectorPad(track: SY1TrackEngine): string {
+  const p = track.patch;
+  const cx = Math.max(0, Math.min(1, Number(p.vecX ?? 0.5)));
+  const cy = Math.max(0, Math.min(1, Number(p.vecY ?? 0.5)));
+  const ax = toSvgCoord(cx);
+  const ay = toSvgCoord(cy);
+  const orbitD = buildStudioOrbitPathD(track);
+
+  return `<div class="vec-wrap">
+    <svg class="vec-svg" data-st-vec-pad="1" viewBox="0 0 200 200" aria-label="Vector XY morph pad (drag to morph A/B/C/D)">
+      <g class="vec-grid" aria-hidden="true">
+        <circle cx="100" cy="100" r="38" />
+        <circle cx="100" cy="100" r="76" />
+        <line x1="100" y1="10" x2="100" y2="190" />
+        <line x1="10" y1="100" x2="190" y2="100" />
+        <line class="vec-diag" x1="16" y1="16" x2="184" y2="184" />
+        <line class="vec-diag" x1="184" y1="16" x2="16" y2="184" />
+      </g>
+      <g class="vec-corner vec-corner-a" aria-hidden="true">
+        <text x="12" y="22">A</text>
+        <path d="M25 20l4-7v7h4v-7h5v7" />
+      </g>
+      <g class="vec-corner vec-corner-b" aria-hidden="true">
+        <text x="188" y="22" text-anchor="end">B</text>
+        <path d="M161 19v-3a4.5 4.5 0 0 1 9 0v3h2h-13zM164.5 21.5h2" />
+      </g>
+      <g class="vec-corner vec-corner-c" aria-hidden="true">
+        <text x="12" y="188">C</text>
+        <path d="M25 186c2.5-3.5 4.5-3.5 7 0s4.5 3.5 7 0M25 181c2.5-3.5 4.5-3.5 7 0s4.5 3.5 7 0" />
+      </g>
+      <g class="vec-corner vec-corner-d" aria-hidden="true">
+        <text x="188" y="188" text-anchor="end">D</text>
+        <path d="M159 187c1.8-7 3.6-7 5.4 0c1.8-10 3.6-10 5.4 0c1.6-4.5 3.2-4.5 4.8 0" />
+      </g>
+      <path class="vec-orbit-path" data-st-vec-orbit="1" d="${orbitD}" />
+      <circle class="vec-anchor" data-st-vec-anchor="1" cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="2.8" />
+      <g class="vec-cursor" data-st-vec-cursor="1" transform="translate(${ax.toFixed(1)}, ${ay.toFixed(1)})">
+        <circle class="vec-cursor-halo" r="13" />
+        <circle class="vec-cursor-ring" r="6" />
+        <circle class="vec-cursor-dot" r="2.6" />
+      </g>
+    </svg>
+    <div class="vec-xy-hud">
+      <span class="vec-axis-pill" data-st-vec-readout="x">X <b>${Math.round(cx * 100)}%</b></span>
+      <span class="vec-axis-pill" data-st-vec-readout="y">Y <b>${Math.round(cy * 100)}%</b></span>
+    </div>
+  </div>`;
+}
+
+function renderStudioDrumPadsAndKits(track: SY1TrackEngine, m: MachineDef): string {
+  const labels = getDrumLabelsForTrack(m.id, track.patch, track.presetId);
+  const activeVoice = getStudioSelectedDrumVoice(track.id);
+
+  const padsHtml = `<div class="drum-voices st-drum-pads" role="group" aria-label="Audition and select drum voices">${DRUM_VOICES.map((v) => {
+    const midi = DRUM_NOTES[v];
+    return `<button type="button" class="drum-voice-btn st-drum-pad${v === activeVoice ? " active" : ""}" data-st-action="drum-audition" data-st-drum-voice="${v}" data-track-id="${escapeHtml(track.id)}" title="Click to audition & edit ${escapeHtml(labels[v])} (GM MIDI ${midi})">
+      <span class="st-drum-pad-name">${escapeHtml(labels[v])}</span>
+      <span class="st-drum-pad-midi">M${midi}</span>
+    </button>`;
+  }).join("")}</div>`;
+
+  const kitsHtml =
+    m.kits && m.kits.length > 0
+      ? `<div class="st-drum-kits-row">
+          <span class="st-drum-kits-lbl">KIT</span>
+          <div class="st-drum-kits-list">${m.kits
+            .map((k) => {
+              const isCur = track.presetId === `kit:${k.id}` || track.presetName === k.name;
+              return `<button type="button" class="synth-choice-btn${isCur ? " active" : ""}" data-st-action="drum-pick-kit" data-st-kit="${escapeHtml(k.id)}" data-track-id="${escapeHtml(track.id)}" title="${escapeHtml(k.desc)}">${escapeHtml(k.name)}</button>`;
+            })
+            .join("")}</div>
+        </div>`
+      : "";
+
+  return `${padsHtml}${kitsHtml}<div class="st-drum-midi-hint">Program beats in the Studio Piano Roll Drum Grid (GM MIDI 36–56) · Tap any pad to audition &amp; sculpt its voice.</div>`;
+}
+
+function renderStudioDrumVoice(track: SY1TrackEngine, m: MachineDef): string {
+  const v = getStudioSelectedDrumVoice(track.id);
+  const labels = getDrumLabelsForTrack(m.id, track.patch, track.presetId);
+  const voicesStrip = `<div class="drum-voices" role="group" aria-label="Select drum voice to edit">${DRUM_VOICES.map(
+    (dv) =>
+      `<button type="button" class="drum-voice-btn${dv === v ? " active" : ""}" data-st-action="drum-select-voice" data-st-drum-voice="${dv}" data-track-id="${escapeHtml(track.id)}">${escapeHtml(labels[dv])}</button>`
+  ).join("")}</div>`;
+
+  return `${voicesStrip}
+    <div class="drum-voice-name">${escapeHtml(labels[v])}</div>
+    <div class="sk-row">${
+      renderStudioSynthKnob(track, v + "Tune", "TUNE") +
+      renderStudioSynthKnob(track, v + "Decay", "DECAY") +
+      renderStudioSynthKnob(track, v + "Tone", "TONE") +
+      renderStudioSynthKnob(track, v + "Level", "LEVEL")
+    }</div>
+    <div class="sk-row">${
+      renderStudioSynthKnob(track, v + "Pan", "PAN") +
+      renderStudioSynthKnob(track, v + "Color", "COLOR") +
+      renderStudioSynthKnob(track, v + "Drive", "DRIVE") +
+      renderStudioSynthKnob(track, v + "Send", "SEND")
+    }</div>`;
+}
+
+function renderStudioControl(track: SY1TrackEngine, c: ControlDef): string {
+  const patch = track.patch;
+  if (c.kind === "choice") return renderStudioSynthChoice(track, c.key, c.options);
+  if (c.kind === "toggles") {
+    return (
+      `<div class="synth-choice synth-toggles">` +
+      c.items
+        .map((it) => {
+          const on = it.on || "on";
+          const off = it.off || "off";
+          const active = String(patch[it.key]) === on;
+          return `<button type="button" class="synth-choice-btn synth-toggle-btn${active ? " active" : ""}" data-st-action="param-toggle" data-st-param="${escapeHtml(it.key)}" data-st-on="${escapeHtml(on)}" data-st-off="${escapeHtml(off)}" aria-pressed="${active}" title="${escapeHtml(it.title || it.label)}">${escapeHtml(it.label)}</button>`;
+        })
+        .join("") +
+      `</div>`
+    );
+  }
+  if (c.kind === "select") {
+    return (
+      `<label class="synth-param-select-wrap"><span>${escapeHtml(c.label)}</span>` +
+      `<select class="synth-midi-select st-synth-param-select" data-st-param-select="${escapeHtml(c.key)}" aria-label="${escapeHtml(c.label)}">` +
+      c.options
+        .map(([v, t]) => `<option value="${escapeHtml(v)}"${String(patch[c.key]) === v ? " selected" : ""}>${escapeHtml(t)}</option>`)
+        .join("") +
+      `</select></label>`
+    );
+  }
+  const isLg =
+    !c.small &&
+    c.knobs.some(
+      ([k]) =>
+        k === "cutoff" ||
+        k === "res" ||
+        k === "oscMix" ||
+        k === "volume" ||
+        k === "delayMix" ||
+        k === "revMix"
+    );
+  const cls = "sk-row" + (c.small ? " sk-row-small" : isLg ? " sk-row-lg" : "");
+  return (
+    (c.caption ? `<div class="sk-caption">${escapeHtml(c.caption)}</div>` : "") +
+    `<div class="${cls}">${c.knobs.map(([k, l]) => renderStudioSynthKnob(track, k, l)).join("")}</div>`
+  );
+}
+
+function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionDef, index: number, activePageId: string): string {
+  // On drum machines in Studio, skip the standalone global step sequencer grid (beats live on Studio's Piano Roll Drum Grid)
+  if (sec.custom === "drum-steps") return "";
+
+  const span = (sec.span && sec.span > 1 ? ` sec-span-${sec.span}` : "") + (sec.wide ? " sec-wide" : "");
+  const isOnPage = activePageId === "all" || sec.page === activePageId;
+  let title = sec.title;
+  let body = "";
+
+  if (sec.custom) {
+    if (sec.custom === "euclid-rings") {
+      body = `<div class="synth-custom" data-st-custom="euclid-rings">${renderStudioEuclidRings(track)}</div>`;
+    } else if (sec.custom === "fm-algo") {
+      body = `<div class="synth-custom" data-st-custom="fm-algo">${renderStudioFmAlgo(track)}</div>`;
+    } else if (sec.custom === "vector-pad") {
+      body = `<div class="synth-custom" data-st-custom="vector-pad">${renderStudioVectorPad(track)}</div>`;
+    } else if (sec.custom === "drum-voice") {
+      body = `<div class="synth-custom" data-st-custom="drum-voice">${renderStudioDrumVoice(track, m)}</div>`;
+    } else if (sec.custom === "drum-transport") {
+      title = "PADS & KITS";
+      body = `<div class="synth-custom" data-st-custom="drum-pads">${renderStudioDrumPadsAndKits(track, m)}</div>`;
+    }
+  } else {
+    body = sec.controls.map((c) => renderStudioControl(track, c)).join("");
+  }
+
+  return `<section data-page="${escapeHtml(sec.page)}" data-sec="${index}" class="synth-sec${span}${sec.custom ? " synth-sec-custom" : ""}${isOnPage ? " is-on-page" : ""}"><h4>${escapeHtml(title)}</h4>${body}</section>`;
+}
+
+export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string): string {
+  const m: MachineDef = getStudioMachineDef(track.machineId);
+  const pages = m.kind === "drums"
+    ? m.pages.map((p) => (p.id === "steps" ? { id: p.id, label: "Pads & Kits" } : p))
+    : m.pages;
+  const validPage = pageFilter === "all" || pages.some((p) => p.id === pageFilter) ? pageFilter : "all";
+  const presets = m.presets;
+  const curIdx = presets.findIndex((p) => p.id === track.presetId);
+  const curPreset = curIdx >= 0 ? presets[curIdx] : null;
+  const curKit = m.kind === "drums" && track.presetId.startsWith("kit:")
+    ? m.kits?.find((k) => `kit:${k.id}` === track.presetId) || null
+    : null;
+  const presetLabel = curKit ? curKit.name : curPreset ? curPreset.name : track.presetName || "Custom";
+  const presetGroup = curKit ? `${curKit.group} · Kit` : curPreset ? curPreset.group : "Edited sound";
+  const brandHtml =
+    m.id === "sy1"
+      ? `<span class="st-embedded-machine-name">SY-1</span>`
+      : `<span class="synth-brand-maker">SY-1 </span><span class="st-embedded-machine-name">${escapeHtml(m.name)}</span>`;
+
+  return `
+    <div class="st-inst-wrap">
+      <div class="st-embedded-chassis" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}">
+        <div class="synth-panel st-embedded-synth" dir="ltr" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}" data-page="${escapeHtml(validPage)}">
+          <div class="synth-top st-embedded-top">
+            <div class="synth-brand">
+              ${brandHtml}
+              <span class="st-embedded-track-tag">${escapeHtml(track.name)}</span>
+            </div>
+            <div class="synth-preset-nav st-embedded-preset-nav">
+              <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-prev" aria-label="Previous preset">◀</button>
+              <button type="button" class="preset-display synth-preset-select" data-st-action="open-browser-for-track" title="Open Instrument Browser">
+                <span class="pd-text">
+                  <span class="pd-name">${escapeHtml(presetLabel)}</span>
+                  <span class="pd-sub">${escapeHtml(presetGroup)}</span>
+                </span>
+              </button>
+              <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-next" aria-label="Next preset">▶</button>
+            </div>
+            <nav class="st-inst-pages" role="tablist" aria-label="Instrument sections">
+              <button type="button" class="st-inst-page-btn${validPage === "all" ? " is-active" : ""}" role="tab" aria-selected="${validPage === "all"}" data-st-action="inst-page" data-st-page="all">All</button>
+              ${pages
+                .map(
+                  (pg) =>
+                    `<button type="button" class="st-inst-page-btn${validPage === pg.id ? " is-active" : ""}" role="tab" aria-selected="${validPage === pg.id}" data-st-action="inst-page" data-st-page="${escapeHtml(pg.id)}">${escapeHtml(pg.label)}</button>`
+                )
+                .join("")}
+            </nav>
+          </div>
+          <div class="synth-sections${validPage !== "all" ? " is-filtered" : ""}">
+            ${m.sections.map((sec, idx) => renderStudioSection(track, m, sec, idx, validPage)).join("")}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Fast DOM-only knob update during Studio Instrument drag (zero innerHTML rebuild). */
+export function updateStudioInstrumentKnobDOM(container: HTMLElement, track: SY1TrackEngine, key: string): void {
+  const def = SYNTH_PARAMS[key];
+  if (!def) return;
+  const val = Number(track.patch[key]);
+  const n = Math.max(0, Math.min(1, synthNorm(key, val)));
+  const fmt = def.fmt ? def.fmt(val) : String(val);
+  const knobs = container.querySelectorAll<HTMLElement>(`.st-inst-knob[data-st-param="${key}"]`);
+  knobs.forEach((knob) => {
+    const dial = knob.querySelector<HTMLElement>(".sk-dial");
+    if (dial) dial.style.setProperty("--n", n.toFixed(4));
+    const valEl = knob.querySelector<HTMLElement>(".sk-val");
+    if (valEl) valEl.textContent = fmt;
+    knob.setAttribute("aria-valuetext", fmt);
+  });
+}
+
+/** Fast DOM-only Nishapur Vector XY pad update during pointer drag (zero innerHTML rebuild). */
+export function updateStudioVectorPadDOM(container: HTMLElement, track: SY1TrackEngine): void {
+  const cx = Math.max(0, Math.min(1, Number(track.patch.vecX ?? 0.5)));
+  const cy = Math.max(0, Math.min(1, Number(track.patch.vecY ?? 0.5)));
+  const px = toSvgCoord(cx);
+  const py = toSvgCoord(cy);
+  const cursor = container.querySelector<SVGGElement>("[data-st-vec-cursor]");
+  if (cursor) cursor.setAttribute("transform", `translate(${px.toFixed(1)}, ${py.toFixed(1)})`);
+  const anchor = container.querySelector<SVGCircleElement>("[data-st-vec-anchor]");
+  if (anchor) {
+    anchor.setAttribute("cx", px.toFixed(1));
+    anchor.setAttribute("cy", py.toFixed(1));
+  }
+  const orbit = container.querySelector<SVGPathElement>("[data-st-vec-orbit]");
+  if (orbit) orbit.setAttribute("d", buildStudioOrbitPathD(track));
+  const rx = container.querySelector<HTMLElement>('[data-st-vec-readout="x"] b');
+  if (rx) rx.textContent = `${Math.round(cx * 100)}%`;
+  const ry = container.querySelector<HTMLElement>('[data-st-vec-readout="y"] b');
+  if (ry) ry.textContent = `${Math.round(cy * 100)}%`;
+}

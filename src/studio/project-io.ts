@@ -7,6 +7,7 @@
 
 import { PARAM_CHOICES, SYNTH_PARAMS, SynthPatch, synthDefaults } from "../engine/params";
 import { SY1 } from "../machines/sy1";
+import { getStudioMachineDef, STUDIO_MACHINES } from "./track-engine";
 import {
   STUDIO_MAX_BARS,
   STUDIO_MAX_TRACKS,
@@ -45,9 +46,14 @@ export function slugifyFilename(name: string): string {
   return slug || "sy1-studio-project";
 }
 
-function validateAndSanitizePatch(rawPatch: unknown, warnings: string[], trackLabel: string): SynthPatch | null {
+function validateAndSanitizePatch(
+  rawPatch: unknown,
+  warnings: string[],
+  trackLabel: string,
+  machineBase: Record<string, unknown> = SY1.base
+): SynthPatch | null {
   if (!isPlainObject(rawPatch)) return null;
-  const base: SynthPatch = Object.assign(synthDefaults(), SY1.base);
+  const base: SynthPatch = Object.assign(synthDefaults(), machineBase);
   const out: SynthPatch = { ...base };
 
   for (const key of Object.keys(SYNTH_PARAMS)) {
@@ -208,16 +214,26 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
     seenIds.add(id);
 
     const name = typeof rt.name === "string" && rt.name.trim() ? rt.name.trim().slice(0, 64) : `SY-1 Track ${i + 1}`;
+    const rawMachineId = typeof rt.machineId === "string" ? rt.machineId.trim().slice(0, 32) : "sy1";
+    const machineDef = STUDIO_MACHINES.some((m) => m.id === rawMachineId)
+      ? getStudioMachineDef(rawMachineId)
+      : SY1;
     const presetId = typeof rt.presetId === "string" && rt.presetId.trim() ? rt.presetId.trim().slice(0, 64) : "custom";
-    const matchedPreset = SY1.presets.find((p) => p.id === presetId);
+    const matchedPreset = machineDef.presets.find((p) => p.id === presetId) || SY1.presets.find((p) => p.id === presetId);
+    const matchedKit =
+      machineDef.kind === "drums" && presetId.startsWith("kit:")
+        ? machineDef.kits?.find((k) => `kit:${k.id}` === presetId)
+        : undefined;
     const presetName =
       typeof rt.presetName === "string" && rt.presetName.trim()
         ? rt.presetName.trim().slice(0, 64)
-        : matchedPreset
-          ? matchedPreset.name
-          : "Custom";
+        : matchedKit
+          ? matchedKit.name
+          : matchedPreset
+            ? matchedPreset.name
+            : "Custom";
 
-    const patch = validateAndSanitizePatch(rt.patch, warnings, label);
+    const patch = validateAndSanitizePatch(rt.patch, warnings, label, machineDef.base);
     if (!patch) {
       return { ok: false, error: `${label} is missing a valid patch object.` };
     }
@@ -257,6 +273,7 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
     tracks.push({
       id,
       name,
+      machineId: machineDef.id,
       presetId,
       presetName,
       patch,

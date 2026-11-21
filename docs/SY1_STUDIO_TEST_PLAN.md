@@ -254,5 +254,27 @@
 | **P3-UI-Stress** | Idle `rAF` check, continuous Volume slider drag DOM identity, 10× 4-track `loadProject()` JS Heap check | Headless Chromium (CDP) | **PASS** | `idleRafWhileStopped = false`, `sliderConnectedDuringDrag = true`, `finalT1Vol = 0.65`, `heapBefore = 26.45 MB -> heapAfter = 13.04 MB` (`-13.41 MB`). |
 | **H (Hardware)** | Real macOS Chrome (physical audio speakers, 60–120 s live dropout listening, real Web MIDI) & Real iPadOS Safari (real touch, app-switch audio unlock, Jetsam RAM) | Physical Hardware | **NOT RUN** | Requires physical macOS & iPadOS devices outside this Linux container. |
 
+---
+
+## Phase 4 Executed Verification Ledger (2026-11-21)
+
+**Environments Tested (Simulated / Headless Automated):**
+1. **Linux Bun (`bun test --preload ./tests/vite-url-preload.ts tests/studio-phase1.test.ts tests/studio-phase2.test.ts tests/studio-phase3.test.ts tests/studio-phase4.test.ts`):** **47/47 PASS** (22 Phase 1 + 9 Phase 2 + 10 Phase 3 + 6 Phase 4), 0 FAIL, 8,645 `expect()` assertions.
+2. **Linux Headless Chromium (`/ms-playwright/chrome-headless-shell-linux64/chrome-headless-shell` via CDP `node scripts/studio-chromium-verify.mjs`):** **ALL Phase 1 + Phase 2 + Phase 3 + Phase 4 checks PASS**, 0 page errors, 0 console errors.
+3. **Real Physical Hardware Tests (macOS Intel Chrome speakers/Web MIDI; physical iPadOS Safari real touch/gestures/audio unlock):** **`NOT RUN`** (physical hardware unavailable in Linux container).
+
+| Suite / ID | Test Case | Environment | Status | Exact Measured Result / Notes |
+|---|---|---|---|---|
+| Build / Lint | `npm run lint` (`tsc --noEmit`) & `npm run build` (`vite build`) | Linux | **PASS** | Zero TypeScript errors; clean Vite production bundle including all AudioWorklets. |
+| Protected Diff | `git diff` across `native/**`, `plugin/**`, `src/dsp/hq-engine.ts`, `src/engine/worklet/sy1-processor.ts`, `src/index.css`, `src/ui/skins.css` | Git | **PASS** | 0 diffs; zero DSP, native VST3/AU, or standalone synthesizer stylesheet changes. |
+| Phase 1–3 Reg | All Phase 1 (22), Phase 2 (9), and Phase 3 (10) Bun tests + Chromium parity (`chainMaxAbsDiff === 0`), isolation (`0.0`), 2- & 4-track stems (`-119.55 dB` / `-117.02 dB`), Save->Reload->Restore, Export/Import, 4-track stress (`RTF = 0.747`), idle `rAF` (`false`), heap (`-1.00 MB`) | Bun + Headless Chromium | **PASS** | Zero regression across audio parity, isolation, exports, persistence, or stability. |
+| **P4-PianoRoll** | MIDI note creation, move, resize, velocity edit, deletion, Snap (`Off`, `1/4`..`1/32`), Quantize (selected subset & full track), CC64/CC1/pitchBend preservation, and IndexedDB/Chromium persistence | Bun + Headless Chromium | **PASS** | All note ops verified; CC64 & pitchBend intact; Chromium grid click created `.st-pr-note`, quantized cleanly to `480`-tick grid (`960`), and saved to IndexedDB. |
+| **P4-CitySynths** | 7 HQEngine Iranian city synths (`SY-1`, `Yazd`, `Baku`, `Merv`, `Isfahan`, `Konya`, `Bam`), isolated tracks, Browser search/favorites (`sy1_studio_favs`), `.sy1studio` round-trip & v1 backward-compat | Bun + Headless Chromium | **PASS** | All 7 machines load isolated patches; `yazd` selected in Browser loaded onto Track 1 with favorite stored in `sy1_studio_favs` (standalone `localStorage` untouched). |
+| **P4-OrigSynthUI** | Unchanged original synth faceplate inside Instrument tab + standalone synth visual regression before/after Studio | Headless Chromium (CDP) | **PASS** | Embedded `.st-embedded-synth.synth-panel[data-machine="yazd"]` rendered 9 `.synth-sec` sections, 35 `.sk` knobs with `.sk-scale` tick SVGs; standalone `#sy1-panel` section count, knob count, computed background, cutoff, and `html.is-studio` teardown 100% identical before & after Studio. |
+| **P4-Mixer** | Independent channel strips, Master strip, live meters (`readMeterLevel` / `readMasterMeterLevel`), mute/idle returns `0` | Bun + Headless Chromium | **PASS** | 4 track strips + 1 Master strip + 5 meters rendered cleanly; muted/idle meters return `0`; meters update only inside active playback `rAF`. |
+| **P4-Responsive** | Desktop (`1440×900`), iPad Landscape (`1024×768`), and iPad Portrait (`768×1024`) viewport emulation via CDP | Headless Chromium (CDP) | **PASS** | All 3 viewports passed `scrollWidth === innerWidth` (`1440`, `1024`, `768`), zero clipped transport buttons, header-to-lane alignment `<= 1.5 px`, usable lane width, and visible bottom dock. |
+| **P4-Hardware** | Real macOS Chrome & physical iPadOS Safari touch/pointer/audio testing | Physical Hardware | **NOT RUN** | Requires physical macOS & iPadOS devices outside this Linux container. |
+
+
 
 

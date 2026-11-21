@@ -1,29 +1,71 @@
 /**
- * SY-1 Studio UI — Dedicated Multi-Track Recording & Editing Workspace
+ * SY-1 Studio UI — Phase 4 Professional DAW Workspace
  *
  * Strictly web-only (never initialized when window.__SY1_PLUGIN__ is present).
  * Every control binds exclusively to SY1StudioEngine / SY1TrackEngine without
- * touching standalone synth.ts state or localStorage keys.
+ * touching standalone synth.ts state or standalone localStorage keys.
+ *
+ * Architecture:
+ * - Fixed Top Transport Bar (Play, Stop, Rec, Loop, Clock, BPM, Bars, Save, Open, Export, Keys)
+ * - Collapsible Left Instrument Browser (7 HQEngine Iranian city synths, categories, favorites, search)
+ * - Full-Width Arrangement Timeline (zoom, horizontal scroll, aligned sticky track headers, draggable loop)
+ * - Resizable Bottom Dock switching between Piano Roll, Mixer, and unchanged Original Synth Instrument View
  */
 
+import { getMasterVolume, setMasterVolume } from "../engine/bus";
+import { DRUM_NOTES, DrumVoice } from "../engine/drums";
 import { escapeHtml, SYNTH_PARAMS, synthDenorm, synthNorm } from "../engine/params";
 import { fmtBpm } from "../engine/tempo";
-import { SY1 } from "../machines/sy1";
+import type { MachineDef } from "../machines/types";
 import { parseStudioProjectJson, projectFilename } from "../studio/project-io";
 import { studioStorage } from "../studio/storage";
 import { studioEngine } from "../studio/studio-engine";
-import { SY1TrackEngine } from "../studio/track-engine";
+import {
+  getStudioMachineDef,
+  STUDIO_DRUM_MACHINES,
+  STUDIO_MACHINES,
+  STUDIO_SYNTH_MACHINES,
+  SY1TrackEngine
+} from "../studio/track-engine";
 import {
   STUDIO_BAR_PRESETS,
   STUDIO_MAX_TRACKS,
   STUDIO_TICKS_PER_BAR,
   StudioSavedProjectMeta
 } from "../studio/types";
+import { machineArt } from "./machine-browser";
+import {
+  renderStudioInstrumentHtml,
+  setStudioSelectedDrumVoice,
+  updateStudioInstrumentKnobDOM,
+  updateStudioVectorPadDOM
+} from "./studio-instrument";
+import { bindPianoRollEvents, renderPianoRollHtml, syncPianoRollScroll } from "./studio-piano-roll";
 
-type InspectorTab = "osc" | "filter" | "amp" | "fx" | "voice";
+export type StudioDockTab = "piano-roll" | "mixer" | "instrument";
 type StatusTone = "info" | "ok" | "error";
 
-let activeTab: InspectorTab = "filter";
+const STUDIO_FAVS_KEY = "sy1_studio_favs";
+const TRACK_COLORS = ["#f0a233", "#4ba3d9", "#55b884", "#cf6e8a"];
+
+let activeDockTab: StudioDockTab = "piano-roll";
+let dockExpanded = false;
+let dockCollapsed = false;
+let dockHeightPx = 310;
+
+let browserOpen = true;
+let browserMachineId = "all"; // "all" or specific city synth id
+let browserCategory = "All";
+let browserSearch = "";
+let browserFavsOnly = false;
+let studioFavs = new Set<string>();
+
+let arrZoom = 1; // 1..4
+let arrScrollLeft = 0;
+let instPageFilter = "all";
+let exportMenuOpen = false;
+let keysVisible = false;
+
 let rafId = 0;
 let initialized = false;
 let exporting = false;
@@ -36,14 +78,49 @@ let autosaveMetaCache: { name: string; updatedAt: number; trackCount: number; bp
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let suppressNextAutosave = false;
 let onCloseStudio: (() => void) | null = null;
+
 let cachedPlayheadEls: HTMLElement[] = [];
 let cachedClockEl: HTMLElement | null = null;
+let cachedMeterEls: { id: string; el: HTMLElement; axis: "x" | "y" }[] = [];
 let lastPlayheadPctStr = "";
 let lastClockStr = "";
+
+// Load Studio-isolated favorites (never touches standalone sy1.* keys)
+try {
+  const raw = localStorage.getItem(STUDIO_FAVS_KEY);
+  if (raw) {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      arr.forEach((k) => {
+        if (typeof k === "string") studioFavs.add(k);
+      });
+    }
+  }
+} catch (e) {}
+
+function saveStudioFavs(): void {
+  try {
+    localStorage.setItem(STUDIO_FAVS_KEY, JSON.stringify(Array.from(studioFavs)));
+  } catch (e) {}
+}
+
+function favKey(machineId: string, presetId: string): string {
+  return `${machineId}:${presetId}`;
+}
 
 /** Diagnostics helper: true only while transport playhead animation loop is actively running. */
 export function isStudioPlayheadLoopActive(): boolean {
   return rafId !== 0;
+}
+
+export function getStudioDockTab(): StudioDockTab {
+  return activeDockTab;
+}
+
+export function setStudioDockTab(tab: StudioDockTab): void {
+  activeDockTab = tab;
+  dockCollapsed = false;
+  renderStudioPanel();
 }
 
 function setStatus(msg: string, tone: StatusTone = "info"): void {
@@ -58,6 +135,21 @@ function fmtSavedTime(ts: number): string {
   } catch (e) {
     return "";
   }
+}
+
+function fmtDb(vol: number): string {
+  if (vol <= 0.001) return "-∞ dB";
+  const db = 20 * Math.log10(vol);
+  return `${db >= 0 ? "+" : ""}${db.toFixed(1)} dB`;
+}
+
+function fmtPan(pan: number): string {
+  if (Math.abs(pan) < 0.04) return "C";
+  return pan < 0 ? `L${Math.round(-pan * 100)}` : `R${Math.round(pan * 100)}`;
+}
+
+function trackColor(idx: number): string {
+  return TRACK_COLORS[idx % TRACK_COLORS.length];
 }
 
 export async function saveStudioProjectNow(): Promise<boolean> {
@@ -92,6 +184,7 @@ export async function importStudioProjectJson(text: string): Promise<{ ok: boole
     await studioEngine.loadProject(parsed.project);
     await studioStorage.saveAutosave(studioEngine.exportProject());
     openDrawerVisible = false;
+    exportMenuOpen = false;
     setStatus(`Imported "${parsed.project.name}"`, "ok");
     renderStudioPanel();
     return { ok: true };
@@ -181,9 +274,29 @@ function downloadBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function presetGroupsHtml(selectedId: string): string {
+function machineOptionsHtml(selectedMachineId: string): string {
+  const synthOpts = STUDIO_SYNTH_MACHINES.map(
+    (m) => `<option value="${escapeHtml(m.id)}"${m.id === selectedMachineId ? " selected" : ""}>${escapeHtml(m.name)}</option>`
+  ).join("");
+  const drumOpts = STUDIO_DRUM_MACHINES.map(
+    (m) => `<option value="${escapeHtml(m.id)}"${m.id === selectedMachineId ? " selected" : ""}>${escapeHtml(m.name)} (Drums)</option>`
+  ).join("");
+  return `<optgroup label="Synthesizers">${synthOpts}</optgroup><optgroup label="Drum Machines">${drumOpts}</optgroup>`;
+}
+
+function presetGroupsHtml(machineId: string, selectedId: string): string {
+  const m = getStudioMachineDef(machineId);
+  let html = selectedId === "custom" ? `<option value="custom" selected>Custom (Edited)</option>` : "";
+  if (m.kind === "drums" && m.kits && m.kits.length > 0) {
+    html += `<optgroup label="Drum Kits">`;
+    for (const k of m.kits) {
+      const val = `kit:${k.id}`;
+      html += `<option value="${escapeHtml(val)}"${val === selectedId ? " selected" : ""}>${escapeHtml(k.name)}</option>`;
+    }
+    html += `</optgroup>`;
+  }
   const groups = new Map<string, { id: string; name: string }[]>();
-  for (const p of SY1.presets) {
+  for (const p of m.presets) {
     let list = groups.get(p.group);
     if (!list) {
       list = [];
@@ -191,7 +304,6 @@ function presetGroupsHtml(selectedId: string): string {
     }
     list.push({ id: p.id, name: p.name });
   }
-  let html = selectedId === "custom" ? `<option value="custom" selected>Custom (Edited)</option>` : "";
   groups.forEach((items, groupName) => {
     html += `<optgroup label="${escapeHtml(groupName)}">`;
     for (const item of items) {
@@ -210,149 +322,118 @@ function midiChannelOptionsHtml(selected: number): string {
   return html;
 }
 
-function renderKnob(track: SY1TrackEngine, key: string, label: string): string {
-  const def = SYNTH_PARAMS[key];
-  const val = track.patch[key];
-  const n = Math.max(0, Math.min(1, synthNorm(key, Number(val))));
-  const fmt = def?.fmt ? def.fmt(Number(val)) : String(val);
-  return `<div class="st-knob" data-st-param="${escapeHtml(key)}" role="slider" tabindex="0" aria-label="${escapeHtml(label)}" aria-valuetext="${escapeHtml(fmt)}">
-    <div class="st-knob-dial" style="--n:${n.toFixed(4)}">
-      <span class="st-knob-ptr"></span>
-    </div>
-    <span class="st-knob-lbl">${escapeHtml(label)}</span>
-    <span class="st-knob-val">${escapeHtml(fmt)}</span>
-  </div>`;
-}
+// ------------------------------------------------------------ Instrument Browser ----
 
-function renderChoice(track: SY1TrackEngine, key: string, options: [string, string][]): string {
-  const cur = String(track.patch[key]);
-  return `<div class="st-choice" data-st-choice="${escapeHtml(key)}">` +
-    options.map(([val, lbl]) =>
-      `<button type="button" class="st-choice-btn${cur === val ? " is-active" : ""}" data-st-action="param-choice" data-st-param="${escapeHtml(key)}" data-st-value="${escapeHtml(val)}">${escapeHtml(lbl)}</button>`
-    ).join("") +
-    `</div>`;
-}
+function renderInstrumentBrowserHtml(focused: SY1TrackEngine): string {
+  const machines: readonly MachineDef[] = STUDIO_MACHINES;
+  const activeMachines =
+    browserMachineId === "all"
+      ? machines
+      : browserMachineId === "synths"
+        ? STUDIO_SYNTH_MACHINES
+        : browserMachineId === "drums"
+          ? STUDIO_DRUM_MACHINES
+          : machines.filter((m) => m.id === browserMachineId);
 
-function renderInspectorBody(track: SY1TrackEngine): string {
-  if (activeTab === "osc") {
-    return `
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Osc 1</div>
-        ${renderChoice(track, "osc1Wave", [["sawtooth", "Saw"], ["square", "Sqr"], ["triangle", "Tri"], ["sine", "Sin"]])}
-        <div class="st-knob-row">
-          ${renderKnob(track, "osc1Oct", "Oct")}
-          ${renderKnob(track, "sub", "Sub")}
-          ${renderKnob(track, "noise", "Noise")}
-        </div>
-      </div>
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Osc 2 &amp; Mix</div>
-        ${renderChoice(track, "osc2Wave", [["sawtooth", "Saw"], ["square", "Sqr"], ["triangle", "Tri"], ["sine", "Sin"]])}
-        <div class="st-knob-row">
-          ${renderKnob(track, "osc2Oct", "Oct")}
-          ${renderKnob(track, "osc2Detune", "Detune")}
-          ${renderKnob(track, "oscMix", "Mix")}
-        </div>
-      </div>
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Unison &amp; Analog</div>
-        <div class="st-knob-row">
-          ${renderKnob(track, "unison", "Voices")}
-          ${renderKnob(track, "uniDetune", "Spread")}
-          ${renderKnob(track, "uniWidth", "Width")}
-          ${renderKnob(track, "drift", "Drift")}
-        </div>
-      </div>`;
+  // Collect categories across active machines
+  const catSet = new Set<string>();
+  for (const m of activeMachines) {
+    for (const p of m.presets) catSet.add(p.group);
   }
-  if (activeTab === "filter") {
-    return `
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Filter Type</div>
-        ${renderChoice(track, "filterType", [["lowpass", "LP12"], ["lp24", "LP24"], ["ladder", "Ladder"], ["bandpass", "BP"], ["highpass", "HP"]])}
-        <div class="st-knob-row">
-          ${renderKnob(track, "cutoff", "Cutoff")}
-          ${renderKnob(track, "res", "Res")}
-          ${renderKnob(track, "envAmt", "Env Amt")}
-          ${renderKnob(track, "filterDrive", "Drive")}
-          ${renderKnob(track, "keyTrack", "Key Trk")}
-        </div>
-      </div>
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Filter Envelope</div>
-        <div class="st-knob-row">
-          ${renderKnob(track, "fA", "Attack")}
-          ${renderKnob(track, "fD", "Decay")}
-          ${renderKnob(track, "fS", "Sustain")}
-          ${renderKnob(track, "fR", "Release")}
-        </div>
-      </div>`;
+  const categories = ["All", ...Array.from(catSet)];
+  const effCategory = categories.includes(browserCategory) ? browserCategory : "All";
+
+  const q = browserSearch.trim().toLowerCase();
+  const entries: { machine: MachineDef; id: string; name: string; group: string; fav: boolean }[] = [];
+
+  for (const m of activeMachines) {
+    for (const p of m.presets) {
+      const isFav = studioFavs.has(favKey(m.id, p.id));
+      if (browserFavsOnly && !isFav) continue;
+      if (effCategory !== "All" && p.group !== effCategory) continue;
+      if (
+        q &&
+        !p.name.toLowerCase().includes(q) &&
+        !p.group.toLowerCase().includes(q) &&
+        !m.name.toLowerCase().includes(q) &&
+        !(m.role || "").toLowerCase().includes(q)
+      ) {
+        continue;
+      }
+      entries.push({ machine: m, id: p.id, name: p.name, group: p.group, fav: isFav });
+    }
   }
-  if (activeTab === "amp") {
-    return `
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Amp Envelope</div>
-        <div class="st-knob-row">
-          ${renderKnob(track, "aA", "Attack")}
-          ${renderKnob(track, "aD", "Decay")}
-          ${renderKnob(track, "aS", "Sustain")}
-          ${renderKnob(track, "aR", "Release")}
-          ${renderKnob(track, "velSens", "Vel")}
-          ${renderKnob(track, "volume", "Synth Vol")}
-        </div>
-      </div>
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">LFO</div>
-        ${renderChoice(track, "lfoTarget", [["pitch", "Pitch"], ["filter", "Filter"], ["amp", "Amp"]])}
-        <div class="st-knob-row">
-          ${renderKnob(track, "lfoRate", "Rate")}
-          ${renderKnob(track, "lfoDepth", "Depth")}
-          ${renderKnob(track, "lfoSync", "Sync")}
-        </div>
-      </div>`;
-  }
-  if (activeTab === "fx") {
-    return `
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Drive &amp; EQ</div>
-        <div class="st-knob-row">
-          ${renderKnob(track, "drive", "Drive")}
-          ${renderKnob(track, "eqLow", "Low")}
-          ${renderKnob(track, "eqMid", "Mid")}
-          ${renderKnob(track, "eqHigh", "High")}
-        </div>
-      </div>
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Chorus &amp; Delay</div>
-        <div class="st-knob-row">
-          ${renderKnob(track, "chorusMix", "Chorus")}
-          ${renderKnob(track, "chorusRate", "Rate")}
-          ${renderKnob(track, "delayTime", "Dly Time")}
-          ${renderKnob(track, "delayFb", "Feedback")}
-          ${renderKnob(track, "delayMix", "Dly Mix")}
-        </div>
-      </div>
-      <div class="st-ctrl-group">
-        <div class="st-ctrl-cap">Reverb</div>
-        <div class="st-knob-row">
-          ${renderKnob(track, "revSize", "Size")}
-          ${renderKnob(track, "revMix", "Rev Mix")}
-        </div>
-      </div>`;
-  }
+
   return `
-    <div class="st-ctrl-group">
-      <div class="st-ctrl-cap">Voice Mode</div>
-      ${renderChoice(track, "polyMode", [["poly", "Poly"], ["mono", "Mono"]])}
-      ${renderChoice(track, "legato", [["on", "Legato On"], ["off", "Legato Off"]])}
-      <div class="st-knob-row">
-        ${renderKnob(track, "glide", "Glide")}
-        ${renderKnob(track, "bendRange", "Bend")}
+    <aside class="st-browser${browserOpen ? "" : " is-collapsed"}" id="st-browser" aria-label="Instrument Browser"${browserOpen ? "" : " hidden"}>
+      <div class="st-br-head">
+        <div class="st-br-title-row">
+          <span class="st-br-title">Instruments</span>
+          <span class="st-br-target">→ ${escapeHtml(focused.name)}</span>
+          <button type="button" class="st-icon-btn" data-st-action="toggle-browser" aria-label="Close instrument browser" title="Hide Browser">✕</button>
+        </div>
+        <div class="st-br-search-row">
+          <input type="search" class="st-br-search" id="st-browser-search" value="${escapeHtml(browserSearch)}" placeholder="Search synths, drums, presets…" aria-label="Search instruments and presets" />
+          <button type="button" class="st-btn st-br-fav-btn${browserFavsOnly ? " is-active" : ""}" id="st-browser-fav-btn" data-st-action="browser-toggle-favs" aria-pressed="${browserFavsOnly}" title="Show favorites only">★</button>
+        </div>
       </div>
-    </div>`;
+
+      <div class="st-br-machines" role="listbox" aria-label="Iranian city synthesizers and drum machines">
+        <div class="st-br-filter-row">
+          <button type="button" class="st-br-fchip${browserMachineId === "all" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="all">All (${machines.length})</button>
+          <button type="button" class="st-br-fchip${browserMachineId === "synths" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="synths">Synths (${STUDIO_SYNTH_MACHINES.length})</button>
+          <button type="button" class="st-br-fchip${browserMachineId === "drums" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="drums">Drums (${STUDIO_DRUM_MACHINES.length})</button>
+        </div>
+        ${machines
+          .map((m) => {
+            const active = browserMachineId === m.id;
+            const loaded = focused.machineId === m.id;
+            return `<button type="button" class="st-br-mcard${active ? " is-active" : ""}${loaded ? " is-loaded" : ""}" data-st-action="browser-machine" data-st-machine="${escapeHtml(m.id)}" aria-selected="${active}">
+              <span class="st-br-mart">${machineArt(m)}</span>
+              <span class="st-br-minfo">
+                <span class="st-br-mname">${escapeHtml(m.name)}${m.kind === "drums" ? " · Drums" : ""}</span>
+                <span class="st-br-mrole">${escapeHtml(m.role)}</span>
+              </span>
+            </button>`;
+          })
+          .join("")}
+      </div>
+
+      <div class="st-br-cats" role="tablist" aria-label="Preset categories">
+        ${categories
+          .map(
+            (cat) =>
+              `<button type="button" class="st-br-cat${effCategory === cat ? " is-active" : ""}" role="tab" aria-selected="${effCategory === cat}" data-st-action="browser-cat" data-st-cat="${escapeHtml(cat)}">${escapeHtml(cat)}</button>`
+          )
+          .join("")}
+      </div>
+
+      <div class="st-br-list" id="st-browser-list" role="listbox" aria-label="Presets">
+        ${
+          entries.length > 0
+            ? entries
+                .map((e) => {
+                  const isCurrent = focused.machineId === e.machine.id && focused.presetId === e.id;
+                  return `<div class="st-br-item${isCurrent ? " is-current" : ""}">
+                    <button type="button" class="st-br-preset-btn" data-st-action="browser-pick-preset" data-st-machine="${escapeHtml(e.machine.id)}" data-st-preset="${escapeHtml(e.id)}" aria-selected="${isCurrent}">
+                      <span class="st-br-pname">${escapeHtml(e.name)}</span>
+                      <span class="st-br-pmeta">${escapeHtml(e.machine.name)} · ${escapeHtml(e.group)}</span>
+                    </button>
+                    <button type="button" class="st-br-star${e.fav ? " is-fav" : ""}" data-st-action="browser-star" data-st-machine="${escapeHtml(e.machine.id)}" data-st-preset="${escapeHtml(e.id)}" aria-pressed="${e.fav}" aria-label="${e.fav ? "Remove favorite" : "Add favorite"}">★</button>
+                  </div>`;
+                })
+                .join("")
+            : `<div class="st-br-empty">${browserFavsOnly ? "No favorite presets yet. Tap ★ on any preset." : "No matching presets."}</div>`
+        }
+      </div>
+    </aside>`;
 }
 
-function renderRulerMarks(bars: number): string {
-  const step = bars <= 16 ? 1 : bars <= 32 ? 2 : bars <= 64 ? 4 : bars <= 128 ? 8 : 16;
+// ------------------------------------------------------------ Arrangement Timeline ----
+
+function renderRulerMarks(bars: number, zoom: number): string {
+  const effectiveBars = bars / Math.max(1, zoom);
+  const step = effectiveBars <= 16 ? 1 : effectiveBars <= 32 ? 2 : effectiveBars <= 64 ? 4 : effectiveBars <= 128 ? 8 : 16;
   let html = "";
   for (let b = 0; b < bars; b += step) {
     const pct = (b / bars) * 100;
@@ -361,8 +442,9 @@ function renderRulerMarks(bars: number): string {
   return html;
 }
 
-function renderLaneGrid(bars: number): string {
-  const step = bars <= 16 ? 1 : bars <= 64 ? 4 : bars <= 128 ? 8 : 16;
+function renderLaneGrid(bars: number, zoom: number): string {
+  const effectiveBars = bars / Math.max(1, zoom);
+  const step = effectiveBars <= 16 ? 1 : effectiveBars <= 64 ? 4 : effectiveBars <= 128 ? 8 : 16;
   let html = "";
   for (let b = 0; b < bars; b += step) {
     const pct = (b / bars) * 100;
@@ -372,208 +454,392 @@ function renderLaneGrid(bars: number): string {
   return html;
 }
 
-function renderTrackNotes(track: SY1TrackEngine, totalTicks: number): string {
+function renderTrackNotes(track: SY1TrackEngine, totalTicks: number, color: string): string {
   const spans = track.getNoteSpans(totalTicks);
   if (spans.length === 0) {
-    return `<div class="st-lane-empty">No recorded notes · arm R and press Rec</div>`;
+    return `<div class="st-lane-empty">Empty track · arm R to record or click Piano Roll below</div>`;
   }
   let minM = 127;
   let maxM = 0;
+  let firstTick = totalTicks;
+  let lastTick = 0;
   for (const s of spans) {
     if (s.midi < minM) minM = s.midi;
     if (s.midi > maxM) maxM = s.midi;
+    if (s.startTick < firstTick) firstTick = s.startTick;
+    if (s.endTick > lastTick) lastTick = s.endTick;
   }
   const lo = Math.min(minM, 48);
   const hi = Math.max(maxM, lo + 24);
   const spanM = Math.max(12, hi - lo);
 
-  return spans.map((s) => {
-    const leftPct = Math.max(0, Math.min(100, (s.startTick / totalTicks) * 100));
-    const widthPct = Math.max(0.4, Math.min(100 - leftPct, ((s.endTick - s.startTick) / totalTicks) * 100));
-    const topPct = 92 - ((s.midi - lo) / spanM) * 86;
-    return `<span class="st-note-bar" style="left:${leftPct.toFixed(3)}%;width:${widthPct.toFixed(3)}%;top:${topPct.toFixed(1)}%"></span>`;
-  }).join("");
+  const clipStartBar = Math.floor(firstTick / STUDIO_TICKS_PER_BAR);
+  const clipEndBar = Math.max(clipStartBar + 1, Math.ceil(lastTick / STUDIO_TICKS_PER_BAR));
+  const clipStartTick = clipStartBar * STUDIO_TICKS_PER_BAR;
+  const clipEndTick = Math.min(totalTicks, clipEndBar * STUDIO_TICKS_PER_BAR);
+  const clipTicks = Math.max(STUDIO_TICKS_PER_BAR, clipEndTick - clipStartTick);
+  const clipLeftPct = (clipStartTick / totalTicks) * 100;
+  const clipWidthPct = Math.min(100 - clipLeftPct, (clipTicks / totalTicks) * 100);
+
+  const noteBars = spans
+    .map((s) => {
+      const leftPct = Math.max(0, Math.min(100, ((s.startTick - clipStartTick) / clipTicks) * 100));
+      const widthPct = Math.max(0.6, Math.min(100 - leftPct, ((s.endTick - s.startTick) / clipTicks) * 100));
+      const topPct = 90 - ((s.midi - lo) / spanM) * 80;
+      return `<span class="st-note-bar" style="left:${leftPct.toFixed(3)}%;width:${widthPct.toFixed(3)}%;top:${topPct.toFixed(1)}%"></span>`;
+    })
+    .join("");
+
+  return `<div class="st-clip" style="left:${clipLeftPct.toFixed(3)}%;width:${clipWidthPct.toFixed(3)}%;--clip-color:${color}">
+    <div class="st-clip-head">${escapeHtml(track.presetName)}</div>
+    <div class="st-clip-body">${noteBars}</div>
+  </div>`;
 }
+
+// ------------------------------------------------------------ Mixer View ----
+
+function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEngine): string {
+  const masterVol = getMasterVolume();
+  const strips = tracks
+    .map((t, idx) => {
+      const color = trackColor(idx);
+      const isFocused = t.id === focused.id;
+      const mDef = getStudioMachineDef(t.machineId);
+      const panStr = fmtPan(t.pan);
+      return `<div class="st-mix-strip${isFocused ? " is-focused" : ""}" data-mix-track="${escapeHtml(t.id)}" style="--trk-color:${color}">
+        <div class="st-mix-top">
+          <button type="button" class="st-mix-name" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}">${escapeHtml(t.name)}</button>
+          <span class="st-mix-sub" title="${escapeHtml(mDef.name)} · ${escapeHtml(t.presetName)}">${escapeHtml(mDef.name)} · ${escapeHtml(t.presetName)}</span>
+        </div>
+        <div class="st-mix-pan">
+          <span class="st-mix-lbl" data-st-pan-lbl="${escapeHtml(t.id)}">${panStr}</span>
+          <input type="range" class="st-range" min="-1" max="1" step="0.02" value="${t.pan.toFixed(2)}" data-st-range="pan" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} mixer pan" />
+        </div>
+        <div class="st-mix-btns">
+          <button type="button" class="st-btn st-mini-btn is-rec${t.armed ? " is-active" : ""}" data-st-action="toggle-arm" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.armed}" title="Record Arm">R</button>
+          <button type="button" class="st-btn st-mini-btn is-mute${t.mute ? " is-active" : ""}" data-st-action="toggle-mute" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.mute}" title="Mute">M</button>
+          <button type="button" class="st-btn st-mini-btn is-solo${t.solo ? " is-active" : ""}" data-st-action="toggle-solo" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.solo}" title="Solo">S</button>
+        </div>
+        <div class="st-mix-fader-row">
+          <div class="st-mix-meter" aria-hidden="true">
+            <div class="st-mix-meter-fill" data-st-meter="${escapeHtml(t.id)}" style="transform:scaleY(0)"></div>
+          </div>
+          <div class="st-mix-vfader-wrap">
+            <input type="range" class="st-vrange" min="0" max="1" step="0.01" value="${t.volume.toFixed(2)}" data-st-range="volume" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} mixer fader" />
+          </div>
+        </div>
+        <div class="st-mix-db" data-st-db-lbl="${escapeHtml(t.id)}">${fmtDb(t.volume)}</div>
+      </div>`;
+    })
+    .join("");
+
+  return `
+    <div class="st-mixer" id="st-mixer">
+      <div class="st-mix-channels">${strips}</div>
+      <div class="st-mix-strip is-master">
+        <div class="st-mix-top">
+          <span class="st-mix-name">Master</span>
+          <span class="st-mix-sub">Stereo Out</span>
+        </div>
+        <div class="st-mix-pan">
+          <span class="st-mix-lbl">Stereo</span>
+        </div>
+        <div class="st-mix-btns">
+          <span class="st-mix-tag">24-bit Bus</span>
+        </div>
+        <div class="st-mix-fader-row">
+          <div class="st-mix-meter is-master" aria-hidden="true">
+            <div class="st-mix-meter-fill" data-st-meter="master" style="transform:scaleY(0)"></div>
+          </div>
+          <div class="st-mix-vfader-wrap">
+            <input type="range" class="st-vrange" min="0" max="1" step="0.01" value="${masterVol.toFixed(2)}" data-st-master-vol="1" aria-label="Master output volume" />
+          </div>
+        </div>
+        <div class="st-mix-db" id="st-master-db">${fmtDb(masterVol * masterVol)}</div>
+      </div>
+    </div>`;
+}
+
+// ------------------------------------------------------------ Full Studio Shell ----
 
 function renderStudioHtml(): string {
   const tr = studioEngine.getTransportSnapshot();
   const tracks = studioEngine.getTracks();
   const focused = studioEngine.getFocusedTrack();
+  const focusedMachine = getStudioMachineDef(focused.machineId);
+
   const loopLeftPct = ((tr.loopStartBar - 1) / tr.bars) * 100;
   const loopWidthPct = ((tr.loopEndBar - tr.loopStartBar + 1) / tr.bars) * 100;
   const playheadPct = tr.totalTicks > 0 ? (tr.currentTick / tr.totalTicks) * 100 : 0;
 
-  const barButtons = STUDIO_BAR_PRESETS.map((b) =>
-    `<button type="button" class="st-btn st-bar-btn${tr.bars === b ? " is-active" : ""}" data-st-action="set-bars" data-st-bars="${b}">${b}</button>`
+  const barButtons = STUDIO_BAR_PRESETS.map(
+    (b) =>
+      `<button type="button" class="st-btn st-bar-btn${tr.bars === b ? " is-active" : ""}" data-st-action="set-bars" data-st-bars="${b}">${b}</button>`
   ).join("");
 
-  const trackRows = tracks.map((t, idx) => {
-    const isFocused = t.id === focused.id;
-    const volPct = Math.round(t.volume * 100);
-    const panStr = Math.abs(t.pan) < 0.04 ? "C" : (t.pan < 0 ? `L${Math.round(-t.pan * 100)}` : `R${Math.round(t.pan * 100)}`);
-    const noteCount = t.getNoteCount();
-    const audioTag = t.getAudioState() === "hq" ? "HQ" : t.getAudioState() === "classic" ? "Classic" : "Ready";
+  const laneZoomStyle = arrZoom > 1 ? `min-width:${Math.round(arrZoom * 100)}%` : "";
 
-    return `<div class="st-track${isFocused ? " is-focused" : ""}" data-track-id="${escapeHtml(t.id)}" data-track-idx="${idx}">
-      <div class="st-track-ctl">
-        <div class="st-track-top">
-          <button type="button" class="st-track-title" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}" title="Focus this track for keyboard & synth controls">${escapeHtml(t.name)}</button>
-          <select class="st-select" data-st-select="preset" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} preset">
-            ${presetGroupsHtml(t.presetId)}
-          </select>
-        </div>
-        <div class="st-track-mid">
-          <button type="button" class="st-btn st-mini-btn is-rec${t.armed ? " is-active" : ""}" data-st-action="toggle-arm" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.armed}" title="Record Arm">R</button>
-          <button type="button" class="st-btn st-mini-btn is-mute${t.mute ? " is-active" : ""}" data-st-action="toggle-mute" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.mute}" title="Mute">M</button>
-          <button type="button" class="st-btn st-mini-btn is-solo${t.solo ? " is-active" : ""}" data-st-action="toggle-solo" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.solo}" title="Solo">S</button>
-          <div class="st-fader-wrap" title="Track Volume">
-            <span class="st-fader-lbl">Vol</span>
-            <input type="range" class="st-range" min="0" max="1" step="0.01" value="${t.volume.toFixed(2)}" data-st-range="volume" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} volume" />
-          </div>
-          <div class="st-fader-wrap" title="Track Pan (${panStr})" style="max-width:74px">
-            <span class="st-fader-lbl" data-st-pan-lbl="${escapeHtml(t.id)}">${panStr}</span>
-            <input type="range" class="st-range" min="-1" max="1" step="0.02" value="${t.pan.toFixed(2)}" data-st-range="pan" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} pan" />
-          </div>
-        </div>
-        <div class="st-track-meta">
-          <span data-st-meta="${escapeHtml(t.id)}">${noteCount} ${noteCount === 1 ? "note" : "notes"} · ${volPct}% · ${audioTag}</span>
-          <div class="st-group" style="gap:4px">
-            <select class="st-select st-ch-select" data-st-select="channel" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} MIDI input channel">
-              ${midiChannelOptionsHtml(t.midiChannel)}
+  const trackRows = tracks
+    .map((t, idx) => {
+      const color = trackColor(idx);
+      const isFocused = t.id === focused.id;
+      const panStr = fmtPan(t.pan);
+      const noteCount = t.getNoteCount();
+      const mDef = getStudioMachineDef(t.machineId);
+      const noteUnit = t.isDrumTrack() ? (noteCount === 1 ? "hit" : "hits") : noteCount === 1 ? "note" : "notes";
+
+      return `<div class="st-track${isFocused ? " is-focused" : ""}" data-track-id="${escapeHtml(t.id)}" data-track-idx="${idx}" style="--trk-color:${color}">
+        <div class="st-track-ctl">
+          <div class="st-track-top">
+            <button type="button" class="st-track-title" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}" title="Focus ${escapeHtml(t.name)}">${escapeHtml(t.name)}</button>
+            <select class="st-select st-machine-sel" data-st-select="machine" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} instrument" title="Select instrument for ${escapeHtml(t.name)}">
+              ${machineOptionsHtml(t.machineId)}
             </select>
-            <button type="button" class="st-btn" style="min-height:26px;padding:0 7px;font-size:0.64rem" data-st-action="clear-track" data-track-id="${escapeHtml(t.id)}"${t.events.length === 0 ? " disabled" : ""}>Clear</button>
+            <button type="button" class="st-track-city" data-st-action="open-track-instrument" data-track-id="${escapeHtml(t.id)}" title="Open ${escapeHtml(mDef.name)} instrument panel">Edit</button>
+          </div>
+          <div class="st-track-preset-row">
+            <button type="button" class="st-btn st-mini-btn is-rec${t.armed ? " is-active" : ""}" data-st-action="toggle-arm" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.armed}" title="Record Arm">R</button>
+            <button type="button" class="st-btn st-mini-btn is-mute${t.mute ? " is-active" : ""}" data-st-action="toggle-mute" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.mute}" title="Mute">M</button>
+            <button type="button" class="st-btn st-mini-btn is-solo${t.solo ? " is-active" : ""}" data-st-action="toggle-solo" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.solo}" title="Solo">S</button>
+            <select class="st-select st-preset-sel" data-st-select="preset" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} preset">
+              ${presetGroupsHtml(t.machineId, t.presetId)}
+            </select>
+          </div>
+          <div class="st-track-mid">
+            <div class="st-fader-wrap" title="Track Volume">
+              <span class="st-fader-lbl">Vol</span>
+              <input type="range" class="st-range" min="0" max="1" step="0.01" value="${t.volume.toFixed(2)}" data-st-range="volume" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} volume" />
+            </div>
+            <div class="st-fader-wrap st-pan-wrap" title="Track Pan (${panStr})">
+              <span class="st-fader-lbl" data-st-pan-lbl="${escapeHtml(t.id)}">${panStr}</span>
+              <input type="range" class="st-range" min="-1" max="1" step="0.02" value="${t.pan.toFixed(2)}" data-st-range="pan" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} pan" />
+            </div>
+          </div>
+          <div class="st-track-meta">
+            <div class="st-hdr-meter" aria-hidden="true"><span class="st-hdr-meter-fill" data-st-hdr-meter="${escapeHtml(t.id)}" style="transform:scaleX(0)"></span></div>
+            <span class="st-track-stats" data-st-meta="${escapeHtml(t.id)}">${noteCount} ${noteUnit}</span>
+            <div class="st-track-tools">
+              <select class="st-select st-ch-select" data-st-select="channel" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} MIDI input channel">
+                ${midiChannelOptionsHtml(t.midiChannel)}
+              </select>
+              <button type="button" class="st-btn st-tiny-btn" data-st-action="clear-track" data-track-id="${escapeHtml(t.id)}"${t.events.length === 0 ? " disabled" : ""}>Clear</button>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="st-lane" data-st-lane="1" data-track-id="${escapeHtml(t.id)}" title="Click to focus track and seek playhead">
-        <div class="st-lane-grid">${renderLaneGrid(tr.bars)}</div>
-        <div class="st-lane-notes">${renderTrackNotes(t, tr.totalTicks)}</div>
-        <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
-      </div>
-    </div>`;
-  }).join("");
+        <div class="st-lane" data-st-lane="1" data-track-id="${escapeHtml(t.id)}" style="${laneZoomStyle}" title="Click to focus track & seek · Double-click to edit in Piano Roll">
+          <div class="st-lane-grid">${renderLaneGrid(tr.bars, arrZoom)}</div>
+          <div class="st-lane-notes">${renderTrackNotes(t, tr.totalTicks, color)}</div>
+          <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
+        </div>
+      </div>`;
+    })
+    .join("");
 
-  const tabs: [InspectorTab, string][] = [
-    ["osc", "Osc"],
-    ["filter", "Filter"],
-    ["amp", "Amp & LFO"],
-    ["fx", "Effects"],
-    ["voice", "Voice"]
-  ];
+  let dockContent = "";
+  if (!dockCollapsed) {
+    if (activeDockTab === "piano-roll") {
+      dockContent = renderPianoRollHtml();
+    } else if (activeDockTab === "mixer") {
+      dockContent = renderMixerHtml(tracks, focused);
+    } else {
+      dockContent = renderStudioInstrumentHtml(focused, instPageFilter);
+    }
+  }
 
   return `
-    <div class="st-panel" dir="ltr">
-      <div class="st-header">
-        <div class="st-group">
+    <div class="st-daw${dockExpanded ? " is-dock-expanded" : ""}${dockCollapsed ? " is-dock-collapsed" : ""}" dir="ltr" style="--st-dock-h:${dockHeightPx}px">
+      <header class="st-topbar">
+        <div class="st-tb-left">
           <button type="button" class="st-btn" id="st-back-btn" data-st-action="close-studio" title="Return to standalone SY-1 Synth">← Synth</button>
           <div class="st-brand">SY-1 <span>Studio</span></div>
+          <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>
+          <input type="text" class="st-name-input" id="st-project-name" value="${escapeHtml(tr.projectName)}" maxlength="80" aria-label="Project name" placeholder="Untitled Session" />
         </div>
 
-        <div class="st-group" role="group" aria-label="Master Transport">
-          <button type="button" class="st-btn is-play${tr.playing ? " is-active" : ""}" id="st-play-btn" data-st-action="play" aria-pressed="${tr.playing}">${tr.playing ? "Playing" : "▶ Play"}</button>
-          <button type="button" class="st-btn" id="st-stop-btn" data-st-action="stop">■ Stop</button>
-          <button type="button" class="st-btn is-rec${tr.recording ? " is-active" : ""}" id="st-rec-btn" data-st-action="record" aria-pressed="${tr.recording}">● Rec</button>
-          <button type="button" class="st-btn${tr.loopEnabled ? " is-active" : ""}" id="st-loop-btn" data-st-action="toggle-loop" aria-pressed="${tr.loopEnabled}">Loop</button>
+        <div class="st-tb-center" role="group" aria-label="Master Transport">
+          <div class="st-seg">
+            <button type="button" class="st-btn is-play${tr.playing ? " is-active" : ""}" id="st-play-btn" data-st-action="play" aria-pressed="${tr.playing}">${tr.playing ? "Playing" : "▶ Play"}</button>
+            <button type="button" class="st-btn" id="st-stop-btn" data-st-action="stop">■ Stop</button>
+            <button type="button" class="st-btn is-rec${tr.recording ? " is-active" : ""}" id="st-rec-btn" data-st-action="record" aria-pressed="${tr.recording}">● Rec</button>
+            <button type="button" class="st-btn${tr.loopEnabled ? " is-active" : ""}" id="st-loop-btn" data-st-action="toggle-loop" aria-pressed="${tr.loopEnabled}">Loop</button>
+          </div>
           <div class="st-clock" id="st-clock" aria-label="Transport position">${String(tr.currentBar).padStart(2, "0")} : ${tr.currentBeat}</div>
-        </div>
-
-        <div class="st-group" role="group" aria-label="Tempo">
-          <button type="button" class="st-btn" data-st-action="bpm-down" aria-label="Decrease BPM">−</button>
-          <button type="button" class="st-btn st-bpm-val" id="st-bpm-val" data-st-action="bpm-tap" title="Tap tempo">${fmtBpm(tr.bpm)} BPM</button>
-          <button type="button" class="st-btn" data-st-action="bpm-up" aria-label="Increase BPM">+</button>
-        </div>
-
-        <div class="st-group" role="group" aria-label="Timeline length in bars">
-          <div class="st-bars-group">
+          <div class="st-seg" role="group" aria-label="Tempo">
+            <button type="button" class="st-btn st-step-btn" data-st-action="bpm-down" aria-label="Decrease BPM">−</button>
+            <button type="button" class="st-btn st-bpm-val" id="st-bpm-val" data-st-action="bpm-tap" title="Tap tempo">${fmtBpm(tr.bpm)} BPM</button>
+            <button type="button" class="st-btn st-step-btn" data-st-action="bpm-up" aria-label="Increase BPM">+</button>
+          </div>
+          <div class="st-bars-group" role="group" aria-label="Timeline length in bars">
             ${barButtons}
             <input type="number" class="st-bar-input" id="st-bars-custom" min="1" max="512" value="${tr.bars}" aria-label="Custom bar count" title="Custom bar length (1–512)" />
           </div>
-          <button type="button" class="st-btn" id="st-export-midi" data-st-action="export-midi">MIDI</button>
-          <button type="button" class="st-btn" id="st-export-wav" data-st-action="export-wav"${exporting || exportingStems ? " disabled" : ""}>${exporting ? "Rendering…" : "WAV Mix"}</button>
-          <button type="button" class="st-btn" id="st-export-stems" data-st-action="export-stems"${exporting || exportingStems ? " disabled" : ""}>${exportingStems ? "Stems…" : "Export Stems"}</button>
-          ${tr.hasLiveTake ? `<button type="button" class="st-btn" id="st-export-live" data-st-action="export-live" title="Download last live recorded mix (${tr.liveTakeDurationSec.toFixed(1)}s)">Live WAV</button>` : ""}
         </div>
-      </div>
 
-      <div class="st-project-bar" role="group" aria-label="Project management">
-        <div class="st-group">
-          <input type="text" class="st-name-input" id="st-project-name" value="${escapeHtml(tr.projectName)}" maxlength="80" aria-label="Project name" placeholder="Project name" />
-          <button type="button" class="st-btn st-proj-btn" id="st-save-btn" data-st-action="save-project">Save</button>
-          <button type="button" class="st-btn st-proj-btn${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer">Open</button>
-          <button type="button" class="st-btn st-proj-btn" id="st-export-project" data-st-action="export-project">Export Project</button>
-          <button type="button" class="st-btn st-proj-btn" id="st-import-project-btn" data-st-action="trigger-import-project">Import .sy1studio</button>
-          <input type="file" id="st-import-file" accept=".sy1studio,.json,application/json" hidden />
+        <div class="st-tb-right">
+          <button type="button" class="st-btn" id="st-save-btn" data-st-action="save-project">Save</button>
+          <button type="button" class="st-btn${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer">Open</button>
+          <div class="st-export-wrap">
+            <button type="button" class="st-btn${exportMenuOpen ? " is-active" : ""}" id="st-export-menu-btn" data-st-action="toggle-export-menu" aria-haspopup="menu" aria-expanded="${exportMenuOpen}">${exporting ? "Rendering…" : exportingStems ? "Stems…" : "Export ▾"}</button>
+            <div class="st-export-menu" id="st-export-menu" role="menu"${exportMenuOpen ? "" : " hidden"}>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-export-wav" data-st-action="export-wav"${exporting || exportingStems ? " disabled" : ""}>24-bit WAV Mix</button>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-export-stems" data-st-action="export-stems"${exporting || exportingStems ? " disabled" : ""}>24-bit WAV Stems</button>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-export-midi" data-st-action="export-midi">MIDI (SMF-1)</button>
+              ${tr.hasLiveTake ? `<button type="button" class="st-menu-item" role="menuitem" id="st-export-live" data-st-action="export-live">Live Take WAV (${tr.liveTakeDurationSec.toFixed(1)}s)</button>` : ""}
+              <div class="st-menu-sep"></div>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-export-project" data-st-action="export-project">Export .sy1studio</button>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-import-project-btn" data-st-action="trigger-import-project">Import .sy1studio</button>
+            </div>
+            <input type="file" id="st-import-file" accept=".sy1studio,.json,application/json" hidden />
+          </div>
+          <button type="button" class="st-btn${keysVisible ? " is-active" : ""}" id="st-keys-toggle" data-st-action="toggle-keys" aria-pressed="${keysVisible}" title="Show or hide on-screen keyboard">Keys</button>
         </div>
-        <div class="st-group">
-          ${tr.liveRecWarning ? `<span class="st-export-status is-error" id="st-rec-warn">${escapeHtml(tr.liveRecWarning)}</span>` : ""}
-          ${statusMessage ? `<span class="st-export-status${statusTone === "error" ? " is-error" : statusTone === "ok" ? " is-ok" : ""}" id="st-status">${escapeHtml(statusMessage)}</span>` : ""}
-        </div>
-      </div>
+      </header>
 
-      ${openDrawerVisible ? `
-      <div class="st-drawer" id="st-open-drawer" role="region" aria-label="Saved Projects">
-        <div class="st-drawer-head">
-          <span>Saved Projects &amp; Recovery</span>
-          <button type="button" class="st-btn st-proj-btn" data-st-action="toggle-open-drawer">Close</button>
-        </div>
-        <div class="st-drawer-list">
-          ${autosaveMetaCache ? `
-            <div class="st-drawer-item">
-              <div>
-                <div class="st-drawer-item-title">Autosave Recovery · ${escapeHtml(autosaveMetaCache.name)}</div>
-                <div class="st-drawer-item-meta">${autosaveMetaCache.trackCount} tracks · ${autosaveMetaCache.bpm} BPM · ${autosaveMetaCache.bars} bars · ${escapeHtml(fmtSavedTime(autosaveMetaCache.updatedAt))}</div>
+      ${
+        tr.liveRecWarning || statusMessage
+          ? `<div class="st-status-strip">
+              ${tr.liveRecWarning ? `<span class="st-export-status is-error" id="st-rec-warn">${escapeHtml(tr.liveRecWarning)}</span>` : ""}
+              ${statusMessage ? `<span class="st-export-status${statusTone === "error" ? " is-error" : statusTone === "ok" ? " is-ok" : ""}" id="st-status">${escapeHtml(statusMessage)}</span>` : ""}
+            </div>`
+          : ""
+      }
+
+      ${
+        openDrawerVisible
+          ? `<div class="st-drawer" id="st-open-drawer" role="region" aria-label="Saved Projects">
+              <div class="st-drawer-head">
+                <span>Saved Projects &amp; Recovery</span>
+                <button type="button" class="st-btn st-tiny-btn" data-st-action="toggle-open-drawer">Close</button>
               </div>
-              <button type="button" class="st-btn st-proj-btn" data-st-action="restore-autosave">Restore</button>
-            </div>` : ""}
-          ${savedProjectsCache.length > 0
-            ? savedProjectsCache.map((p) => `
-              <div class="st-drawer-item" data-project-id="${escapeHtml(p.id)}">
-                <div>
-                  <div class="st-drawer-item-title">${escapeHtml(p.name)}</div>
-                  <div class="st-drawer-item-meta">${p.trackCount} tracks · ${p.noteCount} notes · ${p.bpm} BPM · ${p.bars} bars · ${escapeHtml(fmtSavedTime(p.savedAt))}</div>
-                </div>
-                <div class="st-group" style="gap:4px">
-                  <button type="button" class="st-btn st-proj-btn" data-st-action="open-saved-project" data-project-id="${escapeHtml(p.id)}">Open</button>
-                  <button type="button" class="st-btn st-proj-btn" data-st-action="delete-saved-project" data-project-id="${escapeHtml(p.id)}">Delete</button>
-                </div>
-              </div>`).join("")
-            : `<div class="st-drawer-empty">No saved projects in browser storage yet. Click Save or Import .sy1studio.</div>`}
-        </div>
-      </div>` : ""}
+              <div class="st-drawer-list">
+                ${
+                  autosaveMetaCache
+                    ? `<div class="st-drawer-item">
+                        <div>
+                          <div class="st-drawer-item-title">Autosave Recovery · ${escapeHtml(autosaveMetaCache.name)}</div>
+                          <div class="st-drawer-item-meta">${autosaveMetaCache.trackCount} tracks · ${autosaveMetaCache.bpm} BPM · ${autosaveMetaCache.bars} bars · ${escapeHtml(fmtSavedTime(autosaveMetaCache.updatedAt))}</div>
+                        </div>
+                        <button type="button" class="st-btn st-tiny-btn" data-st-action="restore-autosave">Restore</button>
+                      </div>`
+                    : ""
+                }
+                ${
+                  savedProjectsCache.length > 0
+                    ? savedProjectsCache
+                        .map(
+                          (p) => `<div class="st-drawer-item" data-project-id="${escapeHtml(p.id)}">
+                            <div>
+                              <div class="st-drawer-item-title">${escapeHtml(p.name)}</div>
+                              <div class="st-drawer-item-meta">${p.trackCount} tracks · ${p.noteCount} notes · ${p.bpm} BPM · ${p.bars} bars · ${escapeHtml(fmtSavedTime(p.savedAt))}</div>
+                            </div>
+                            <div class="st-drawer-actions">
+                              <button type="button" class="st-btn st-tiny-btn" data-st-action="open-saved-project" data-project-id="${escapeHtml(p.id)}">Open</button>
+                              <button type="button" class="st-btn st-tiny-btn" data-st-action="delete-saved-project" data-project-id="${escapeHtml(p.id)}">Delete</button>
+                            </div>
+                          </div>`
+                        )
+                        .join("")
+                    : `<div class="st-drawer-empty">No saved projects in browser storage yet. Click Save or Import .sy1studio.</div>`
+                }
+              </div>
+            </div>`
+          : ""
+      }
 
-      <div class="st-body">
-        <div class="st-ruler-row">
-          <div class="st-ruler-label">
-            <span>Tracks (${tracks.length}/${STUDIO_MAX_TRACKS})</span>
-            ${tracks.length < STUDIO_MAX_TRACKS ? `<button type="button" class="st-btn" style="min-height:24px;padding:0 8px;font-size:0.64rem" data-st-action="add-track">+ Track</button>` : ""}
-          </div>
-          <div class="st-ruler" id="st-ruler" data-st-ruler="1" title="Click or drag to seek playhead">
-            ${tr.loopEnabled ? `<div class="st-ruler-loop" style="left:${loopLeftPct.toFixed(3)}%;width:${loopWidthPct.toFixed(3)}%"></div>` : ""}
-            <div class="st-ruler-marks">${renderRulerMarks(tr.bars)}</div>
-            <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
-          </div>
-        </div>
+      <div class="st-workspace">
+        ${renderInstrumentBrowserHtml(focused)}
+        ${browserOpen ? `<div class="st-browser-backdrop" data-st-action="toggle-browser" aria-hidden="true"></div>` : ""}
 
-        <div class="st-tracks">${trackRows}</div>
-
-        <div class="st-inspector">
-          <div class="st-insp-head">
-            <div>
-              <span class="st-insp-title">${escapeHtml(focused.name)}</span>
-              <span class="st-insp-sub">${escapeHtml(focused.presetName)}</span>
+        <div class="st-main">
+          <section class="st-arr-wrap" aria-label="Arrangement Timeline">
+            <div class="st-arr-toolbar">
+              <div class="st-arr-tb-left">
+                <span class="st-arr-count">Tracks ${tracks.length}/${STUDIO_MAX_TRACKS}</span>
+                ${
+                  tracks.length < STUDIO_MAX_TRACKS
+                    ? `<button type="button" class="st-btn st-tiny-btn" id="st-add-track-btn" data-st-action="add-track">+ Track</button>`
+                    : ""
+                }
+                <span class="st-arr-loop-info${tr.loopEnabled ? " is-on" : ""}">Loop Bar ${tr.loopStartBar}–${tr.loopEndBar}</span>
+              </div>
+              <div class="st-arr-tb-right">
+                <span class="st-arr-zoom-lbl">Zoom</span>
+                <button type="button" class="st-btn st-tiny-btn" data-st-action="arr-zoom-out" aria-label="Zoom out timeline">−</button>
+                <input type="range" class="st-range st-arr-zoom-range" id="st-arr-zoom" min="1" max="4" step="0.25" value="${arrZoom.toFixed(2)}" aria-label="Arrangement horizontal zoom" />
+                <button type="button" class="st-btn st-tiny-btn" data-st-action="arr-zoom-in" aria-label="Zoom in timeline">+</button>
+                <button type="button" class="st-btn st-tiny-btn${arrZoom === 1 ? " is-active" : ""}" data-st-action="arr-zoom-fit">Fit</button>
+              </div>
             </div>
-            <div class="st-tabs" role="tablist" aria-label="Focused track SY-1 sections">
-              ${tabs.map(([id, lbl]) =>
-                `<button type="button" class="st-btn st-tab${activeTab === id ? " is-active" : ""}" role="tab" aria-selected="${activeTab === id}" data-st-action="insp-tab" data-st-tab="${id}">${lbl}</button>`
-              ).join("")}
+
+            <div class="st-arr-scroll" id="st-arr-scroll">
+              <div class="st-arr-canvas">
+                <div class="st-ruler-row">
+                  <div class="st-ruler-label">Track</div>
+                  <div class="st-ruler" id="st-ruler" data-st-ruler="1" style="${laneZoomStyle}" title="Click or drag to seek · drag loop edges to adjust loop range">
+                    ${
+                      tr.loopEnabled
+                        ? `<div class="st-ruler-loop" style="left:${loopLeftPct.toFixed(3)}%;width:${loopWidthPct.toFixed(3)}%">
+                            <span class="st-loop-handle is-start" data-st-loop-handle="start" title="Drag to set loop start bar"></span>
+                            <span class="st-loop-handle is-end" data-st-loop-handle="end" title="Drag to set loop end bar"></span>
+                          </div>`
+                        : ""
+                    }
+                    <div class="st-ruler-marks">${renderRulerMarks(tr.bars, arrZoom)}</div>
+                    <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
+                  </div>
+                </div>
+                <div class="st-tracks">${trackRows}</div>
+              </div>
             </div>
+          </section>
+
+          <div class="st-dock-resizer" id="st-dock-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize bottom editor panel" title="Drag to resize · Double-click to reset height">
+            <span class="st-dock-grip"></span>
           </div>
-          <div class="st-insp-body" id="st-insp-body">
-            ${renderInspectorBody(focused)}
-          </div>
+
+          <section class="st-dock" id="st-dock" aria-label="Studio Bottom Editor">
+            <div class="st-dock-head">
+              <div class="st-dock-tabs" role="tablist" aria-label="Studio views">
+                <button type="button" class="st-dock-tab${activeDockTab === "piano-roll" && !dockCollapsed ? " is-active" : ""}" id="st-tab-pianoroll" role="tab" aria-selected="${activeDockTab === "piano-roll" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="piano-roll">Piano Roll</button>
+                <button type="button" class="st-dock-tab${activeDockTab === "mixer" && !dockCollapsed ? " is-active" : ""}" id="st-tab-mixer" role="tab" aria-selected="${activeDockTab === "mixer" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="mixer">Mixer</button>
+                <button type="button" class="st-dock-tab${activeDockTab === "instrument" && !dockCollapsed ? " is-active" : ""}" id="st-tab-instrument" role="tab" aria-selected="${activeDockTab === "instrument" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="instrument">Instrument</button>
+              </div>
+              <div class="st-dock-focused">
+                <span class="st-dock-track-name">${escapeHtml(focused.name)}</span>
+                <span class="st-dock-track-sub">${escapeHtml(focusedMachine.name)} · ${escapeHtml(focused.presetName)}</span>
+              </div>
+              <div class="st-dock-actions">
+                <button type="button" class="st-btn st-tiny-btn${dockExpanded ? " is-active" : ""}" id="st-dock-expand" data-st-action="dock-expand" aria-pressed="${dockExpanded}" title="Toggle full-height focused view">${dockExpanded ? "Split" : "Expand"}</button>
+                <button type="button" class="st-btn st-tiny-btn" id="st-dock-collapse" data-st-action="dock-collapse" aria-pressed="${dockCollapsed}" title="Collapse or expand bottom panel">${dockCollapsed ? "Show" : "Hide"}</button>
+              </div>
+            </div>
+            <div class="st-dock-body" id="st-dock-body"${dockCollapsed ? " hidden" : ""}>
+              ${dockContent}
+            </div>
+          </section>
         </div>
       </div>
     </div>`;
+}
+
+// ------------------------------------------------------------ Live Playhead & Meters ----
+
+function updateMetersDOM(zeroOut = false): void {
+  if (cachedMeterEls.length === 0) return;
+  for (let i = 0; i < cachedMeterEls.length; i++) {
+    const m = cachedMeterEls[i];
+    let level = 0;
+    if (!zeroOut) {
+      if (m.id === "master") {
+        level = studioEngine.readMasterMeterLevel();
+      } else {
+        const trk = studioEngine.getTrack(m.id);
+        level = trk ? trk.readMeterLevel() : 0;
+      }
+    }
+    const scaled = Math.min(1, Math.pow(level, 0.65));
+    m.el.style.transform = m.axis === "y" ? `scaleY(${scaled.toFixed(3)})` : `scaleX(${scaled.toFixed(3)})`;
+  }
 }
 
 function updatePlayheadOnly(): void {
@@ -593,6 +859,7 @@ function updatePlayheadOnly(): void {
     lastClockStr = clockStr;
     cachedClockEl.textContent = clockStr;
   }
+  updateMetersDOM(!studioEngine.isPlaying());
 }
 
 function startPlayheadLoop(): void {
@@ -615,34 +882,86 @@ function stopPlayheadLoop(): void {
     cancelAnimationFrame(rafId);
     rafId = 0;
   }
+  updateMetersDOM(true);
+}
+
+function applyKeyboardVisibility(): void {
+  const kbArea = document.querySelector<HTMLElement>(".kb-area");
+  if (!kbArea) return;
+  if (studioEngine.isActive()) {
+    kbArea.hidden = !keysVisible;
+  } else {
+    kbArea.hidden = false;
+  }
 }
 
 export function renderStudioPanel(): void {
   const container = document.getElementById("sy1-studio");
   if (!container || container.hidden) return;
+
+  // Preserve active search input focus & caret across browser search updates
+  const activeEl = document.activeElement as HTMLInputElement | null;
+  const restoreSearch = activeEl?.id === "st-browser-search";
+  const searchSelStart = restoreSearch ? activeEl.selectionStart : null;
+  const searchSelEnd = restoreSearch ? activeEl.selectionEnd : null;
+
   container.innerHTML = renderStudioHtml();
+
   cachedPlayheadEls = Array.from(container.querySelectorAll<HTMLElement>("[data-st-playhead]"));
   cachedClockEl = document.getElementById("st-clock");
+  cachedMeterEls = [];
+  container.querySelectorAll<HTMLElement>("[data-st-meter]").forEach((el) => {
+    const id = el.getAttribute("data-st-meter");
+    if (id) cachedMeterEls.push({ id, el, axis: "y" });
+  });
+  container.querySelectorAll<HTMLElement>("[data-st-hdr-meter]").forEach((el) => {
+    const id = el.getAttribute("data-st-hdr-meter");
+    if (id) cachedMeterEls.push({ id, el, axis: "x" });
+  });
   lastPlayheadPctStr = "";
   lastClockStr = "";
+
+  const arrScrollEl = container.querySelector<HTMLElement>("#st-arr-scroll");
+  if (arrScrollEl) arrScrollEl.scrollLeft = arrScrollLeft;
+
+  if (activeDockTab === "piano-roll" && !dockCollapsed) {
+    syncPianoRollScroll(container);
+  }
+
+  if (exportMenuOpen) {
+    clampExportMenuToViewport(container);
+  }
+
+  if (restoreSearch) {
+    const nextSearch = document.getElementById("st-browser-search") as HTMLInputElement | null;
+    if (nextSearch) {
+      nextSearch.focus();
+      if (searchSelStart !== null && searchSelEnd !== null) {
+        try {
+          nextSearch.setSelectionRange(searchSelStart, searchSelEnd);
+        } catch (e) {}
+      }
+    }
+  }
 }
 
-function updateFocusedKnobDOM(key: string): void {
-  const container = document.getElementById("sy1-studio");
-  if (!container || container.hidden) return;
-  const track = studioEngine.getFocusedTrack();
-  const def = SYNTH_PARAMS[key];
-  if (!def) return;
-  const val = track.patch[key];
-  const knob = container.querySelector<HTMLElement>(`.st-knob[data-st-param="${key}"]`);
-  if (knob) {
-    const n = Math.max(0, Math.min(1, synthNorm(key, Number(val))));
-    const dial = knob.querySelector<HTMLElement>(".st-knob-dial");
-    if (dial) dial.style.setProperty("--n", n.toFixed(4));
-    const valEl = knob.querySelector<HTMLElement>(".st-knob-val");
-    const fmt = def.fmt ? def.fmt(Number(val)) : String(val);
-    if (valEl) valEl.textContent = fmt;
-    knob.setAttribute("aria-valuetext", fmt);
+function clampExportMenuToViewport(container: HTMLElement): void {
+  const menu = container.querySelector<HTMLElement>("#st-export-menu");
+  if (!menu || menu.hidden) return;
+  menu.style.left = "";
+  menu.style.right = "0";
+  const r = menu.getBoundingClientRect();
+  const vw = window.innerWidth;
+  if (r.left < 8) {
+    menu.style.right = "auto";
+    menu.style.left = "0";
+    const r2 = menu.getBoundingClientRect();
+    if (r2.right > vw - 8) {
+      const shift = vw - 8 - r2.right;
+      menu.style.left = `${Math.round(shift)}px`;
+    }
+  } else if (r.right > vw - 8) {
+    menu.style.right = `${Math.round(r.right - (vw - 8))}px`;
   }
 }
 
@@ -664,24 +983,50 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   const container = document.getElementById("sy1-studio");
   if (!container) return;
 
-  // Coalesce rapid state updates into a single microtask render (avoids thrashing during drag)
+  // Responsive initial browser state: collapsed on narrow portrait screens so timeline has full width
+  if (typeof window !== "undefined" && window.innerWidth <= 768) {
+    browserOpen = false;
+  }
+
+  // Coalesce rapid state updates into a single microtask render
   let renderQueued = false;
   let draggingKnobParam: string | null = null;
   let draggingRange: { trackId: string; type: string } | null = null;
   let pendingAutosaveAfterDrag = false;
 
+  const requestRender = () => {
+    if (container.hidden) return;
+    if (renderQueued) return;
+    renderQueued = true;
+    queueMicrotask(() => {
+      renderQueued = false;
+      renderStudioPanel();
+    });
+  };
+
+  bindPianoRollEvents(container, requestRender);
+
   const updateTrackRangeLabelsDOM = (trackId: string) => {
     const t = studioEngine.getTrack(trackId);
     if (!t) return;
-    const panStr = Math.abs(t.pan) < 0.04 ? "C" : (t.pan < 0 ? `L${Math.round(-t.pan * 100)}` : `R${Math.round(t.pan * 100)}`);
-    const panLbl = container.querySelector<HTMLElement>(`[data-st-pan-lbl="${trackId}"]`);
-    if (panLbl) panLbl.textContent = panStr;
+    const panStr = fmtPan(t.pan);
+    container.querySelectorAll<HTMLElement>(`[data-st-pan-lbl="${trackId}"]`).forEach((el) => {
+      el.textContent = panStr;
+    });
+    container.querySelectorAll<HTMLElement>(`[data-st-db-lbl="${trackId}"]`).forEach((el) => {
+      el.textContent = fmtDb(t.volume);
+    });
+    container.querySelectorAll<HTMLInputElement>(`input[data-st-range="volume"][data-track-id="${trackId}"]`).forEach((inp) => {
+      if (document.activeElement !== inp) inp.value = t.volume.toFixed(2);
+    });
+    container.querySelectorAll<HTMLInputElement>(`input[data-st-range="pan"][data-track-id="${trackId}"]`).forEach((inp) => {
+      if (document.activeElement !== inp) inp.value = t.pan.toFixed(2);
+    });
     const metaEl = container.querySelector<HTMLElement>(`[data-st-meta="${trackId}"]`);
     if (metaEl) {
       const noteCount = t.getNoteCount();
-      const volPct = Math.round(t.volume * 100);
-      const audioTag = t.getAudioState() === "hq" ? "HQ" : t.getAudioState() === "classic" ? "Classic" : "Ready";
-      metaEl.textContent = `${noteCount} ${noteCount === 1 ? "note" : "notes"} · ${volPct}% · ${audioTag}`;
+      const noteUnit = t.isDrumTrack() ? (noteCount === 1 ? "hit" : "hits") : noteCount === 1 ? "note" : "notes";
+      metaEl.textContent = `${noteCount} ${noteUnit}`;
     }
   };
 
@@ -697,24 +1042,30 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
     if (container.hidden) return;
     if (draggingKnobParam) {
-      updateFocusedKnobDOM(draggingKnobParam);
+      updateStudioInstrumentKnobDOM(container, studioEngine.getFocusedTrack(), draggingKnobParam);
       return;
     }
     if (draggingRange) {
       updateTrackRangeLabelsDOM(draggingRange.trackId);
       return;
     }
-    // Preserve focus inside text input while typing project name
-    if (document.activeElement && document.activeElement.id === "st-project-name") {
+    if (document.activeElement && (document.activeElement.id === "st-project-name" || document.activeElement.id === "st-browser-search")) {
       return;
     }
-    if (renderQueued) return;
-    renderQueued = true;
-    queueMicrotask(() => {
-      renderQueued = false;
-      renderStudioPanel();
-    });
+    requestRender();
   });
+
+  // Preserve arrangement horizontal scroll
+  container.addEventListener(
+    "scroll",
+    (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.id === "st-arr-scroll") {
+        arrScrollLeft = target.scrollLeft;
+      }
+    },
+    true
+  );
 
   // Flush pending autosave cleanly on page hide / tab switch
   window.addEventListener("pagehide", () => {
@@ -722,6 +1073,16 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && studioEngine.isActive()) void flushAutosave();
+  });
+
+  // Close Export menu on outside click
+  document.addEventListener("click", (e) => {
+    if (!exportMenuOpen) return;
+    const t = e.target as HTMLElement | null;
+    if (!t || !t.closest(".st-export-wrap")) {
+      exportMenuOpen = false;
+      renderStudioPanel();
+    }
   });
 
   // ---- Click actions ----
@@ -737,6 +1098,19 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       switch (action) {
         case "close-studio":
           if (onCloseStudio) onCloseStudio();
+          break;
+        case "toggle-browser":
+          browserOpen = !browserOpen;
+          renderStudioPanel();
+          break;
+        case "toggle-keys":
+          keysVisible = !keysVisible;
+          applyKeyboardVisibility();
+          renderStudioPanel();
+          break;
+        case "toggle-export-menu":
+          exportMenuOpen = !exportMenuOpen;
+          renderStudioPanel();
           break;
         case "play":
           if (studioEngine.getTransportSnapshot().playing) void studioEngine.stop();
@@ -772,6 +1146,16 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         case "focus-track":
           if (trackId) studioEngine.setFocusedTrack(trackId);
           break;
+        case "open-track-instrument":
+          if (trackId) studioEngine.setFocusedTrack(trackId);
+          activeDockTab = "instrument";
+          dockCollapsed = false;
+          renderStudioPanel();
+          break;
+        case "open-browser-for-track":
+          browserOpen = true;
+          renderStudioPanel();
+          break;
         case "toggle-arm": {
           const t = studioEngine.getTrack(trackId);
           if (t) studioEngine.setTrackArmed(trackId, !t.armed);
@@ -790,11 +1174,124 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         case "clear-track":
           if (trackId) studioEngine.clearTrackClip(trackId);
           break;
-        case "insp-tab": {
-          const tab = btn.getAttribute("data-st-tab") as InspectorTab | null;
+        case "arr-zoom-in":
+          arrZoom = Math.min(4, Math.round((arrZoom + 0.5) * 100) / 100);
+          renderStudioPanel();
+          break;
+        case "arr-zoom-out":
+          arrZoom = Math.max(1, Math.round((arrZoom - 0.5) * 100) / 100);
+          renderStudioPanel();
+          break;
+        case "arr-zoom-fit":
+          arrZoom = 1;
+          arrScrollLeft = 0;
+          renderStudioPanel();
+          break;
+        case "dock-tab": {
+          const tab = btn.getAttribute("data-st-dock-tab") as StudioDockTab | null;
           if (tab) {
-            activeTab = tab;
+            activeDockTab = tab;
+            dockCollapsed = false;
             renderStudioPanel();
+          }
+          break;
+        }
+        case "dock-expand":
+          dockExpanded = !dockExpanded;
+          if (dockExpanded) dockCollapsed = false;
+          renderStudioPanel();
+          break;
+        case "dock-collapse":
+          dockCollapsed = !dockCollapsed;
+          if (dockCollapsed) dockExpanded = false;
+          renderStudioPanel();
+          break;
+        case "inst-page": {
+          const pg = btn.getAttribute("data-st-page") || "all";
+          instPageFilter = pg;
+          renderStudioPanel();
+          break;
+        }
+        case "inst-preset-prev":
+        case "inst-preset-next": {
+          const ft = studioEngine.getFocusedTrack();
+          const m = getStudioMachineDef(ft.machineId);
+          const idx = m.presets.findIndex((p) => p.id === ft.presetId);
+          const dir = action === "inst-preset-next" ? 1 : -1;
+          const nextIdx = ((idx < 0 ? 0 : idx) + dir + m.presets.length) % m.presets.length;
+          studioEngine.prepareAudioSync();
+          studioEngine.setTrackMachinePreset(ft.id, m.id, m.presets[nextIdx].id);
+          break;
+        }
+        case "browser-machine": {
+          browserMachineId = btn.getAttribute("data-st-machine") || "all";
+          browserCategory = "All";
+          renderStudioPanel();
+          break;
+        }
+        case "browser-cat": {
+          browserCategory = btn.getAttribute("data-st-cat") || "All";
+          renderStudioPanel();
+          break;
+        }
+        case "browser-toggle-favs": {
+          browserFavsOnly = !browserFavsOnly;
+          renderStudioPanel();
+          break;
+        }
+        case "browser-star": {
+          const mid = btn.getAttribute("data-st-machine") || "sy1";
+          const pid = btn.getAttribute("data-st-preset") || "init";
+          const k = favKey(mid, pid);
+          if (studioFavs.has(k)) studioFavs.delete(k);
+          else studioFavs.add(k);
+          saveStudioFavs();
+          renderStudioPanel();
+          break;
+        }
+        case "browser-pick-preset": {
+          const mid = btn.getAttribute("data-st-machine") || "sy1";
+          const pid = btn.getAttribute("data-st-preset") || "init";
+          const ft = studioEngine.getFocusedTrack();
+          studioEngine.prepareAudioSync();
+          studioEngine.setTrackMachinePreset(ft.id, mid, pid);
+          instPageFilter = "all";
+          // Gentle preview hit/note if not hold/arp
+          if (ft.isDrumTrack()) {
+            ft.noteOn(DRUM_NOTES.kick, 0.88);
+          } else if (ft.patch.hold !== "on" && ft.patch.arpOn !== "on") {
+            ft.noteOn(60, 0.78);
+            setTimeout(() => ft.noteOff(60), 320);
+          }
+          break;
+        }
+        case "drum-select-voice": {
+          const dv = btn.getAttribute("data-st-drum-voice") as DrumVoice | null;
+          const tid = trackId || studioEngine.getFocusedTrack().id;
+          if (dv && DRUM_NOTES[dv] !== undefined) {
+            setStudioSelectedDrumVoice(tid, dv);
+            renderStudioPanel();
+          }
+          break;
+        }
+        case "drum-audition": {
+          const dv = btn.getAttribute("data-st-drum-voice") as DrumVoice | null;
+          const ft = trackId ? studioEngine.getTrack(trackId) || studioEngine.getFocusedTrack() : studioEngine.getFocusedTrack();
+          if (dv && DRUM_NOTES[dv] !== undefined) {
+            setStudioSelectedDrumVoice(ft.id, dv);
+            studioEngine.prepareAudioSync();
+            ft.noteOn(DRUM_NOTES[dv], 0.9);
+            renderStudioPanel();
+          }
+          break;
+        }
+        case "drum-pick-kit": {
+          const kid = btn.getAttribute("data-st-kit") || "";
+          const ft = trackId ? studioEngine.getTrack(trackId) || studioEngine.getFocusedTrack() : studioEngine.getFocusedTrack();
+          if (kid) {
+            studioEngine.prepareAudioSync();
+            studioEngine.setTrackMachinePreset(ft.id, ft.machineId, `kit:${kid}`);
+            ft.noteOn(DRUM_NOTES.kick, 0.88);
           }
           break;
         }
@@ -804,6 +1301,17 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           if (param && val !== null) {
             studioEngine.prepareAudioSync();
             studioEngine.getFocusedTrack().setParam(param, val);
+          }
+          break;
+        }
+        case "param-toggle": {
+          const param = btn.getAttribute("data-st-param");
+          const on = btn.getAttribute("data-st-on") || "on";
+          const off = btn.getAttribute("data-st-off") || "off";
+          if (param) {
+            studioEngine.prepareAudioSync();
+            const ft = studioEngine.getFocusedTrack();
+            ft.setParam(param, String(ft.patch[param]) === on ? off : on);
           }
           break;
         }
@@ -882,6 +1390,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "export-project": {
+          exportMenuOpen = false;
           const proj = studioEngine.exportProject();
           downloadBlob(studioEngine.exportProjectBlob(), projectFilename(proj));
           setStatus(`Exported ${projectFilename(proj)}`, "ok");
@@ -889,14 +1398,17 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "trigger-import-project": {
+          exportMenuOpen = false;
           const inp = document.getElementById("st-import-file") as HTMLInputElement | null;
           if (inp) {
             inp.value = "";
             inp.click();
           }
+          renderStudioPanel();
           break;
         }
         case "export-midi": {
+          exportMenuOpen = false;
           const blob = studioEngine.exportMidiBlob();
           const bpm = Math.round(studioEngine.getBpm());
           downloadBlob(blob, `sy1-studio-${bpm}bpm.mid`);
@@ -905,6 +1417,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "export-wav": {
+          exportMenuOpen = false;
           if (exporting || exportingStems) break;
           exporting = true;
           setStatus("Rendering 24-bit mix…", "info");
@@ -925,6 +1438,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "export-stems": {
+          exportMenuOpen = false;
           if (exporting || exportingStems) break;
           exportingStems = true;
           setStatus("Rendering stems…", "info");
@@ -943,10 +1457,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
                 setTimeout(() => downloadBlob(st.wav, st.filename), idx * 180);
               });
               const first = stems[0];
-              setStatus(
-                `Exported ${stems.length} stems · 24-bit · ${first.sampleRate}Hz`,
-                "ok"
-              );
+              setStatus(`Exported ${stems.length} stems · 24-bit · ${first.sampleRate}Hz`, "ok");
             })
             .catch((err) => {
               setStatus(err instanceof Error ? err.message : "Stem export failed", "error");
@@ -958,6 +1469,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "export-live": {
+          exportMenuOpen = false;
           const live = studioEngine.getLastLiveTake();
           if (live) {
             downloadBlob(live.wav, `sy1-studio-live-${Math.round(live.bpm)}bpm-24bit.wav`);
@@ -982,7 +1494,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
 
     const ruler = target.closest<HTMLElement>("[data-st-ruler]");
-    if (ruler) {
+    if (ruler && !target.closest("[data-st-loop-handle]")) {
       seekFromPointer(ruler, e.clientX);
     }
   });
@@ -1012,6 +1524,17 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       studioEngine.setBars(Number(el.value));
       return;
     }
+    if (el.id === "st-arr-zoom") {
+      arrZoom = Math.max(1, Math.min(4, Number(el.value) || 1));
+      renderStudioPanel();
+      return;
+    }
+    const instSelectParam = el.getAttribute("data-st-param-select");
+    if (instSelectParam) {
+      studioEngine.prepareAudioSync();
+      studioEngine.getFocusedTrack().setParam(instSelectParam, el.value);
+      return;
+    }
     const rangeType = el.getAttribute("data-st-range");
     if (rangeType) {
       if (draggingRange) {
@@ -1026,9 +1549,18 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
     const selType = el.getAttribute("data-st-select");
     const trackId = el.getAttribute("data-track-id") || "";
+    if (selType === "machine" && trackId) {
+      studioEngine.prepareAudioSync();
+      studioEngine.setTrackMachine(trackId, el.value);
+      instPageFilter = "all";
+      return;
+    }
     if (selType === "preset" && trackId) {
       studioEngine.prepareAudioSync();
-      if (el.value !== "custom") studioEngine.setTrackPreset(trackId, el.value);
+      if (el.value !== "custom") {
+        const t = studioEngine.getTrack(trackId);
+        if (t) studioEngine.setTrackMachinePreset(trackId, t.machineId, el.value);
+      }
       return;
     }
     if (selType === "channel" && trackId) {
@@ -1036,12 +1568,29 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
   });
 
-  // ---- Track volume, pan & project name live input (no innerHTML rebuild while dragging range!) ----
+  // ---- Live inputs (volume, pan, master volume, zoom, search, project name) ----
   container.addEventListener("input", (e) => {
     const el = e.target as HTMLInputElement | null;
     if (!el) return;
     if (el.id === "st-project-name") {
       studioEngine.setProjectName(el.value);
+      return;
+    }
+    if (el.id === "st-browser-search") {
+      browserSearch = el.value;
+      renderStudioPanel();
+      return;
+    }
+    if (el.id === "st-arr-zoom") {
+      arrZoom = Math.max(1, Math.min(4, Number(el.value) || 1));
+      renderStudioPanel();
+      return;
+    }
+    if (el.getAttribute("data-st-master-vol")) {
+      const v = Number(el.value);
+      setMasterVolume(v);
+      const dbEl = document.getElementById("st-master-db");
+      if (dbEl) dbEl.textContent = fmtDb(v * v);
       return;
     }
     const rangeType = el.getAttribute("data-st-range");
@@ -1053,7 +1602,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     updateTrackRangeLabelsDOM(trackId);
   });
 
-  // ---- Studio Rotary Knob & Ruler Scrubbing pointer / wheel / dblclick / keyboard ----
+  // ---- Pointer interactions: Dock resizer, Loop handles, Ruler scrub, Embedded Original Synth Knobs ----
   let knobDrag: {
     key: string;
     startY: number;
@@ -1066,12 +1615,73 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     el: HTMLElement;
     pointerId: number;
   } | null = null;
+  let loopDrag: {
+    edge: "start" | "end";
+    rulerEl: HTMLElement;
+    pointerId: number;
+  } | null = null;
+  let dockResizeDrag: {
+    startY: number;
+    startHeight: number;
+    pointerId: number;
+    dawEl: HTMLElement;
+  } | null = null;
+
+  let vecPadDrag: {
+    svg: SVGSVGElement;
+    pointerId: number;
+  } | null = null;
+
+  const updateVectorFromPointer = (svg: SVGSVGElement, clientX: number, clientY: number) => {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const ux = ((clientX - rect.left) / rect.width) * 200;
+    const uy = ((clientY - rect.top) / rect.height) * 200;
+    const nx = Math.max(0, Math.min(1, (ux - 12) / 176));
+    const ny = Math.max(0, Math.min(1, (uy - 12) / 176));
+    const ft = studioEngine.getFocusedTrack();
+    ft.setParam("vecX", nx);
+    ft.setParam("vecY", ny);
+    updateStudioVectorPadDOM(container, ft);
+  };
 
   container.addEventListener("pointerdown", (e) => {
     if (e.button === 2) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
 
+    // Nishapur embedded Vector XY pad drag
+    const vecPad = target.closest<SVGSVGElement>("[data-st-vec-pad]");
+    if (vecPad) {
+      e.preventDefault();
+      studioEngine.prepareAudioSync();
+      draggingKnobParam = "vecX";
+      vecPadDrag = { svg: vecPad, pointerId: e.pointerId };
+      try { vecPad.setPointerCapture(e.pointerId); } catch (err) {}
+      updateVectorFromPointer(vecPad, e.clientX, e.clientY);
+      return;
+    }
+
+    // Dock horizontal splitter drag
+    const resizer = target.closest<HTMLElement>("#st-dock-resizer");
+    if (resizer) {
+      e.preventDefault();
+      const dawEl = container.querySelector<HTMLElement>(".st-daw");
+      if (!dawEl) return;
+      dockCollapsed = false;
+      dockExpanded = false;
+      dockResizeDrag = {
+        startY: e.clientY,
+        startHeight: dockHeightPx,
+        pointerId: e.pointerId,
+        dawEl
+      };
+      resizer.classList.add("is-dragging");
+      try { resizer.setPointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
+
+    // Track/Mixer range drag guard
     const rangeEl = target.closest<HTMLInputElement>("[data-st-range]");
     if (rangeEl) {
       const rangeType = rangeEl.getAttribute("data-st-range") || "";
@@ -1083,6 +1693,20 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       return;
     }
 
+    // Draggable Loop Start/End handle on ruler
+    const loopHandle = target.closest<HTMLElement>("[data-st-loop-handle]");
+    if (loopHandle) {
+      e.preventDefault();
+      e.stopPropagation();
+      const rulerEl = loopHandle.closest<HTMLElement>("[data-st-ruler]");
+      if (!rulerEl) return;
+      const edge = loopHandle.getAttribute("data-st-loop-handle") === "start" ? "start" : "end";
+      loopDrag = { edge, rulerEl, pointerId: e.pointerId };
+      try { loopHandle.setPointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
+
+    // Ruler scrub
     const ruler = target.closest<HTMLElement>("[data-st-ruler]");
     if (ruler) {
       e.preventDefault();
@@ -1093,7 +1717,8 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       return;
     }
 
-    const knob = target.closest<HTMLElement>(".st-knob");
+    // Embedded original synthesizer .sk knob drag
+    const knob = target.closest<HTMLElement>(".st-inst-knob");
     if (!knob) return;
     const key = knob.getAttribute("data-st-param");
     if (!key) return;
@@ -1114,6 +1739,33 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   });
 
   container.addEventListener("pointermove", (e) => {
+    if (vecPadDrag && e.pointerId === vecPadDrag.pointerId) {
+      e.preventDefault();
+      updateVectorFromPointer(vecPadDrag.svg, e.clientX, e.clientY);
+      return;
+    }
+    if (dockResizeDrag && e.pointerId === dockResizeDrag.pointerId) {
+      e.preventDefault();
+      const delta = dockResizeDrag.startY - e.clientY;
+      const maxH = Math.max(260, Math.round(window.innerHeight * 0.72));
+      dockHeightPx = Math.max(190, Math.min(maxH, Math.round(dockResizeDrag.startHeight + delta)));
+      dockResizeDrag.dawEl.style.setProperty("--st-dock-h", `${dockHeightPx}px`);
+      return;
+    }
+    if (loopDrag && e.pointerId === loopDrag.pointerId) {
+      e.preventDefault();
+      const rect = loopDrag.rulerEl.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const tr = studioEngine.getTransportSnapshot();
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const bar = Math.max(1, Math.min(tr.bars, Math.round(ratio * tr.bars) + (loopDrag.edge === "start" ? 1 : 0)));
+      if (loopDrag.edge === "start") {
+        studioEngine.setLoopRange(Math.min(bar, tr.loopEndBar), tr.loopEndBar);
+      } else {
+        studioEngine.setLoopRange(tr.loopStartBar, Math.max(tr.loopStartBar, bar));
+      }
+      return;
+    }
     if (rulerDrag && e.pointerId === rulerDrag.pointerId) {
       e.preventDefault();
       seekFromPointer(rulerDrag.el, e.clientX);
@@ -1129,6 +1781,22 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   });
 
   const endInteractiveDrags = (e?: PointerEvent) => {
+    if (vecPadDrag && (!e || e.pointerId === vecPadDrag.pointerId)) {
+      vecPadDrag = null;
+      draggingKnobParam = null;
+      if (pendingAutosaveAfterDrag) {
+        pendingAutosaveAfterDrag = false;
+        scheduleAutosave();
+      }
+      renderStudioPanel();
+    }
+    if (dockResizeDrag && (!e || e.pointerId === dockResizeDrag.pointerId)) {
+      container.querySelector("#st-dock-resizer")?.classList.remove("is-dragging");
+      dockResizeDrag = null;
+    }
+    if (loopDrag && (!e || e.pointerId === loopDrag.pointerId)) {
+      loopDrag = null;
+    }
     if (rulerDrag && (!e || e.pointerId === rulerDrag.pointerId)) {
       rulerDrag = null;
     }
@@ -1155,8 +1823,30 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   container.addEventListener("pointercancel", endInteractiveDrags);
   window.addEventListener("blur", () => endInteractiveDrags());
 
+  // Double-click: reset embedded synth knob, reset dock height, or open Piano Roll from lane
   container.addEventListener("dblclick", (e) => {
-    const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-knob");
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+
+    if (target.closest("#st-dock-resizer")) {
+      dockHeightPx = 310;
+      dockExpanded = false;
+      dockCollapsed = false;
+      renderStudioPanel();
+      return;
+    }
+
+    const lane = target.closest<HTMLElement>("[data-st-lane]");
+    if (lane) {
+      const tid = lane.getAttribute("data-track-id");
+      if (tid) studioEngine.setFocusedTrack(tid);
+      activeDockTab = "piano-roll";
+      dockCollapsed = false;
+      renderStudioPanel();
+      return;
+    }
+
+    const knob = target.closest<HTMLElement>(".st-inst-knob");
     if (!knob) return;
     const key = knob.getAttribute("data-st-param");
     if (key && SYNTH_PARAMS[key]) {
@@ -1164,10 +1854,11 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
   });
 
+  // Wheel adjusts embedded synth knobs cleanly
   container.addEventListener(
     "wheel",
     (e) => {
-      const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-knob");
+      const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-inst-knob");
       if (!knob) return;
       const key = knob.getAttribute("data-st-param");
       if (!key) return;
@@ -1179,8 +1870,9 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     { passive: false }
   );
 
+  // Arrow keys adjust focused embedded synth knob
   container.addEventListener("keydown", (e) => {
-    const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-knob");
+    const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-inst-knob");
     if (!knob) return;
     const dirMap: Record<string, number> = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 };
     const dir = dirMap[e.key];
@@ -1200,10 +1892,16 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
 }
 
 export function showStudioPanel(): void {
+  document.documentElement.classList.add("is-studio");
+  // Keep Instrument Browser collapsed by default on narrow portrait tablets/phones so timeline is immediately unobstructed
+  if (typeof window !== "undefined" && window.innerWidth <= 768) {
+    browserOpen = false;
+  }
   const synthEl = document.getElementById("sy1-panel");
   const studioEl = document.getElementById("sy1-studio");
   if (synthEl) synthEl.hidden = true;
   if (studioEl) studioEl.hidden = false;
+  applyKeyboardVisibility();
   renderStudioPanel();
   if (studioEngine.isPlaying()) startPlayheadLoop();
 }
@@ -1212,8 +1910,12 @@ export function hideStudioPanel(): void {
   stopPlayheadLoop();
   cachedPlayheadEls = [];
   cachedClockEl = null;
+  cachedMeterEls = [];
+  exportMenuOpen = false;
+  document.documentElement.classList.remove("is-studio");
   const synthEl = document.getElementById("sy1-panel");
   const studioEl = document.getElementById("sy1-studio");
   if (studioEl) studioEl.hidden = true;
   if (synthEl) synthEl.hidden = false;
+  applyKeyboardVisibility();
 }

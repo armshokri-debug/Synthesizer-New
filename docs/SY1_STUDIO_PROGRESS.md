@@ -14,7 +14,37 @@
 | **Phase 0** | Protected Checkpoint, Baseline Audit, Branch Setup, Architecture Blueprint, Test Plan | **COMPLETE** (Committed `2415939`) | Signed off |
 | **Phase 1** | Multi-Track SY-1 Audio Engine (2 isolated tracks expandable to 4), Shared `AudioContext` + Transport (`Play`/`Stop`/`Rec`/`Loop`, BPM, `8/12/64/128/custom` bars), MIDI Rec + SMF-1 Export, 24-bit WAV Live & Bounce Export, Studio UI, Automated Bun + Chromium Verification | **COMPLETE** (Verified GitHub Commit `079b29f2392d7381c21f997601239fbe2bb9b61a`) | Signed off |
 | **Phase 2** | Project Save / Open (`IndexedDB`), Autosave & Refresh Recovery, Versioned `.sy1studio` Export / Import with Validation, Separate 24-bit Stereo WAV Stems (`bounceTrackStemsWav`), Preserved Mix WAV + SMF-1 MIDI, Recording RAM Safety Guardrails (30-min cap preserved), Minimal Project UI | **COMPLETE** (Verified GitHub `main` Commit `20340c00c5de9c857a5c52debdd68f9edbd782b1`) | Signed off & synced |
-| **Phase 3** | Audio Stability & Performance for 4 Simultaneous Tracks (Zero-Leak Bus/Master/Track Disposal, `O(log N + K)` Scheduler + Stall Guard, iPadOS Safari Interrupt/Background Recovery, Idle `rAF` Elimination & Non-Destructive Slider Drag, 4-Track Automated Stress & Regression Suites) | **COMPLETE — Local Unpushed, Ready for Approval** | Stopped after Phase 3 per instruction |
+| **Phase 3** | Audio Stability & Performance for 4 Simultaneous Tracks (Zero-Leak Bus/Master/Track Disposal, `O(log N + K)` Scheduler + Stall Guard, iPadOS Safari Interrupt/Background Recovery, Idle `rAF` Elimination & Non-Destructive Slider Drag, 4-Track Automated Stress & Regression Suites) | **COMPLETE** (Verified GitHub `main` Commit `26242cf02cf9960638f8bf6dc1016d305aa71725`) | Signed off & synced |
+| **Phase 4** | Professional DAW UI/UX Redesign (Full-Width Arrangement Timeline, Integrated Resizable MIDI Piano Roll, Collapsible Iranian City Synth Browser, Mixer with Live Meters, Unchanged Original Synth Instrument View, Desktop/iPad Landscape/iPad Portrait Responsiveness) | **COMPLETE — Local Unpushed, Ready for Approval** | Stopped after Phase 4 per instruction |
+
+---
+
+## Phase 4 Log — 2026-11-21
+
+### Completed Implementation (Zero DSP / Synth Redesign Changes)
+1. **Full-Width Multitrack Arrangement Timeline (`src/ui/studio-panel.ts`, `src/ui/studio.css`)**
+   - Edge-to-edge DAW arrangement (no decorative card wrapper) with unified horizontal/vertical scrolling, bar ruler, horizontal zoom (`1x–4x` slider, `−`/`+`, `Fit`), draggable loop start/end handles on the bar ruler, synchronized playhead, and sticky track headers aligned 1:1 with track lanes.
+   - Track headers display color-coded track indicator, focus title, city synth quick-jump button, preset selector, `R`/`M`/`S`, inline Volume/Pan sliders (non-destructive drag), slim horizontal live level meter, MIDI channel selector, and Clear; track lanes show clean MIDI clip regions with note bars and double-click-to-open Piano Roll.
+2. **Integrated Resizable MIDI Piano Roll (`src/ui/studio-piano-roll.ts`, `src/studio/track-engine.ts`, `src/studio/studio-engine.ts`)**
+   - Embedded directly in the resizable bottom dock with pointer-captured horizontal splitter handle (`--st-dock-h`) and Expand/Split/Hide controls.
+   - Interactive note editing: click empty grid to create snapped notes, click/Shift+click selection, drag to move pitch/time with live audition, drag right handle to resize duration, Delete/Backspace/double-click/right-click deletion, Snap (`Off`, `1/4`, `1/8`, `1/16`, `1/32`), Quantize (selected or all notes), horizontal zoom, sticky audition piano keyboard (`C6..C2`, auto-expanding), and scroll-synced draggable Velocity Lane (`0.05..1.0`).
+   - All edits preserve existing CC64/CC1/pitchBend events (`replaceNoteSpans`, `quantizeNotes`).
+3. **Collapsible Left Instrument Browser (`src/ui/studio-panel.ts`)**
+   - Supports all **7 authentic HQEngine Iranian city synthesizers** (`SY-1`, `Yazd`, `Baku`, `Merv`, `Isfahan`, `Konya`, `Bam` — 169 presets) with `machineArt()` hardware previews, category filter tabs, instant search, and Studio-isolated favorites (`sy1_studio_favs`, never touching standalone `localStorage`).
+   - Persists per-track `machineId` cleanly in `.sy1studio` project files and IndexedDB while maintaining backward compatibility with older v1 files (defaulting to `"sy1"`).
+4. **Bottom Dock Modes: Piano Roll · Mixer · Unchanged Original Synth Instrument View (`src/ui/studio-instrument.ts`, `src/ui/knob.ts`)**
+   - **Instrument View:** Renders the focused track's original `.synth-panel`, `.synth-sections`, `.synth-sec`, 3D `.sk` knobs with `.sk-scale`/`.sk-skirt`/`.sk-cap`/`.sk-rotor`, `.synth-choice` switches, and `[data-machine]`/`[data-skin]` hardware materials **100% unchanged**, bound exclusively to the focused `SY1TrackEngine` (plus `Expand` toggle for full-height instrument focus and `#sy1-studio` event guards in `knob.ts`).
+   - **Mixer View:** Independent vertical channel strips for all tracks + Master strip with Pan, `R`/`M`/`S`, vertical Volume fader + dB readout, and zero-allocation live meters (`readMeterLevel()` / `readMasterMeterLevel()`) updated only during active playback (preserving `idleRafWhileStopped === false`).
+5. **Fixed Top Transport & Responsive Behavior**
+   - Fixed brushed-metal transport bar (`← Synth`, `Browser`, Project Name, `Play`/`Stop`/`Rec`/`Loop`, Bar:Beat LCD, BPM `−`/Tap/`+`, Bars `8/12/64/128/custom`, `Save`, `Open`, `Export ▾` menu with 24-bit WAV Mix/Stems/MIDI/Live WAV/Project `.sy1studio` export & import, and `Keys` toggle).
+   - Responsive across Desktop (`1440×900`), iPad Landscape (`1024×768`), and iPad Portrait (`768×1024`) with zero horizontal overflow, adaptive overlay browser on portrait screens, and accessible touch targets (`>= 40px` on portrait/touch).
+
+### Automated Verification Executed (Simulated / Headless)
+- **`npm run lint` (`tsc --noEmit`) & `npm run build` (`vite build`):** **PASS** (0 errors).
+- **Protected-path check (`native/**`, `plugin/**`, `src/dsp/hq-engine.ts`, `src/engine/worklet/sy1-processor.ts`, `src/index.css`, `src/ui/skins.css`):** **PASS** (0 diffs).
+- **Bun Automated Suite (`studio-phase1` + `studio-phase2` + `studio-phase3` + `studio-phase4`):** **47/47 PASS** (0 fail, 8,645 assertions).
+- **Real Headless Chromium CDP Verification (`node scripts/studio-chromium-verify.mjs`):** **ALL Phase 1, Phase 2, Phase 3 & Phase 4 CHECKS PASS** (`0` page errors, `0` console errors; 6-preset `chainMaxAbsDiff === 0.0`; Track 2 isolation `0.0`; 2- & 4-track stems `-119.55 dB` / `-117.02 dB`; 4-track stress `RTF = 0.747`; `idleRafWhileStopped = false`; standalone synth visual regression identical before/after Studio; Yazd city synth original faceplate `.st-embedded-synth[data-machine="yazd"]` with 9 sections & 35 `.sk` knobs; Piano Roll note create + quantize + save; Mixer 4 strips + Master + 5 meters; Desktop `1440×900`, iPad Landscape `1024×768`, and iPad Portrait `768×1024` all `scrollWidth === innerWidth` with zero clipping).
+- **Real Physical Hardware Tests (macOS Chrome speakers/Web MIDI & physical iPadOS Safari touch/gestures):** **`NOT RUN`** (physical hardware unavailable in container).
 
 ---
 

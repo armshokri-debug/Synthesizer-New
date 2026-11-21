@@ -146,27 +146,54 @@ function applyGlue(b: DrumBus, glue: number): void {
   b.sat.curve = glueCurve(glue) as any;
 }
 
+export interface TrackDrumBus {
+  input: GainNode;
+  comp: DynamicsCompressorNode;
+  makeup: GainNode;
+  sat: WaveShaperNode;
+  glue: number;
+}
+
+export function createTrackDrumBus(ctx: BaseAudioContext, main: AudioNode, glue = 0.35): TrackDrumBus {
+  const input = ctx.createGain();
+  const comp = ctx.createDynamicsCompressor();
+  const makeup = ctx.createGain();
+  const sat = ctx.createWaveShaper();
+  sat.oversample = "2x";
+  input.connect(comp);
+  comp.connect(makeup);
+  makeup.connect(sat);
+  sat.connect(main);
+  const b: TrackDrumBus = { input, comp, makeup, sat, glue: -1 };
+  applyGlue(b, glue);
+  return b;
+}
+
+export function disposeTrackDrumBus(b: TrackDrumBus | null | undefined): void {
+  if (!b) return;
+  try { b.input.disconnect(); } catch (e) {}
+  try { b.comp.disconnect(); } catch (e) {}
+  try { b.makeup.disconnect(); } catch (e) {}
+  try { b.sat.disconnect(); } catch (e) {}
+}
+
 function getDrumBus(ctx: BaseAudioContext, main: AudioNode, glue: number): DrumBus {
   let b = drumBuses.get(ctx);
   if (!b) {
-    const input = ctx.createGain();
-    const comp = ctx.createDynamicsCompressor();
-    const makeup = ctx.createGain();
-    const sat = ctx.createWaveShaper();
-    sat.oversample = "2x";
-    input.connect(comp);
-    comp.connect(makeup);
-    makeup.connect(sat);
-    sat.connect(main);
-    b = { input, comp, makeup, sat, glue: -1 };
+    b = createTrackDrumBus(ctx, main, glue);
     drumBuses.set(ctx, b);
   }
   applyGlue(b, glue);
   return b;
 }
 
-function vp(v: DrumVoice, key: "Tune" | "Decay" | "Tone" | "Level" | "Pan" | "Color" | "Drive" | "Send", def: number): number {
-  const x = getPatch()[v + key];
+function vpFrom(
+  patch: Patch,
+  v: DrumVoice,
+  key: "Tune" | "Decay" | "Tone" | "Level" | "Pan" | "Color" | "Drive" | "Send",
+  def: number
+): number {
+  const x = patch[v + key];
   return typeof x === "number" ? x : def;
 }
 
@@ -176,11 +203,11 @@ function env(g: GainNode, t: number, peak: number, decay: number, attack = 0.001
   g.gain.setTargetAtTime(0.0001, t + attack, Math.max(0.003, decay / 4));
 }
 
-function noiseSrc(ctx: AudioContext, t: number, dur: number): AudioBufferSourceNode {
+function noiseSrc(ctx: BaseAudioContext, t: number, dur: number, offsetSec?: number): AudioBufferSourceNode {
   const n = ctx.createBufferSource();
   n.buffer = getSharedNoiseBuffer(ctx);
   n.loop = true;
-  n.start(t, Math.random() * 1.5);
+  n.start(t, offsetSec !== undefined ? offsetSec : Math.random() * 1.5);
   n.stop(t + dur);
   return n;
 }
@@ -208,14 +235,18 @@ const FEEL: Record<DrumModel, { vel: number; human: number }> = {
   lm80: { vel: 0.45, human: 0.2 }
 };
 
+/** Resolve the active drum synthesis model for a slot given an explicit patch and machine fallback model. */
+export function drumModelForPatch(patch: Patch, v: DrumVoice, fallback: DrumModel = "analog"): DrumModel {
+  const own = patch[v + "Model"];
+  if (typeof own === "string" && own && (DRUM_MODELS as string[]).includes(own)) return own as DrumModel;
+  const kit = patch.kitModel;
+  if (typeof kit === "string" && kit && (DRUM_MODELS as string[]).includes(kit)) return kit as DrumModel;
+  return fallback;
+}
+
 /** The model that plays slot `v`: the slot's own MODEL, else the kit's, else the machine's. */
 export function drumModelFor(v: DrumVoice): DrumModel {
-  const p = getPatch();
-  const own = p[v + "Model"];
-  if (typeof own === "string" && own && (DRUM_MODELS as string[]).includes(own)) return own as DrumModel;
-  const kit = p.kitModel;
-  if (typeof kit === "string" && kit && (DRUM_MODELS as string[]).includes(kit)) return kit as DrumModel;
-  return drumModel;
+  return drumModelForPatch(getPatch(), v, drumModel);
 }
 
 let hitListener: ((v: DrumVoice, vel: number, at: number) => void) | null = null;
@@ -224,25 +255,45 @@ export function setDrumHitListener(fn: ((v: DrumVoice, vel: number, at: number) 
   hitListener = fn;
 }
 
-/** Play one drum hit at audio time `at` with velocity 0..1. */
-export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
-  const ctx = getAudioCtxIfAny();
-  const dest = getDest();
-  if (!ctx || !dest) return;
-  // While the audio device is still starting (first tap), the clock can jump ahead:
-  // schedule a few ms later so the attack of the very first hit is not lost.
-  const warmup = ctx.state !== "running" || ctx.currentTime < 0.3 ? 0.04 : 0;
-  const t = Math.max(ctx.currentTime + warmup, at || 0);
-  if (hitListener) hitListener(v, vel, t);
-  const model = drumModelFor(v);
+export interface TrackDrumTriggerOptions {
+  ctx: BaseAudioContext;
+  dest: DrumDest;
+  drumBus: TrackDrumBus;
+  patch: Patch;
+  fallbackModel: DrumModel;
+  openHatRef: { node: GainNode | null };
+  voice: DrumVoice;
+  vel: number;
+  at?: number;
+  timers?: Set<ReturnType<typeof setTimeout>>;
+  deterministic?: boolean;
+}
+
+interface InternalDrumHitOptions {
+  ctx: BaseAudioContext;
+  dest: DrumDest;
+  drumBus: DrumBus;
+  patch: Patch;
+  model: DrumModel;
+  openHatRef: { node: GainNode | null };
+  v: DrumVoice;
+  vel: number;
+  t: number;
+  timers?: Set<ReturnType<typeof setTimeout>>;
+  scheduleDisconnect: boolean;
+  deterministic: boolean;
+}
+
+function renderDrumHitInternal(opts: InternalDrumHitOptions): void {
+  const { ctx, dest, drumBus, patch, model, openHatRef, v, vel, t, timers, scheduleDisconnect, deterministic } = opts;
   const feel = FEEL[model] || FEEL.analog;
   const velC = Math.max(0, Math.min(1, vel));
   const soft = feel.vel * (1 - velC);                   // 0 at full velocity
-  const jit = () => (Math.random() * 2 - 1) * feel.human; // -human..+human
-  const tune = Math.pow(2, vp(v, "Tune", 0) / 12 + (jit() * 8 - soft * 12) / 1200);
-  const dec = vp(v, "Decay", 1) * (1 + jit() * 0.05) * (1 - 0.15 * soft);
-  const tone = Math.max(0, Math.min(1, vp(v, "Tone", 0.5) + jit() * 0.04));
-  const lvl = vp(v, "Level", 0.8) * (0.25 + 0.75 * vel) * (1 + jit() * 0.08);
+  const jit = () => (deterministic ? 0 : (Math.random() * 2 - 1) * feel.human); // -human..+human
+  const tune = Math.pow(2, vpFrom(patch, v, "Tune", 0) / 12 + (jit() * 8 - soft * 12) / 1200);
+  const dec = vpFrom(patch, v, "Decay", 1) * (1 + jit() * 0.05) * (1 - 0.15 * soft);
+  const tone = Math.max(0, Math.min(1, vpFrom(patch, v, "Tone", 0.5) + jit() * 0.04));
+  const lvl = vpFrom(patch, v, "Level", 0.8) * (0.25 + 0.75 * vel) * (1 + jit() * 0.08);
   const strike = 1 - 0.45 * soft;
   const out = ctx.createGain();
   out.gain.value = lvl;
@@ -260,7 +311,7 @@ export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
     link(bright);
   }
   // COLOR: one knob, DJ-style: left closes a low-pass (to ~150 Hz), right opens a high-pass (to ~14 kHz)
-  const color = vp(v, "Color", 0);
+  const color = vpFrom(patch, v, "Color", 0);
   if (Math.abs(color) > 0.02) {
     const f = ctx.createBiquadFilter();
     f.type = color < 0 ? "lowpass" : "highpass";
@@ -269,7 +320,7 @@ export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
     link(f);
   }
   // DRIVE: per-voice tanh saturation, loudness-compensated
-  const drv = vp(v, "Drive", 0);
+  const drv = vpFrom(patch, v, "Drive", 0);
   if (drv > 0.01) {
     const sh = ctx.createWaveShaper();
     sh.curve = driveCurve(drv) as any;
@@ -280,17 +331,18 @@ export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
     link(comp);
   }
   // PAN
-  const pan = vp(v, "Pan", 0);
+  const pan = vpFrom(patch, v, "Pan", 0);
   if (Math.abs(pan) > 0.01 && typeof ctx.createStereoPanner === "function") {
     const p = ctx.createStereoPanner();
     p.pan.value = Math.max(-1, Math.min(1, pan));
     link(p);
   }
   const last = chain[chain.length - 1];
-  const glue = typeof getPatch().drumGlue === "number" ? getPatch().drumGlue : 0.35;
-  last.connect(getDrumBus(ctx, dest.main, glue).input);
+  const glue = typeof patch.drumGlue === "number" ? patch.drumGlue : 0.35;
+  applyGlue(drumBus, glue);
+  last.connect(drumBus.input);
   // SEND: this voice's share of delay + reverb (the main signal itself no longer feeds them on drum machines)
-  const send = vp(v, "Send", v === "kick" ? 0.2 : 1);
+  const send = vpFrom(patch, v, "Send", v === "kick" ? 0.2 : 1);
   if (send > 0.001) {
     const sg = ctx.createGain();
     sg.gain.value = send;
@@ -299,17 +351,24 @@ export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
     chain.push(sg);
   }
   const life = 3 * dec + 0.2;
-  setTimeout(() => {
-    for (const n of chain) { try { n.disconnect(); } catch (e) {} }
-  }, (t - ctx.currentTime + life) * 1000 + 100);
+  if (scheduleDisconnect) {
+    const delayMs = Math.max(0, (t - ctx.currentTime + life) * 1000 + 100);
+    const tid = setTimeout(() => {
+      if (timers) timers.delete(tid);
+      for (const n of chain) { try { n.disconnect(); } catch (e) {} }
+    }, delayMs);
+    if (timers) timers.add(tid);
+  }
 
   // hi-hat pair: the closed hat chokes a ringing open hat (on machines that have one)
   if (CHOKES.has(model)) {
-    if (v === "ch" && openHatOut) {
-      openHatOut.gain.cancelScheduledValues(t);
-      openHatOut.gain.setTargetAtTime(0.0001, t, 0.004);
-      openHatOut = null;
-    } else if (v === "oh") openHatOut = out;
+    if (v === "ch" && openHatRef.node) {
+      openHatRef.node.gain.cancelScheduledValues(t);
+      openHatRef.node.gain.setTargetAtTime(0.0001, t, 0.004);
+      openHatRef.node = null;
+    } else if (v === "oh") {
+      openHatRef.node = out;
+    }
   }
 
   if (model !== "analog") {
@@ -321,6 +380,7 @@ export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
     return;
   }
 
+  const noiseOffset = deterministic ? 0.17 : undefined;
   if (v === "kick") {
     const o = ctx.createOscillator();
     o.type = "sine";
@@ -332,7 +392,7 @@ export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
     o.connect(g); g.connect(out);
     o.start(t); o.stop(t + life);
     // click
-    const n = noiseSrc(ctx, t, 0.02);
+    const n = noiseSrc(ctx, t, 0.02, noiseOffset);
     const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 3000;
     const gc = ctx.createGain(); env(gc, t, 0.25 * tone, 0.008);
     n.connect(hp); hp.connect(gc); gc.connect(out);
@@ -348,13 +408,13 @@ export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
     const o2 = ctx.createOscillator(); o2.type = "sine"; o2.frequency.value = 330 * tune;
     const g2 = ctx.createGain(); env(g2, t, 0.28 * (1 - tone * 0.6), 0.07 * dec);
     o2.connect(g2); g2.connect(out); o2.start(t); o2.stop(t + life);
-    const n = noiseSrc(ctx, t, life);
+    const n = noiseSrc(ctx, t, life, noiseOffset);
     const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1200 * tune;
     const bp = ctx.createBiquadFilter(); bp.type = "peaking"; bp.frequency.value = 3500 + 4000 * tone; bp.gain.value = 6;
     const gn = ctx.createGain(); env(gn, t, 0.6 + 0.4 * tone, 0.22 * dec);
     n.connect(hp); hp.connect(bp); bp.connect(gn); gn.connect(out);
   } else if (v === "clap") {
-    const n = noiseSrc(ctx, t, life);
+    const n = noiseSrc(ctx, t, life, noiseOffset);
     const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1100 * tune * (0.7 + tone * 0.8); bp.Q.value = 1.4;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
@@ -405,6 +465,58 @@ export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
     });
     bp.connect(g); g.connect(out);
   }
+}
+
+/** Play one isolated Studio track drum hit without touching standalone global drum state. */
+export function triggerTrackDrum(opts: TrackDrumTriggerOptions): void {
+  const { ctx, dest, drumBus, patch, fallbackModel, openHatRef, voice, vel, at, timers, deterministic } = opts;
+  const isOffline = typeof OfflineAudioContext !== "undefined" && ctx instanceof OfflineAudioContext;
+  const warmup = !isOffline && (ctx.state !== "running" || ctx.currentTime < 0.3) ? 0.04 : 0;
+  const t = Math.max(ctx.currentTime + warmup, at || 0);
+  const model = drumModelForPatch(patch, voice, fallbackModel);
+  renderDrumHitInternal({
+    ctx,
+    dest,
+    drumBus,
+    patch,
+    model,
+    openHatRef,
+    v: voice,
+    vel,
+    t,
+    timers,
+    scheduleDisconnect: !isOffline,
+    deterministic: Boolean(deterministic || isOffline)
+  });
+}
+
+/** Play one drum hit at audio time `at` with velocity 0..1. */
+export function triggerDrum(v: DrumVoice, vel: number, at?: number): void {
+  const ctx = getAudioCtxIfAny();
+  const dest = getDest();
+  if (!ctx || !dest) return;
+  // While the audio device is still starting (first tap), the clock can jump ahead:
+  // schedule a few ms later so the attack of the very first hit is not lost.
+  const warmup = ctx.state !== "running" || ctx.currentTime < 0.3 ? 0.04 : 0;
+  const t = Math.max(ctx.currentTime + warmup, at || 0);
+  if (hitListener) hitListener(v, vel, t);
+  const patch = getPatch();
+  const glue = typeof patch.drumGlue === "number" ? patch.drumGlue : 0.35;
+  const ref = { node: openHatOut };
+  renderDrumHitInternal({
+    ctx,
+    dest,
+    drumBus: getDrumBus(ctx, dest.main, glue),
+    patch,
+    model: drumModelFor(v),
+    openHatRef: ref,
+    v,
+    vel,
+    t,
+    scheduleDisconnect: true,
+    deterministic: false
+  });
+  openHatOut = ref.node;
 }
 
 // ------------------------------------------------------------ sequencer ----

@@ -23,6 +23,45 @@ export function useAnalog(): boolean {
   return state === "ready";
 }
 
+const analogModules = new WeakMap<BaseAudioContext, Promise<boolean>>();
+
+/** Load the "sy1-analog" AudioWorklet processor at most once per AudioContext / OfflineAudioContext. */
+export function ensureAnalogModule(ctx: BaseAudioContext): Promise<boolean> {
+  if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") {
+    return Promise.resolve(false);
+  }
+  const existing = analogModules.get(ctx);
+  if (existing) return existing;
+  const p = ctx.audioWorklet
+    .addModule(processorUrl)
+    .then(() => true)
+    .catch(() => false);
+  analogModules.set(ctx, p);
+  return p;
+}
+
+/** Instantiate an isolated "sy1-analog" AudioWorkletNode connected to busInput. */
+export async function createAnalogNode(
+  ctx: BaseAudioContext,
+  busInput: AudioNode,
+  initialPatch: Record<string, unknown>
+): Promise<AudioWorkletNode | null> {
+  const ok = await ensureAnalogModule(ctx);
+  if (!ok) return null;
+  try {
+    const n = new AudioWorkletNode(ctx, "sy1-analog", {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [2]
+    });
+    n.connect(busInput);
+    n.port.postMessage({ t: "patch", patch: { ...initialPatch } });
+    return n;
+  } catch (e) {
+    return null;
+  }
+}
+
 export function initAnalog(ctx: AudioContext, busInput: AudioNode, getPatch: () => Record<string, unknown>): void {
   if (state !== "idle") return;
   if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") {
@@ -30,9 +69,12 @@ export function initAnalog(ctx: AudioContext, busInput: AudioNode, getPatch: () 
     return;
   }
   state = "loading";
-  ctx.audioWorklet
-    .addModule(processorUrl)
-    .then(() => {
+  ensureAnalogModule(ctx)
+    .then((ok) => {
+      if (!ok) {
+        state = "failed";
+        return;
+      }
       node = new AudioWorkletNode(ctx, "sy1-analog", {
         numberOfInputs: 0,
         numberOfOutputs: 1,

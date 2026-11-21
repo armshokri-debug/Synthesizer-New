@@ -23,7 +23,7 @@ import { getSharedNoiseBuffer } from "./bus";
 type Slot = "kick" | "snare" | "clap" | "ch" | "oh" | "tom" | "rim" | "bell";
 
 export interface HitCtx {
-  ctx: AudioContext;
+  ctx: BaseAudioContext;
   out: GainNode;
   t: number;
   tune: number; // frequency ratio from TUNE

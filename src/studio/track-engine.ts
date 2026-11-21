@@ -11,21 +11,111 @@
  */
 
 import { applyBusParam, createSynthBus, disposeSynthBus, SynthFXBus } from "../engine/bus";
+import { createAnalogNode } from "../engine/analog";
+import {
+  createTrackDrumBus,
+  disposeTrackDrumBus,
+  DRUM_LABELS,
+  DrumVoice,
+  drumVoiceForNote,
+  TrackDrumBus,
+  triggerTrackDrum
+} from "../engine/drums";
+import { createFmNode } from "../engine/fm";
 import { createHQNode, getEngine } from "../engine/hq";
 import { SYNC_DIVS, SYNTH_PARAMS, SynthPatch, synthDefaults, tuningCents } from "../engine/params";
+import { createStringsNode } from "../engine/strings";
+import { computeOrbitRateHzForBpm, createVectorNode } from "../engine/vector";
 import { createSynthVoice, SynthVoice, VoiceRoutingOptions } from "../engine/voice";
+import { MACHINES } from "../machines";
 import { SY1 } from "../machines/sy1";
+import type { MachineDef } from "../machines/types";
 import { extractNoteSpans } from "./midi-io";
 import { StudioMidiEvent, StudioNoteSpan, StudioTrackSnapshot, TrackAudioState } from "./types";
 
-export function buildSy1PresetPatch(presetId: string): { presetId: string; presetName: string; patch: SynthPatch } {
-  const preset = SY1.presets.find((p) => p.id === presetId) || SY1.presets[0];
-  const patch: SynthPatch = Object.assign(synthDefaults(), SY1.base, preset ? preset.patch : {});
+export type TrackEngineKind = "hq" | "analog" | "strings" | "fm" | "vector" | "drums";
+
+/** All 15 Iranian city synthesizers & drum machines supported natively per Studio track. */
+export const STUDIO_MACHINES: readonly MachineDef[] = MACHINES;
+
+/** All 11 synthesizers supported natively per Studio track. */
+export const STUDIO_SYNTH_MACHINES: readonly MachineDef[] = MACHINES.filter((m) => m.kind === "synth");
+
+/** All 4 drum machines supported natively per Studio track. */
+export const STUDIO_DRUM_MACHINES: readonly MachineDef[] = MACHINES.filter((m) => m.kind === "drums");
+
+export function getStudioMachineDef(machineId?: string): MachineDef {
+  return STUDIO_MACHINES.find((m) => m.id === machineId) || SY1;
+}
+
+export function engineKindForMachine(m: MachineDef): TrackEngineKind {
+  if (m.kind === "drums") return "drums";
+  if (m.id === "tabriz") return "analog";
+  if (m.id === "shiraz") return "strings";
+  if (m.id === "kashan") return "fm";
+  if (m.id === "nishapur") return "vector";
+  return "hq";
+}
+
+export function getDrumLabelsForTrack(
+  machineId: string,
+  patch: SynthPatch,
+  presetId?: string
+): Record<DrumVoice, string> {
+  const m = getStudioMachineDef(machineId);
+  const labels: Record<DrumVoice, string> = { ...DRUM_LABELS, ...(m.drumLabels || {}) };
+  if (m.kind === "drums" && m.kits && m.kits.length > 0) {
+    let kit = m.kits.find((k) => presetId === `kit:${k.id}` || presetId === k.id);
+    if (!kit && m.styles && presetId) {
+      const style = m.styles.find((s) => s.id === presetId);
+      if (style) kit = m.kits.find((k) => k.id === style.kit);
+    }
+    if (!kit && typeof patch.kitModel === "string" && patch.kitModel) {
+      kit = m.kits.find((k) => k.patch.kitModel === patch.kitModel);
+    }
+    if (kit && kit.labels) {
+      Object.assign(labels, kit.labels);
+    }
+  }
+  return labels;
+}
+
+export function buildMachinePresetPatch(
+  machineId: string,
+  presetId: string
+): { machineId: string; presetId: string; presetName: string; patch: SynthPatch } {
+  const m = getStudioMachineDef(machineId);
+  if (m.kind === "drums" && m.kits && presetId.startsWith("kit:")) {
+    const kitId = presetId.slice(4);
+    const kit = m.kits.find((k) => k.id === kitId);
+    if (kit) {
+      const patch: SynthPatch = Object.assign(synthDefaults(), m.base, kit.patch);
+      patch.hold = "off";
+      return {
+        machineId: m.id,
+        presetId: `kit:${kit.id}`,
+        presetName: kit.name,
+        patch
+      };
+    }
+  }
+  const preset = m.presets.find((p) => p.id === presetId) || m.presets[0];
+  const patch: SynthPatch = Object.assign(synthDefaults(), m.base, preset ? preset.patch : {});
   patch.hold = "off";
   return {
+    machineId: m.id,
     presetId: preset ? preset.id : "init",
     presetName: preset ? preset.name : "Init",
     patch
+  };
+}
+
+export function buildSy1PresetPatch(presetId: string): { presetId: string; presetName: string; patch: SynthPatch } {
+  const built = buildMachinePresetPatch("sy1", presetId);
+  return {
+    presetId: built.presetId,
+    presetName: built.presetName,
+    patch: built.patch
   };
 }
 
@@ -40,6 +130,7 @@ function compareStudioEvents(a: StudioMidiEvent, b: StudioMidiEvent): number {
 export interface SY1TrackOptions {
   id: string;
   name: string;
+  machineId?: string;
   presetId?: string;
   midiChannel?: number;
   volume?: number;
@@ -50,6 +141,7 @@ export interface SY1TrackOptions {
 export class SY1TrackEngine {
   readonly id: string;
   name: string;
+  machineId: string;
   presetId: string;
   presetName: string;
   readonly patch: SynthPatch;
@@ -68,7 +160,12 @@ export class SY1TrackEngine {
   private fader: GainNode | null = null;
   private panner: StereoPannerNode | null = null;
   private muteGate: GainNode | null = null;
-  private hqNode: AudioWorkletNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private engineKind: TrackEngineKind = "hq";
+  private engineSwapToken = 0;
+  private drumBus: TrackDrumBus | null = null;
+  private drumOpenHat: { node: GainNode | null } = { node: null };
+  private drumTimers = new Set<ReturnType<typeof setTimeout>>();
   private attachPromise: Promise<void> | null = null;
   private audioState: TrackAudioState = "idle";
   private forceHQ: boolean;
@@ -90,13 +187,16 @@ export class SY1TrackEngine {
   private eventsDirty = false;
   private cachedNoteCount: number | null = 0;
   private cachedEventsLen = 0;
+  private meterBuf: Float32Array | null = null;
 
   private listeners = new Set<() => void>();
 
   constructor(opts: SY1TrackOptions) {
     this.id = opts.id;
     this.name = opts.name;
-    const built = buildSy1PresetPatch(opts.presetId || "init");
+    const built = buildMachinePresetPatch(opts.machineId || "sy1", opts.presetId || "init");
+    this.machineId = built.machineId;
+    this.engineKind = engineKindForMachine(getStudioMachineDef(this.machineId));
     this.presetId = built.presetId;
     this.presetName = built.presetName;
     this.patch = built.patch;
@@ -115,6 +215,82 @@ export class SY1TrackEngine {
     this.listeners.forEach((cb) => cb());
   }
 
+  private teardownEngineNodes(): void {
+    this.engineSwapToken++;
+    this.drumTimers.forEach((tid) => clearTimeout(tid));
+    this.drumTimers.clear();
+    if (this.drumBus) {
+      disposeTrackDrumBus(this.drumBus);
+      this.drumBus = null;
+    }
+    this.drumOpenHat.node = null;
+    if (this.workletNode) {
+      try { this.workletNode.port.onmessage = null; } catch (e) {}
+      try { this.workletNode.disconnect(); } catch (e) {}
+      this.workletNode = null;
+    }
+    this.classicVoices.forEach((v) => v.kill());
+    this.classicVoices.clear();
+  }
+
+  private mountActiveEngine(): Promise<void> {
+    if (!this.ctx || !this.bus) return Promise.resolve();
+    this.teardownEngineNodes();
+
+    const ctx = this.ctx;
+    const bus = this.bus;
+    const token = this.engineSwapToken;
+    const m = getStudioMachineDef(this.machineId);
+    const kind = engineKindForMachine(m);
+    this.engineKind = kind;
+
+    // Drum machines route dry hits through bus.input and wet effects strictly via per-voice sends to bus.sendIn
+    bus.mainToFx.gain.value = kind === "drums" ? 0 : 1;
+
+    if (kind === "drums") {
+      const glue = typeof this.patch.drumGlue === "number" ? this.patch.drumGlue : 0.35;
+      this.drumBus = createTrackDrumBus(ctx, bus.input, glue);
+      this.audioState = "hq";
+      this.emitChange();
+      return Promise.resolve();
+    }
+
+    this.audioState = "classic";
+    let factory: Promise<AudioWorkletNode | null>;
+    if (kind === "analog") factory = createAnalogNode(ctx, bus.input, this.patch);
+    else if (kind === "strings") factory = createStringsNode(ctx, bus.input, this.patch);
+    else if (kind === "fm") factory = createFmNode(ctx, bus.input, this.patch);
+    else if (kind === "vector") factory = createVectorNode(ctx, bus.input, this.patch, this.currentBpm);
+    else factory = createHQNode(ctx, bus.input, this.patch);
+
+    return factory.then((node) => {
+      if (this.ctx !== ctx || this.engineSwapToken !== token) {
+        if (node) {
+          try { node.port.onmessage = null; } catch (e) {}
+          try { node.disconnect(); } catch (e) {}
+        }
+        return;
+      }
+      if (node) {
+        this.workletNode = node;
+        this.audioState = "hq";
+        // Re-sync any parameter edits made while the worklet was loading
+        if (kind === "vector") {
+          node.port.postMessage({
+            t: "patch",
+            patch: { ...this.patch },
+            orbitRateHz: computeOrbitRateHzForBpm(this.patch, this.currentBpm)
+          });
+        } else {
+          node.port.postMessage({ t: "patch", patch: { ...this.patch } });
+        }
+        if (this.pitchBend !== 0) node.port.postMessage({ t: "bend", v: this.pitchBend });
+        if (this.modWheel !== 0) node.port.postMessage({ t: "mod", v: this.modWheel });
+        this.emitChange();
+      }
+    });
+  }
+
   /** Attach this track to a shared AudioContext or OfflineAudioContext and connect to destination. */
   attachAudio(ctx: BaseAudioContext, destination: AudioNode): Promise<void> {
     if (this.ctx === ctx && this.bus) {
@@ -123,7 +299,8 @@ export class SY1TrackEngine {
     this.detachAudio();
     this.ctx = ctx;
 
-    const bus = createSynthBus(ctx, this.patch, { connectToDestination: false, mainFxOn: true });
+    const kind = engineKindForMachine(getStudioMachineDef(this.machineId));
+    const bus = createSynthBus(ctx, this.patch, { connectToDestination: false, mainFxOn: kind !== "drums" });
     const fader = ctx.createGain();
     fader.gain.value = this.volume;
 
@@ -147,31 +324,13 @@ export class SY1TrackEngine {
     this.fader = fader;
     this.panner = panner;
     this.muteGate = muteGate;
-    this.audioState = "classic";
 
-    const p = createHQNode(ctx, bus.input, this.patch).then((node) => {
-      if (this.ctx !== ctx) {
-        if (node) {
-          try { node.disconnect(); } catch (e) {}
-        }
-        return;
-      }
-      if (node) {
-        this.hqNode = node;
-        this.audioState = "hq";
-        // Re-sync any parameter edits made while the worklet was loading
-        node.port.postMessage({ t: "patch", patch: { ...this.patch } });
-        if (this.pitchBend !== 0) node.port.postMessage({ t: "bend", v: this.pitchBend });
-        if (this.modWheel !== 0) node.port.postMessage({ t: "mod", v: this.modWheel });
-        this.emitChange();
-      }
-    });
-
+    const p = this.mountActiveEngine();
     this.attachPromise = p;
     return p;
   }
 
-  /** Wait until HQ AudioWorklet initialization settles (if attached). */
+  /** Wait until AudioWorklet / Drum engine initialization settles (if attached). */
   ready(): Promise<void> {
     return this.attachPromise || Promise.resolve();
   }
@@ -184,18 +343,26 @@ export class SY1TrackEngine {
     return this.audioState;
   }
 
+  getEngineKind(): TrackEngineKind {
+    return engineKindForMachine(getStudioMachineDef(this.machineId));
+  }
+
+  isDrumTrack(): boolean {
+    return this.getEngineKind() === "drums";
+  }
+
   /** Direct access to this track's FX bus (for diagnostics / testing). */
   getBus(): SynthFXBus | null {
     return this.bus;
   }
 
-  private useHQ(): boolean {
-    if (!this.hqNode) return false;
-    return this.forceHQ || getEngine() === "hq";
+  private useWorklet(): boolean {
+    if (!this.workletNode) return false;
+    return this.forceHQ || getEngine() === "hq" || this.engineKind !== "hq";
   }
 
-  private hqPost(msg: Record<string, unknown>): void {
-    if (this.hqNode) this.hqNode.port.postMessage(msg);
+  private workletPost(msg: Record<string, unknown>): void {
+    if (this.workletNode) this.workletNode.port.postMessage(msg);
   }
 
   private syncedLfoRate(): number | null {
@@ -209,14 +376,20 @@ export class SY1TrackEngine {
     this.currentBpm = bpm;
     const r = this.syncedLfoRate();
     if (r !== null) this.setParam("lfoRate", r, { internal: true });
+    if (this.engineKind === "vector" && this.workletNode) {
+      this.workletPost({ t: "param", key: "orbitRateHz", value: computeOrbitRateHzForBpm(this.patch, bpm) });
+    }
   }
 
-  applyPreset(presetId: string): void {
-    const preset = SY1.presets.find((p) => p.id === presetId);
-    if (!preset) return;
-    this.allNotesOff();
-    const next: SynthPatch = Object.assign(synthDefaults(), SY1.base, preset.patch);
-    next.hold = "off";
+  applyMachinePreset(machineId: string, presetId: string): void {
+    const m = getStudioMachineDef(machineId);
+    const built = buildMachinePresetPatch(m.id, presetId);
+    const prevKind = this.engineKind;
+    const nextKind = engineKindForMachine(m);
+
+    this.allNotesOff(0);
+
+    const next = built.patch;
     Object.keys(next).forEach((k) => {
       this.patch[k] = next[k];
       if (this.bus) applyBusParam(this.bus, k, next[k]);
@@ -224,28 +397,69 @@ export class SY1TrackEngine {
     const r = this.syncedLfoRate();
     if (r !== null) this.patch.lfoRate = r;
 
-    this.presetId = preset.id;
-    this.presetName = preset.name;
+    this.machineId = built.machineId;
+    this.presetId = built.presetId;
+    this.presetName = built.presetName;
+    this.engineKind = nextKind;
 
-    if (this.hqNode) {
-      this.hqNode.port.postMessage({ t: "patch", patch: { ...this.patch } });
+    if (this.ctx && this.bus && prevKind !== nextKind) {
+      this.attachPromise = this.mountActiveEngine();
+    } else if (this.workletNode) {
+      if (nextKind === "vector") {
+        this.workletNode.port.postMessage({
+          t: "patch",
+          patch: { ...this.patch },
+          orbitRateHz: computeOrbitRateHzForBpm(this.patch, this.currentBpm)
+        });
+      } else {
+        this.workletNode.port.postMessage({ t: "patch", patch: { ...this.patch } });
+      }
     }
+
     this.classicVoices.forEach((vc) => {
       Object.keys(this.patch).forEach((k) => vc.update(k));
     });
     this.emitChange();
   }
 
-  /** Load an arbitrary patch snapshot (used for offline bounce clones). */
-  loadPatchSnapshot(patch: SynthPatch, presetId: string, presetName: string): void {
+  applyPreset(presetId: string): void {
+    const currentMachine = getStudioMachineDef(this.machineId);
+    if (
+      currentMachine.presets.some((p) => p.id === presetId) ||
+      (currentMachine.kind === "drums" && presetId.startsWith("kit:") && currentMachine.kits?.some((k) => `kit:${k.id}` === presetId))
+    ) {
+      this.applyMachinePreset(currentMachine.id, presetId);
+      return;
+    }
+    if (SY1.presets.some((p) => p.id === presetId)) {
+      this.applyMachinePreset("sy1", presetId);
+    }
+  }
+
+  /** Load an arbitrary patch snapshot (used for offline bounce clones & project restore). */
+  loadPatchSnapshot(patch: SynthPatch, presetId: string, presetName: string, machineId?: string): void {
+    const prevKind = this.engineKind;
     Object.keys(patch).forEach((k) => {
       this.patch[k] = patch[k];
       if (this.bus) applyBusParam(this.bus, k, patch[k]);
     });
+    if (machineId) this.machineId = getStudioMachineDef(machineId).id;
+    const nextKind = engineKindForMachine(getStudioMachineDef(this.machineId));
+    this.engineKind = nextKind;
     this.presetId = presetId;
     this.presetName = presetName;
-    if (this.hqNode) {
-      this.hqNode.port.postMessage({ t: "patch", patch: { ...this.patch } });
+    if (this.ctx && this.bus && prevKind !== nextKind) {
+      this.attachPromise = this.mountActiveEngine();
+    } else if (this.workletNode) {
+      if (nextKind === "vector") {
+        this.workletNode.port.postMessage({
+          t: "patch",
+          patch: { ...this.patch },
+          orbitRateHz: computeOrbitRateHzForBpm(this.patch, this.currentBpm)
+        });
+      } else {
+        this.workletNode.port.postMessage({ t: "patch", patch: { ...this.patch } });
+      }
     }
   }
 
@@ -300,7 +514,10 @@ export class SY1TrackEngine {
       applyBusParam(this.bus, key, this.patch[key]);
     }
     this.classicVoices.forEach((vc) => vc.update(key));
-    this.hqPost({ t: "param", key, value: this.patch[key] });
+    this.workletPost({ t: "param", key, value: this.patch[key] });
+    if (this.engineKind === "vector" && (key === "orbitRate" || key === "orbitSync")) {
+      this.workletPost({ t: "param", key: "orbitRateHz", value: computeOrbitRateHzForBpm(this.patch, this.currentBpm) });
+    }
 
     if (!fromPreset && (key === "oriental" || key === "tuning" || key === "tuneRoot" || key === "scaleAlt" || key === "microTone")) {
       this.retuneActiveVoices();
@@ -343,7 +560,7 @@ export class SY1TrackEngine {
   setPitchBend(norm: number): void {
     const v = Math.max(-1, Math.min(1, Number(norm) || 0));
     this.pitchBend = v;
-    this.hqPost({ t: "bend", v });
+    this.workletPost({ t: "bend", v });
     this.classicVoices.forEach((vc) => vc.update("pitchBend"));
   }
 
@@ -354,7 +571,7 @@ export class SY1TrackEngine {
   setModWheel(norm: number): void {
     const v = Math.max(0, Math.min(1, Number(norm) || 0));
     this.modWheel = v;
-    this.hqPost({ t: "mod", v });
+    this.workletPost({ t: "mod", v });
     this.classicVoices.forEach((vc) => vc.update("modWheel"));
   }
 
@@ -379,7 +596,7 @@ export class SY1TrackEngine {
       this.patch.tuning || "shur",
       midi,
       Number(this.patch.tuneRoot) || 0,
-      "sy1",
+      this.machineId,
       Number(this.patch.scaleAlt) || 0,
       this.patch.microTone || "24tet"
     );
@@ -393,9 +610,9 @@ export class SY1TrackEngine {
     return this.sustainPedal || this.patch.hold === "on";
   }
 
-  private createTrackHQVoice(midi: number, cents: number, velocity: number, at = 0, fromHz = 0, glide = 0): SynthVoice {
+  private createTrackWorkletVoice(midi: number, cents: number, velocity: number, at = 0, fromHz = 0, glide = 0): SynthVoice {
     const id = this.nextVoiceId++;
-    this.hqPost({ t: "on", id, midi, cents, vel: velocity, at, from: fromHz, glide });
+    this.workletPost({ t: "on", id, midi, cents, vel: velocity, at, from: fromHz, glide });
     let released = false;
     const voice: SynthVoice = {
       freq: 440 * Math.pow(2, (midi - 69) / 12 + cents / 1200),
@@ -403,17 +620,17 @@ export class SY1TrackEngine {
       kill: () => {
         if (released) return;
         released = true;
-        this.hqPost({ t: "kill", id });
+        this.workletPost({ t: "kill", id });
       },
       release: (t?: number, fastTau?: number) => {
         if (released) return;
         released = true;
-        this.hqPost({ t: fastTau ? "kill" : "off", id, at: t || 0 });
+        this.workletPost({ t: fastTau ? "kill" : "off", id, at: t || 0 });
       },
       retune: (freqHz: number, glideT: number, t: number) => {
         const m = 69 + 12 * Math.log2(freqHz / 440);
         const base = Math.round(m);
-        this.hqPost({ t: "glide", id, midi: base, cents: (m - base) * 100, glide: glideT, at: t });
+        this.workletPost({ t: "glide", id, midi: base, cents: (m - base) * 100, glide: glideT, at: t });
         voice.freq = freqHz;
       },
       update: () => {}
@@ -423,8 +640,8 @@ export class SY1TrackEngine {
 
   private startVoice(midi: number, vel: number, at = 0, fromHz = 0, glide = 0): SynthVoice | null {
     if (!this.ctx || !this.bus) return null;
-    if (this.useHQ()) {
-      return this.createTrackHQVoice(midi, this.centsFor(midi), vel, at, fromHz, glide);
+    if (this.useWorklet()) {
+      return this.createTrackWorkletVoice(midi, this.centsFor(midi), vel, at, fromHz, glide);
     }
     const routing: VoiceRoutingOptions = {
       busInput: this.bus.input,
@@ -452,6 +669,27 @@ export class SY1TrackEngine {
   noteOn(midi: number, velocity = 0.85, at = 0): void {
     const m = Math.max(0, Math.min(127, Math.round(midi)));
     const vel = Math.max(0.01, Math.min(1, Number(velocity) || 0.85));
+
+    if (this.isDrumTrack()) {
+      const voice = drumVoiceForNote(m);
+      if (voice && this.ctx && this.bus && this.drumBus) {
+        const machine = getStudioMachineDef(this.machineId);
+        triggerTrackDrum({
+          ctx: this.ctx,
+          dest: { main: this.bus.input, send: this.bus.sendIn },
+          drumBus: this.drumBus,
+          patch: this.patch,
+          fallbackModel: machine.drumModel || "analog",
+          openHatRef: this.drumOpenHat,
+          voice,
+          vel,
+          at,
+          timers: this.drumTimers
+        });
+      }
+      return;
+    }
+
     const releaseAt = at > 0 ? at : this.ctx ? this.ctx.currentTime : 0;
 
     this.physicallyHeld.add(m);
@@ -490,6 +728,7 @@ export class SY1TrackEngine {
   }
 
   noteOff(midi: number, at = 0): void {
+    if (this.isDrumTrack()) return;
     const m = Math.max(0, Math.min(127, Math.round(midi)));
     const releaseAt = at > 0 ? at : this.ctx ? this.ctx.currentTime : 0;
     this.physicallyHeld.delete(m);
@@ -605,7 +844,7 @@ export class SY1TrackEngine {
 
     if (at === 0) {
       this.classicVoices.forEach((v) => v.kill());
-      this.hqPost({ t: "alloff" });
+      this.workletPost({ t: "alloff" });
     }
   }
 
@@ -710,10 +949,97 @@ export class SY1TrackEngine {
     return extractNoteSpans(this.events, fallbackEndTick);
   }
 
+  /**
+   * Replace all noteOn/noteOff pairs on this track from edited Piano Roll note spans
+   * while preserving all non-note automation events (CC64 sustain, CC1 mod wheel, pitchBend).
+   */
+  replaceNoteSpans(spans: StudioNoteSpan[]): void {
+    const nonNotes: StudioMidiEvent[] = [];
+    for (let i = 0; i < this.events.length; i++) {
+      const ev = this.events[i];
+      if (ev.type !== "noteOn" && ev.type !== "noteOff") {
+        nonNotes.push(ev);
+      }
+    }
+    const next: StudioMidiEvent[] = nonNotes;
+    for (let i = 0; i < spans.length; i++) {
+      const s = spans[i];
+      const midi = Math.max(0, Math.min(127, Math.round(s.midi)));
+      const startTick = Math.max(0, Math.round(s.startTick));
+      const endTick = Math.max(startTick + 1, Math.round(s.endTick));
+      const velocity = Math.max(0.01, Math.min(1, Number.isFinite(s.velocity) ? s.velocity : 0.85));
+      next.push({ type: "noteOn", tick: startTick, midi, velocity });
+      next.push({ type: "noteOff", tick: endTick, midi });
+    }
+    next.sort(compareStudioEvents);
+    this.events = next;
+    this.eventsDirty = false;
+    this.cachedNoteCount = spans.length;
+    this.cachedEventsLen = next.length;
+    this.emitChange();
+  }
+
+  /** Add a single MIDI note span cleanly. */
+  addNote(midi: number, startTick: number, durationTicks: number, velocity = 0.85, totalTicks = 1e9): void {
+    const spans = this.getNoteSpans(totalTicks);
+    const start = Math.max(0, Math.round(startTick));
+    const end = Math.max(start + 1, Math.round(start + Math.max(30, durationTicks)));
+    spans.push({
+      midi: Math.max(0, Math.min(127, Math.round(midi))),
+      startTick: start,
+      endTick: end,
+      velocity: Math.max(0.01, Math.min(1, velocity))
+    });
+    this.replaceNoteSpans(spans);
+  }
+
+  /** Quantize selected (or all) note start ticks to `gridTicks` while preserving durations & CCs. */
+  quantizeNotes(gridTicks: number, totalTicks: number, selectedIndices?: Iterable<number>): number {
+    const g = Math.max(1, Math.round(gridTicks));
+    const spans = this.getNoteSpans(totalTicks);
+    if (spans.length === 0) return 0;
+    const selSet = selectedIndices ? (selectedIndices instanceof Set ? selectedIndices : new Set(selectedIndices)) : null;
+    const useSel = !!selSet && selSet.size > 0;
+    let moved = 0;
+    const updated = spans.map((s, idx) => {
+      if (useSel && !selSet!.has(idx)) return s;
+      const dur = Math.max(1, s.endTick - s.startTick);
+      const maxStart = Math.max(0, totalTicks - Math.min(g, dur));
+      const snapped = Math.max(0, Math.min(maxStart, Math.round(s.startTick / g) * g));
+      if (snapped !== s.startTick) moved++;
+      return {
+        ...s,
+        startTick: snapped,
+        endTick: Math.min(totalTicks, Math.max(snapped + 1, snapped + dur))
+      };
+    });
+    this.replaceNoteSpans(updated);
+    return moved;
+  }
+
+  /** Zero-allocation instantaneous output level meter (0..1) from this track's FX bus analyser. */
+  readMeterLevel(): number {
+    if (!this.bus || !this.audible || this.volume <= 0.001) return 0;
+    const an = this.bus.analyser;
+    if (!an || typeof an.getFloatTimeDomainData !== "function") return 0;
+    const len = an.fftSize || 256;
+    if (!this.meterBuf || this.meterBuf.length !== len) {
+      this.meterBuf = new Float32Array(len);
+    }
+    an.getFloatTimeDomainData(this.meterBuf as any);
+    let peak = 0;
+    for (let i = 0; i < len; i++) {
+      const a = Math.abs(this.meterBuf[i]);
+      if (a > peak) peak = a;
+    }
+    return Math.min(1, peak * this.volume);
+  }
+
   getSnapshot(): StudioTrackSnapshot {
     return {
       id: this.id,
       name: this.name,
+      machineId: this.machineId,
       presetId: this.presetId,
       presetName: this.presetName,
       volume: this.volume,
@@ -732,12 +1058,7 @@ export class SY1TrackEngine {
 
   detachAudio(): void {
     this.allNotesOff(0);
-    if (this.hqNode) {
-      try { this.hqNode.port.onmessage = null; } catch (e) {}
-      try { this.hqNode.disconnect(); } catch (e) {}
-      this.hqNode = null;
-    }
-    this.classicVoices.clear();
+    this.teardownEngineNodes();
     if (this.bus) {
       disposeSynthBus(this.bus);
       this.bus = null;

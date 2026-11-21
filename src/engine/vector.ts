@@ -112,13 +112,17 @@ let workletXY: { x: number; y: number; phase: number; atAudioTime: number } | nu
 let fallbackPhase = 0;
 let lastAudioTime = -1;
 
-export function computeOrbitRateHz(patch: SynthPatch): number {
+export function computeOrbitRateHzForBpm(patch: SynthPatch, bpm: number): number {
   const raw = Math.max(0.05, Math.min(8, Number(patch.orbitRate) || 0.35));
   if (patch.orbitSync === "on") {
     const div = orbitSyncDivForRate(raw);
-    return Math.max(0.02, getTempo() / 60 / div.beats);
+    return Math.max(0.02, bpm / 60 / div.beats);
   }
   return raw;
+}
+
+export function computeOrbitRateHz(patch: SynthPatch): number {
+  return computeOrbitRateHzForBpm(patch, getTempo());
 }
 
 export function evalOrbitPoint(
@@ -198,6 +202,51 @@ export function useVector(): boolean {
   return getEngine() === "hq" && state === "ready";
 }
 
+const vectorModules = new WeakMap<BaseAudioContext, Promise<boolean>>();
+
+/** Load the "sy1-vector" AudioWorklet processor at most once per AudioContext / OfflineAudioContext. */
+export function ensureVectorModule(ctx: BaseAudioContext): Promise<boolean> {
+  if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") {
+    return Promise.resolve(false);
+  }
+  const existing = vectorModules.get(ctx);
+  if (existing) return existing;
+  const p = ctx.audioWorklet
+    .addModule(processorUrl)
+    .then(() => true)
+    .catch(() => false);
+  vectorModules.set(ctx, p);
+  return p;
+}
+
+/** Instantiate an isolated "sy1-vector" AudioWorkletNode connected to busInput. */
+export async function createVectorNode(
+  ctx: BaseAudioContext,
+  busInput: AudioNode,
+  initialPatch: SynthPatch,
+  bpm = 120
+): Promise<AudioWorkletNode | null> {
+  const ok = await ensureVectorModule(ctx);
+  if (!ok) return null;
+  try {
+    const n = new AudioWorkletNode(ctx, "sy1-vector", {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [2]
+    });
+    n.connect(busInput);
+    n.port.postMessage({
+      t: "patch",
+      patch: { ...initialPatch },
+      orbitRateHz: computeOrbitRateHzForBpm(initialPatch, bpm)
+    });
+    n.port.postMessage({ t: "path", pts: drawnPath });
+    return n;
+  } catch (e) {
+    return null;
+  }
+}
+
 export function initVector(ctx: AudioContext, busInput: AudioNode, getPatch: () => SynthPatch): void {
   if (state !== "idle") return;
   if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") {
@@ -205,9 +254,12 @@ export function initVector(ctx: AudioContext, busInput: AudioNode, getPatch: () 
     return;
   }
   state = "loading";
-  ctx.audioWorklet
-    .addModule(processorUrl)
-    .then(() => {
+  ensureVectorModule(ctx)
+    .then((ok) => {
+      if (!ok) {
+        state = "failed";
+        return;
+      }
       node = new AudioWorkletNode(ctx, "sy1-vector", {
         numberOfInputs: 0,
         numberOfOutputs: 1,

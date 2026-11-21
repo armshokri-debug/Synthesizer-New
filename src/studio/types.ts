@@ -13,6 +13,14 @@ export const STUDIO_BAR_PRESETS = [8, 12, 64, 128] as const;
 export const STUDIO_MIN_BARS = 1;
 export const STUDIO_MAX_BARS = 512;
 
+export const STUDIO_SNAP_OPTIONS = [
+  { id: "off", label: "Off", ticks: 0 },
+  { id: "1/4", label: "1/4", ticks: STUDIO_PPQ },
+  { id: "1/8", label: "1/8", ticks: STUDIO_PPQ / 2 },
+  { id: "1/16", label: "1/16", ticks: STUDIO_PPQ / 4 },
+  { id: "1/32", label: "1/32", ticks: STUDIO_PPQ / 8 }
+] as const;
+
 export type StudioMidiEvent =
   | { type: "noteOn"; tick: number; midi: number; velocity: number }
   | { type: "noteOff"; tick: number; midi: number }
@@ -31,6 +39,7 @@ export type TrackAudioState = "idle" | "hq" | "classic";
 export interface StudioTrackSnapshot {
   id: string;
   name: string;
+  machineId?: string;
   presetId: string;
   presetName: string;
   volume: number;
@@ -71,6 +80,7 @@ export interface StudioStemTake extends StudioTake {
 export interface StudioProjectTrackData {
   id: string;
   name: string;
+  machineId?: string;
   presetId: string;
   presetName: string;
   patch: SynthPatch;

@@ -582,6 +582,235 @@ async function main() {
       };
     })()`);
 
+    // -------------------------------------------------------------------------
+    // Phase 4 Real Headless Chromium Professional DAW UI/UX & Responsive Suite
+    // -------------------------------------------------------------------------
+
+    // 13. P4-VisualRegression & DAW Workflow (Desktop 1440x900)
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false
+    });
+    await sleep(120);
+
+    const phase4Desktop = await cdp.evaluate(`(async () => {
+      const eng = window.SY1_STUDIO.engine;
+      // Start on standalone synth and capture visual baseline
+      if (window.SY1_STUDIO.isOpen()) {
+        document.getElementById("st-back-btn").click();
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      window.SY1.setMachine("sy1");
+      await new Promise((r) => setTimeout(r, 60));
+
+      const synthPanel = document.querySelector("#sy1-panel .synth-panel");
+      const standaloneBaseline = {
+        secCount: synthPanel.querySelectorAll(".synth-sec").length,
+        knobCount: synthPanel.querySelectorAll(".sk").length,
+        panelBg: getComputedStyle(synthPanel).backgroundImage.slice(0, 64),
+        cutoffBefore: window.SY1.getPatch().cutoff
+      };
+
+      // Open Studio
+      document.getElementById("open-studio-btn").click();
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Verify Arrangement header-to-lane vertical alignment & horizontal overflow
+      const firstCtl = document.querySelector("#sy1-studio .st-track-ctl").getBoundingClientRect();
+      const firstLane = document.querySelector("#sy1-studio .st-lane").getBoundingClientRect();
+      const headerLaneAligned = Math.abs(firstCtl.top - firstLane.top) <= 1.5 && firstLane.width >= 300;
+      const desktopNoOverflow = document.documentElement.scrollWidth <= window.innerWidth;
+
+      // Test Arrangement horizontal zoom (1x -> 2x)
+      const laneW1 = firstLane.width;
+      document.querySelector('[data-st-action="arr-zoom-in"]').click();
+      document.querySelector('[data-st-action="arr-zoom-in"]').click();
+      await new Promise((r) => setTimeout(r, 60));
+      const laneW2 = document.querySelector("#sy1-studio .st-lane").getBoundingClientRect().width;
+      const arrZoomWorks = laneW2 > laneW1 + 40;
+      document.querySelector('[data-st-action="arr-zoom-fit"]').click();
+      await new Promise((r) => setTimeout(r, 40));
+
+      // Test Collapsible Instrument Browser: search, favorite, pick Yazd preset -> Track 1
+      const browserEl = document.getElementById("st-browser");
+      const browserInitiallyOpen = browserEl && !browserEl.hidden;
+      document.getElementById("st-browser-toggle").click();
+      await new Promise((r) => setTimeout(r, 40));
+      const browserCollapsed = document.getElementById("st-browser").hidden;
+      document.getElementById("st-browser-toggle").click();
+      await new Promise((r) => setTimeout(r, 40));
+
+      // Select Yazd city synth in browser, favorite its first preset, and load it onto Track 1
+      eng.setFocusedTrack("track-1");
+      await new Promise((r) => setTimeout(r, 40));
+      document.querySelector('[data-st-action="browser-machine"][data-st-machine="yazd"]').click();
+      await new Promise((r) => setTimeout(r, 40));
+      const firstYazdStar = document.querySelector('[data-st-action="browser-star"][data-st-machine="yazd"]');
+      firstYazdStar.click();
+      await new Promise((r) => setTimeout(r, 40));
+      const favStoredInStudioKey = (localStorage.getItem("sy1_studio_favs") || "").includes("yazd:");
+      const firstYazdPresetBtn = document.querySelector('[data-st-action="browser-pick-preset"][data-st-machine="yazd"]');
+      firstYazdPresetBtn.click();
+      await new Promise((r) => setTimeout(r, 60));
+      const t1MachineAfterPick = eng.getTrack("track-1").machineId;
+
+      // Switch Bottom Dock -> Instrument tab and verify UNCHANGED original synth faceplate (.synth-panel, .synth-sec, .sk)
+      document.getElementById("st-tab-instrument").click();
+      await new Promise((r) => setTimeout(r, 80));
+      const embeddedSynth = document.querySelector("#sy1-studio .st-embedded-synth.synth-panel");
+      const embeddedMachineAttr = embeddedSynth?.getAttribute("data-machine") || "";
+      const embeddedSecCount = embeddedSynth ? embeddedSynth.querySelectorAll(".synth-sec").length : 0;
+      const embeddedKnobCount = embeddedSynth ? embeddedSynth.querySelectorAll(".sk").length : 0;
+      const embeddedHasScales = embeddedSynth ? embeddedSynth.querySelectorAll(".sk-scale").length > 0 : false;
+
+      // Expand Instrument view to full height and back to split
+      document.getElementById("st-dock-expand").click();
+      await new Promise((r) => setTimeout(r, 40));
+      const dockExpandedActive = document.querySelector("#sy1-studio .st-daw").classList.contains("is-dock-expanded");
+      document.getElementById("st-dock-expand").click();
+      await new Promise((r) => setTimeout(r, 40));
+
+      // Switch Bottom Dock -> Mixer tab and verify channel strips + Master strip + meters
+      document.getElementById("st-tab-mixer").click();
+      await new Promise((r) => setTimeout(r, 60));
+      const mixerStripCount = document.querySelectorAll("#st-mixer .st-mix-strip:not(.is-master)").length;
+      const mixerHasMaster = !!document.querySelector("#st-mixer .st-mix-strip.is-master");
+      const mixerHasMeters = document.querySelectorAll('#st-mixer [data-st-meter]').length === mixerStripCount + 1;
+
+      // Switch Bottom Dock -> Piano Roll tab and test real note creation, snap, quantize, delete & persistence
+      document.getElementById("st-tab-pianoroll").click();
+      await new Promise((r) => setTimeout(r, 80));
+      eng.clearTrackClip("track-1");
+      await new Promise((r) => setTimeout(r, 40));
+
+      const grid = document.getElementById("st-pr-grid");
+      const gRect = grid.getBoundingClientRect();
+      // Click grid to create a note
+      grid.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        clientX: gRect.left + 80,
+        clientY: gRect.top + 200
+      }));
+      await new Promise((r) => setTimeout(r, 60));
+      const prNoteCountAfterClick = document.querySelectorAll("#st-pr-notes .st-pr-note").length;
+
+      // Test Snap select + Quantize button
+      const snapSel = document.getElementById("st-pr-snap");
+      snapSel.value = "480";
+      snapSel.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      document.getElementById("st-pr-quantize").click();
+      await new Promise((r) => setTimeout(r, 60));
+      const t1SpanAfterQuantize = eng.getTrack("track-1").getNoteSpans(eng.getTotalTicks())[0];
+
+      // Save to IndexedDB and verify standalone visual regression after closing Studio
+      const savedP4 = await window.SY1_STUDIO.saveProject();
+      document.getElementById("st-back-btn").click();
+      await new Promise((r) => setTimeout(r, 100));
+
+      const synthPanelAfter = document.querySelector("#sy1-panel .synth-panel");
+      const standaloneAfter = {
+        secCount: synthPanelAfter.querySelectorAll(".synth-sec").length,
+        knobCount: synthPanelAfter.querySelectorAll(".sk").length,
+        panelBg: getComputedStyle(synthPanelAfter).backgroundImage.slice(0, 64),
+        cutoffAfter: window.SY1.getPatch().cutoff,
+        isStudioClassRemoved: !document.documentElement.classList.contains("is-studio")
+      };
+
+      const standaloneVisuallyIdentical =
+        standaloneAfter.secCount === standaloneBaseline.secCount &&
+        standaloneAfter.knobCount === standaloneBaseline.knobCount &&
+        standaloneAfter.panelBg === standaloneBaseline.panelBg &&
+        standaloneAfter.cutoffAfter === standaloneBaseline.cutoffBefore &&
+        standaloneAfter.isStudioClassRemoved;
+
+      return {
+        headerLaneAligned,
+        desktopNoOverflow,
+        arrZoomWorks,
+        browserInitiallyOpen,
+        browserCollapsed,
+        favStoredInStudioKey,
+        t1MachineAfterPick,
+        embeddedMachineAttr,
+        embeddedSecCount,
+        embeddedKnobCount,
+        embeddedHasScales,
+        dockExpandedActive,
+        mixerStripCount,
+        mixerHasMaster,
+        mixerHasMeters,
+        prNoteCountAfterClick,
+        quantizedStartTick: t1SpanAfterQuantize ? t1SpanAfterQuantize.startTick : -1,
+        savedP4: !!savedP4,
+        standaloneVisuallyIdentical
+      };
+    })()`);
+
+    // 14. P4-Responsive Viewports: iPad Landscape (1024x768) & iPad Portrait (768x1024)
+    const responsiveResults = {};
+    for (const vp of [
+      { key: "ipadLandscape", width: 1024, height: 768, mobile: true },
+      { key: "ipadPortrait", width: 768, height: 1024, mobile: true }
+    ]) {
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width: vp.width,
+        height: vp.height,
+        deviceScaleFactor: 2,
+        mobile: vp.mobile
+      });
+      await sleep(120);
+
+      responsiveResults[vp.key] = await cdp.evaluate(`(async () => {
+        if (!window.SY1_STUDIO.isOpen()) {
+          document.getElementById("open-studio-btn").click();
+          await new Promise((r) => setTimeout(r, 80));
+        }
+        // On portrait, close browser overlay if open to inspect clean arrangement & dock
+        const br = document.getElementById("st-browser");
+        if (window.innerWidth <= 768 && br && !br.hidden) {
+          document.getElementById("st-browser-toggle").click();
+          await new Promise((r) => setTimeout(r, 40));
+        }
+
+        const noHorizontalOverflow = document.documentElement.scrollWidth <= window.innerWidth;
+        const playBtnRect = document.getElementById("st-play-btn").getBoundingClientRect();
+        const ctlRect = document.querySelector("#sy1-studio .st-track-ctl").getBoundingClientRect();
+        const laneRect = document.querySelector("#sy1-studio .st-lane").getBoundingClientRect();
+        const dockRect = document.getElementById("st-dock").getBoundingClientRect();
+
+        return {
+          innerWidth: window.innerWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+          noHorizontalOverflow,
+          playBtnVisible: playBtnRect.width >= 40 && playBtnRect.height >= 34 && playBtnRect.right <= window.innerWidth,
+          headerLaneAligned: Math.abs(ctlRect.top - laneRect.top) <= 1.5,
+          laneHasUsableWidth: laneRect.width >= 200,
+          dockVisible: dockRect.height >= 160
+        };
+      })()`);
+    }
+
+    // Restore clean desktop viewport & clean up Phase 4 IndexedDB/localStorage test data
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: 1280,
+      height: 840,
+      deviceScaleFactor: 1,
+      mobile: false
+    });
+    await cdp.evaluate(`(async () => {
+      await window.SY1_STUDIO.storage.clearAutosave();
+      const listed = await window.SY1_STUDIO.storage.listProjects();
+      if (listed.ok) {
+        for (const p of listed.data) {
+          await window.SY1_STUDIO.storage.deleteProject(p.id);
+        }
+      }
+      localStorage.removeItem("sy1_studio_favs");
+    })()`);
+
     const report = {
       phase1: {
         standalone,
@@ -609,6 +838,10 @@ async function main() {
       phase3: {
         stress4Track,
         uiStressAndHeap
+      },
+      phase4: {
+        desktop: phase4Desktop,
+        responsive: responsiveResults
       },
       pageErrors,
       consoleErrors
@@ -748,11 +981,51 @@ async function main() {
       failures.push(`Phase 3 UI stress/slider/rAF check failed: ${JSON.stringify(uiStressAndHeap)}`);
     }
 
+    // Phase 4 assertions
+    if (
+      !phase4Desktop.headerLaneAligned ||
+      !phase4Desktop.desktopNoOverflow ||
+      !phase4Desktop.arrZoomWorks ||
+      !phase4Desktop.browserInitiallyOpen ||
+      !phase4Desktop.browserCollapsed ||
+      !phase4Desktop.favStoredInStudioKey ||
+      phase4Desktop.t1MachineAfterPick !== "yazd" ||
+      phase4Desktop.embeddedMachineAttr !== "yazd" ||
+      !(phase4Desktop.embeddedSecCount >= 4) ||
+      !(phase4Desktop.embeddedKnobCount >= 12) ||
+      !phase4Desktop.embeddedHasScales ||
+      !phase4Desktop.dockExpandedActive ||
+      phase4Desktop.mixerStripCount !== 4 ||
+      !phase4Desktop.mixerHasMaster ||
+      !phase4Desktop.mixerHasMeters ||
+      phase4Desktop.prNoteCountAfterClick !== 1 ||
+      phase4Desktop.quantizedStartTick < 0 ||
+      phase4Desktop.quantizedStartTick % 480 !== 0 ||
+      !phase4Desktop.savedP4 ||
+      !phase4Desktop.standaloneVisuallyIdentical
+    ) {
+      failures.push(`Phase 4 Desktop DAW & visual regression failed: ${JSON.stringify(phase4Desktop)}`);
+    }
+
+    for (const vpKey of ["ipadLandscape", "ipadPortrait"]) {
+      const vp = responsiveResults[vpKey];
+      if (
+        !vp ||
+        !vp.noHorizontalOverflow ||
+        !vp.playBtnVisible ||
+        !vp.headerLaneAligned ||
+        !vp.laneHasUsableWidth ||
+        !vp.dockVisible
+      ) {
+        failures.push(`Phase 4 Responsive check (${vpKey}) failed: ${JSON.stringify(vp)}`);
+      }
+    }
+
     if (failures.length > 0) {
       console.error("VERIFICATION FAILURES:\n - " + failures.join("\n - "));
       process.exitCode = 1;
     } else {
-      console.log("ALL REAL CHROMIUM PHASE 1, PHASE 2 & PHASE 3 VERIFICATION CHECKS PASSED!");
+      console.log("ALL REAL CHROMIUM PHASE 1, PHASE 2, PHASE 3 & PHASE 4 VERIFICATION CHECKS PASSED!");
     }
   } finally {
     cdp?.close();

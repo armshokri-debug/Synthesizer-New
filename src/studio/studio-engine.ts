@@ -17,7 +17,7 @@ import { encodeWav, ensureRecorderWorklet, RECORDER_MAX_SECONDS } from "../engin
 import { getTempo, onTempoChange, setTempo } from "../engine/tempo";
 import { encodeStudioMidi } from "./midi-io";
 import { createProjectBlob, sanitizeProjectName, serializeStudioProject, slugifyFilename, validateStudioProject } from "./project-io";
-import { SY1TrackEngine } from "./track-engine";
+import { getStudioMachineDef, SY1TrackEngine } from "./track-engine";
 import {
   STUDIO_BEATS_PER_BAR,
   STUDIO_MAX_BARS,
@@ -28,6 +28,7 @@ import {
   STUDIO_PROJECT_VERSION,
   STUDIO_TICKS_PER_BAR,
   StudioMidiEvent,
+  StudioNoteSpan,
   StudioProjectData,
   StudioStemTake,
   StudioTake,
@@ -212,6 +213,7 @@ export class SY1StudioEngine {
 
   private clockNowOverride: (() => number) | null;
   private isolatedTempo: boolean;
+  private masterMeterBuf: Float32Array | null = null;
   private stateListeners = new Set<() => void>();
   private keyHighlightListener: (() => void) | null = null;
   private dispatchObserver: ((rec: ScheduledDispatchRecord) => void) | null = null;
@@ -376,6 +378,24 @@ export class SY1StudioEngine {
     return this.masterBus;
   }
 
+  /** Zero-allocation instantaneous master output level (0..1) for the Mixer master meter. */
+  readMasterMeterLevel(): number {
+    if (!this.masterBus) return 0;
+    const an = this.masterBus.analyser;
+    if (!an || typeof an.getFloatTimeDomainData !== "function") return 0;
+    const len = an.fftSize || 2048;
+    if (!this.masterMeterBuf || this.masterMeterBuf.length !== len) {
+      this.masterMeterBuf = new Float32Array(len);
+    }
+    an.getFloatTimeDomainData(this.masterMeterBuf as any);
+    let peak = 0;
+    for (let i = 0; i < len; i++) {
+      const a = Math.abs(this.masterMeterBuf[i]);
+      if (a > peak) peak = a;
+    }
+    return Math.min(1, peak);
+  }
+
   // ----------------------------------------------------------------- clock ----
   nowAudioTime(): number {
     if (this.clockNowOverride) return this.clockNowOverride();
@@ -513,10 +533,38 @@ export class SY1StudioEngine {
     t.applyPreset(presetId);
   }
 
+  setTrackMachinePreset(id: string, machineId: string, presetId: string): void {
+    const t = this.getTrack(id);
+    if (!t) return;
+    this.playbackOpenNotes.get(id)?.clear();
+    this.playbackSustainDown.delete(id);
+    t.applyMachinePreset(machineId, presetId);
+  }
+
+  setTrackMachine(id: string, machineId: string): void {
+    const t = this.getTrack(id);
+    if (!t) return;
+    const m = getStudioMachineDef(machineId);
+    const defaultPreset = m.presets[0]?.id || "init";
+    this.setTrackMachinePreset(id, m.id, defaultPreset);
+  }
+
   setTrackParam(id: string, key: string, value: any): void {
     const t = this.getTrack(id);
     if (!t) return;
     t.setParam(key, value);
+  }
+
+  replaceTrackNotes(id: string, spans: StudioNoteSpan[]): void {
+    const t = this.getTrack(id);
+    if (!t) return;
+    t.replaceNoteSpans(spans);
+  }
+
+  quantizeTrackNotes(id: string, gridTicks: number, selectedIndices?: Iterable<number>): number {
+    const t = this.getTrack(id);
+    if (!t) return 0;
+    return t.quantizeNotes(gridTicks, this.getTotalTicks(), selectedIndices);
   }
 
   clearTrackClip(id: string): void {
@@ -1144,6 +1192,7 @@ export class SY1StudioEngine {
       tracks: this.tracks.map((t) => ({
         id: t.id,
         name: t.name,
+        machineId: t.machineId,
         presetId: t.presetId,
         presetName: t.presetName,
         patch: { ...t.patch },
@@ -1213,12 +1262,13 @@ export class SY1StudioEngine {
       const track = new SY1TrackEngine({
         id: td.id,
         name: td.name,
+        machineId: td.machineId || "sy1",
         presetId: td.presetId,
         volume: td.volume,
         pan: td.pan,
         midiChannel: td.midiChannel
       });
-      track.loadPatchSnapshot({ ...td.patch }, td.presetId, td.presetName);
+      track.loadPatchSnapshot({ ...td.patch }, td.presetId, td.presetName, td.machineId || "sy1");
       track.mute = td.mute;
       track.solo = td.solo;
       track.armed = td.armed;
@@ -1249,11 +1299,16 @@ export class SY1StudioEngine {
   exportMidiBytes(projectName?: string): Uint8Array {
     const title = projectName || this.projectName || "SY-1 Studio";
     return encodeStudioMidi(
-      this.tracks.map((t) => ({
-        name: `${t.name} (${t.presetName})`,
-        midiChannel: t.midiChannel,
-        events: t.events
-      })),
+      this.tracks.map((t) => {
+        const m = getStudioMachineDef(t.machineId);
+        // GM drum channel 10 (1-indexed) when a drum track is on "All" (0)
+        const ch = t.isDrumTrack() && t.midiChannel === 0 ? 10 : t.midiChannel;
+        return {
+          name: `${t.name} [${m.name}: ${t.presetName}]`,
+          midiChannel: ch,
+          events: t.events
+        };
+      }),
       this.bpm,
       this.getTotalTicks(),
       title
@@ -1304,13 +1359,14 @@ export class SY1StudioEngine {
       const clone = new SY1TrackEngine({
         id: src.id,
         name: src.name,
+        machineId: src.machineId,
         presetId: src.presetId,
         volume: src.volume,
         pan: src.pan,
         midiChannel: src.midiChannel,
         forceHQ: true
       });
-      clone.loadPatchSnapshot({ ...src.patch }, src.presetId, src.presetName);
+      clone.loadPatchSnapshot({ ...src.patch }, src.presetId, src.presetName, src.machineId);
       clone.syncTempo(this.bpm);
       clone.setAudible(true);
       await clone.attachAudio(offline, destination);
@@ -1408,7 +1464,7 @@ export class SY1StudioEngine {
     for (const b of deduped) {
       offline.suspend(b.suspendAt).then(async () => {
         for (const fn of b.actions) fn();
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 25));
         await offline.resume();
       }).catch(() => {});
     }
