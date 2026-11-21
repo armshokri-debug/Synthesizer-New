@@ -399,14 +399,17 @@ function renderInstrumentBrowserHtml(focused: SY1TrackEngine): string {
           .join("")}
       </div>
 
-      <div class="st-br-cats" role="tablist" aria-label="Preset categories">
+      <label class="st-br-cats">
+        <span>Category</span>
+        <select id="st-browser-category" aria-label="Preset category">
         ${categories
           .map(
             (cat) =>
-              `<button type="button" class="st-br-cat${effCategory === cat ? " is-active" : ""}" role="tab" aria-selected="${effCategory === cat}" data-st-action="browser-cat" data-st-cat="${escapeHtml(cat)}">${escapeHtml(cat)}</button>`
+              `<option value="${escapeHtml(cat)}"${effCategory === cat ? " selected" : ""}>${escapeHtml(cat)}</option>`
           )
           .join("")}
-      </div>
+        </select>
+      </label>
 
       <div class="st-br-list" id="st-browser-list" role="listbox" aria-label="Presets">
         ${
@@ -1111,6 +1114,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         case "toggle-export-menu":
           exportMenuOpen = !exportMenuOpen;
           renderStudioPanel();
+          container.querySelector<HTMLElement>(exportMenuOpen ? "#st-export-menu [role='menuitem']:not(:disabled)" : "#st-export-menu-btn")?.focus();
           break;
         case "play":
           if (studioEngine.getTransportSnapshot().playing) void studioEngine.stop();
@@ -1226,11 +1230,6 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         case "browser-machine": {
           browserMachineId = btn.getAttribute("data-st-machine") || "all";
           browserCategory = "All";
-          renderStudioPanel();
-          break;
-        }
-        case "browser-cat": {
-          browserCategory = btn.getAttribute("data-st-cat") || "All";
           renderStudioPanel();
           break;
         }
@@ -1503,6 +1502,13 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   container.addEventListener("change", (e) => {
     const el = e.target as HTMLInputElement | HTMLSelectElement | null;
     if (!el) return;
+
+    if (el.id === "st-browser-category") {
+      browserCategory = el.value;
+      renderStudioPanel();
+      container.querySelector<HTMLSelectElement>("#st-browser-category")?.focus();
+      return;
+    }
 
     if (el.id === "st-project-name") {
       studioEngine.setProjectName(el.value);
@@ -1872,6 +1878,25 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
 
   // Arrow keys adjust focused embedded synth knob
   container.addEventListener("keydown", (e) => {
+    if (exportMenuOpen && e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      exportMenuOpen = false;
+      renderStudioPanel();
+      container.querySelector<HTMLElement>("#st-export-menu-btn")?.focus();
+      return;
+    }
+    const inExportMenu = (e.target as HTMLElement | null)?.closest("#st-export-menu");
+    if (inExportMenu && ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const items = Array.from(inExportMenu.querySelectorAll<HTMLElement>("[role='menuitem']:not(:disabled)"));
+      const current = items.indexOf(document.activeElement as HTMLElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 :
+        (current + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[next]?.focus();
+      return;
+    }
     const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-inst-knob");
     if (!knob) return;
     const dirMap: Record<string, number> = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 };
