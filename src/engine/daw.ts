@@ -169,6 +169,13 @@ let fromIn = 0;
 export function beginMidiIn(): void { fromIn++; }
 export function endMidiIn(): void { fromIn = Math.max(0, fromIn - 1); }
 
+/** Observe sounding MIDI without changing synthesis, external MIDI routing or the legacy take recorder. */
+const performanceListeners = new Set<(bytes: readonly number[], at: number) => void>();
+export function onPerformanceMidi(cb: (bytes: readonly number[], at: number) => void): () => void {
+  performanceListeners.add(cb);
+  return () => performanceListeners.delete(cb);
+}
+
 function emit(bytes: number[], at: number | undefined, toPort: boolean): void {
   if (toPort) {
     const o = port();
@@ -180,6 +187,7 @@ function emit(bytes: number[], at: number | undefined, toPort: boolean): void {
     }
   }
   if (take) take.events.push({ at: at ?? audioNow(), bytes });
+  performanceListeners.forEach(cb => cb(bytes, at ?? audioNow()));
 }
 
 const vel7 = (v: number) => Math.max(1, Math.min(127, Math.round(v * 127)));
@@ -210,7 +218,7 @@ export function syncHeldNotes(candidates: Iterable<number>, isOn: (m: number) =>
 
 /** A note with a known length scheduled in audio time (arpeggiator steps). */
 export function scheduledNote(m: number, vel: number, at: number, off: number): void {
-  if (!port() && !take) return;
+  if (!port() && !take && performanceListeners.size === 0) return;
   emit([0x90 | (outCh - 1), m & 0x7f, vel7(vel)], at, true);
   emit([0x80 | (outCh - 1), m & 0x7f, 0], Math.max(at + 0.005, off), true);
 }
@@ -227,19 +235,19 @@ export function drumHit(v: DrumVoice, vel: number, at: number): void {
     host.midiOut(0x99, note, v7, at);
     host.midiOut(0x89, note, 0, at + 0.06);
   }
-  if (!port() && !take) return;
+  if (!port() && !take && performanceListeners.size === 0) return;
   const toPort = fromIn === 0;
   emit([0x90 | (outCh - 1), note, vel7(vel)], at, toPort);
   emit([0x80 | (outCh - 1), note, 0], at + 0.06, toPort);
 }
 
 export function pitchBendOut(norm: number): void {
-  if (!port() && !take) return;
+  if (!port() && !take && performanceListeners.size === 0) return;
   const v = Math.max(0, Math.min(16383, Math.round((norm + 1) * 8192)));
   emit([0xe0 | (outCh - 1), v & 0x7f, (v >> 7) & 0x7f], undefined, fromIn === 0);
 }
 export function modWheelOut(norm: number): void {
-  if (!port() && !take) return;
+  if (!port() && !take && performanceListeners.size === 0) return;
   emit([0xb0 | (outCh - 1), 1, Math.max(0, Math.min(127, Math.round(norm * 127)))], undefined, fromIn === 0);
 }
 

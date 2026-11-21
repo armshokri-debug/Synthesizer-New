@@ -325,6 +325,12 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
       loopStartBar,
       loopEndBar,
       focusedTrackId,
+      recordingSettings: {
+        metronome: isPlainObject(raw.recordingSettings) && raw.recordingSettings.metronome === true,
+        countIn: isPlainObject(raw.recordingSettings) && raw.recordingSettings.countIn === true,
+        clickVolume: isPlainObject(raw.recordingSettings) && typeof raw.recordingSettings.clickVolume === "number" && Number.isFinite(raw.recordingSettings.clickVolume)
+          ? Math.max(0, Math.min(1, raw.recordingSettings.clickVolume)) : 0.25
+      },
       tracks
     },
     warnings

@@ -18,6 +18,7 @@ import { getTempo, onTempoChange, setTempo } from "../engine/tempo";
 import { encodeStudioMidi } from "./midi-io";
 import { createProjectBlob, sanitizeProjectName, serializeStudioProject, slugifyFilename, validateStudioProject } from "./project-io";
 import { getStudioMachineDef, SY1TrackEngine } from "./track-engine";
+import { StudioMetronome } from "./metronome";
 import {
   STUDIO_BEATS_PER_BAR,
   STUDIO_MAX_BARS,
@@ -186,6 +187,13 @@ export class SY1StudioEngine {
   private active = false;
   private playing = false;
   private recording = false;
+  private transportEpoch = 0;
+  private preparingRecord = false;
+  private countInStart: number | null = null;
+  private countInEnd: number | null = null;
+  private metronome = new StudioMetronome();
+  private clickEnabled = false;
+  private countInEnabled = false;
   private loopEnabled = true;
   private bars = 8;
   private loopStartBar = 1;
@@ -302,6 +310,39 @@ export class SY1StudioEngine {
     return this.playing;
   }
 
+  getRecordingSettings() { return { metronome: this.clickEnabled, countIn: this.countInEnabled, clickVolume: this.metronome.volume }; }
+  setRecordingSettings(settings: { metronome?: boolean; countIn?: boolean; clickVolume?: number }) {
+    if (settings.metronome !== undefined) { this.clickEnabled = settings.metronome; this.metronome.cancel(); }
+    if (settings.countIn !== undefined) this.countInEnabled = settings.countIn;
+    if (settings.clickVolume !== undefined) this.metronome.setVolume(settings.clickVolume);
+    this.notify();
+  }
+  getCountInBeat(): number {
+    const now = this.nowAudioTime();
+    return this.countInStart !== null && this.countInEnd !== null && now < this.countInEnd
+      ? Math.max(1, Math.min(4, Math.floor((now - this.countInStart) * this.bpm / 60) + 1)) : 0;
+  }
+
+  /** Capture the original synth's sounding MIDI; never trigger a second voice. */
+  capturePerformanceMidi(trackId: string, bytes: readonly number[], at: number): void {
+    if (!this.recording || !this.playing || (this.countInEnd !== null && at < this.countInEnd - 1e-6)) return;
+    const track = this.getTrack(trackId);
+    if (!track) return;
+    const tick = Math.round(this.getCurrentTick(at));
+    const cmd = bytes[0] & 0xf0, midi = bytes[1] & 127, value = bytes[2] & 127;
+    let open = this.liveRecordedOpenNotes.get(trackId);
+    if (!open) { open = new Set(); this.liveRecordedOpenNotes.set(trackId, open); }
+    if (cmd === 0x90 && value > 0) {
+      track.addEvent({type:"noteOn",tick,midi,velocity:value/127}); open.add(midi);
+    } else if (cmd === 0x80 || (cmd === 0x90 && value === 0)) {
+      if (open.has(midi)) { track.addEvent({type:"noteOff",tick,midi}); open.delete(midi); }
+    } else if (cmd === 0xe0) {
+      track.addEvent({type:"pitchBend",tick,value:((value<<7|midi)-8192)/8192});
+    } else if (cmd === 0xb0 && (midi === 1 || midi === 64)) {
+      track.addEvent({type:"cc",tick,cc:midi,value});
+    }
+  }
+
   /**
    * Handle AudioContext state transitions (especially iPadOS Safari "interrupted" / "suspended" -> "running").
    * Releases active voices cleanly on interrupt and re-anchors the scheduler clock cleanly on resume so no
@@ -309,6 +350,7 @@ export class SY1StudioEngine {
    */
   handleAudioContextStateChange(state: string, nowAudioTime = this.nowAudioTime()): void {
     if (state === "interrupted" || state === "suspended") {
+      this.metronome.cancel();
       if (this.playing || this.active) {
         this.releasePlaybackNotes(0);
         for (const t of this.tracks) t.allNotesOff(0);
@@ -318,6 +360,7 @@ export class SY1StudioEngine {
       return;
     }
     if (state === "running" && this.playing) {
+      if (this.getCountInBeat()) { this.stepScheduler(nowAudioTime); return; }
       const resyncTick = this.getCurrentTick(nowAudioTime);
       this.anchorAudioTime = nowAudioTime;
       this.anchorTick = resyncTick;
@@ -638,6 +681,18 @@ export class SY1StudioEngine {
   private handleTempoChange(nextBpm: number): void {
     if (!(nextBpm > 0)) return;
     const now = this.nowAudioTime();
+    this.metronome.cancel();
+    if (this.countInEnd !== null && this.countInStart !== null && now < this.countInEnd) {
+      const remaining = (this.countInEnd - now) * this.bpm / 60;
+      this.countInEnd = now + remaining * 60 / nextBpm;
+      this.countInStart = this.countInEnd - 4 * 60 / nextBpm;
+      this.anchorAudioTime = this.countInEnd;
+      this.cursorAudioTime = this.countInEnd;
+      this.anchorBpm = nextBpm;
+      this.bpm = nextBpm;
+      for (const t of this.tracks) t.syncTempo(nextBpm);
+      this.notify(); return;
+    }
     if (this.playing) {
       const curTick = this.getCurrentTick(now);
       this.anchorAudioTime = now;
@@ -660,6 +715,8 @@ export class SY1StudioEngine {
   }
 
   seekToTick(tick: number): void {
+    this.metronome.cancel();
+    this.countInStart = this.countInEnd = null;
     const clamped = Math.max(0, Math.min(this.getTotalTicks() - 1, Math.round(tick)));
     this.playheadTick = clamped;
     if (this.playing) {
@@ -679,20 +736,24 @@ export class SY1StudioEngine {
     this.seekToTick((b - 1) * STUDIO_TICKS_PER_BAR);
   }
 
-  async play(): Promise<void> {
+  async play(countInSeconds = 0): Promise<void> {
     if (this.playing) return;
+    const epoch = this.transportEpoch;
     if (!this.clockNowOverride) {
       await this.ensureAudio();
     }
+    if (epoch !== this.transportEpoch || this.playing) return;
     if (this.playheadTick >= this.getTotalTicks()) {
       this.playheadTick = 0;
     }
     const now = this.nowAudioTime();
     this.playing = true;
-    this.anchorAudioTime = now;
+    this.anchorAudioTime = now + countInSeconds;
     this.anchorTick = this.playheadTick;
     this.anchorBpm = this.bpm;
-    this.cursorAudioTime = now;
+    this.cursorAudioTime = now + countInSeconds;
+    this.countInStart = countInSeconds > 0 ? now : null;
+    this.countInEnd = countInSeconds > 0 ? now + countInSeconds : null;
     this.cursorTick = this.playheadTick;
     this.playbackOpenNotes.clear();
     this.playbackSustainDown.clear();
@@ -702,31 +763,40 @@ export class SY1StudioEngine {
     this.notify();
   }
 
-  async record(): Promise<void> {
-    if (this.recording) return;
-    if (!this.clockNowOverride) {
-      await this.ensureAudio();
-    }
-    // Ensure at least one track is armed; if none armed, arm the focused track
-    if (!this.tracks.some((t) => t.armed)) {
-      this.getFocusedTrack().armed = true;
-    }
-    this.recording = true;
-    this.liveRecordedOpenNotes.clear();
+  async record(options: { midiOnly?: boolean } = {}): Promise<void> {
+    if (this.recording || this.preparingRecord) return;
+    this.preparingRecord = true;
+    const epoch = this.transportEpoch;
+    try {
+      if (!this.clockNowOverride) {
+        await this.ensureAudio();
+      }
+      if (epoch !== this.transportEpoch) return;
+      // Ensure at least one track is armed; if none armed, arm the focused track
+      if (!this.tracks.some((t) => t.armed)) {
+        this.getFocusedTrack().armed = true;
+      }
+      this.recording = true;
+      this.liveRecordedOpenNotes.clear();
 
-    // Start live 24-bit WAV recorder on StudioMasterBus.tap if audio context is live
-    if (!this.clockNowOverride) {
-      await this.startLiveMixRecorder();
-    }
+      // Start live 24-bit WAV recorder on StudioMasterBus.tap if audio context is live
+      if (!this.clockNowOverride && !options.midiOnly) {
+        await this.startLiveMixRecorder();
+      }
+      if (epoch !== this.transportEpoch) { await this.stopLiveMixRecorder(); return; }
 
-    if (!this.playing) {
-      await this.play();
-    } else {
-      this.notify();
-    }
+      if (!this.playing) {
+        await this.play(this.countInEnabled ? 4 * 60 / this.bpm : 0);
+      } else {
+        this.notify();
+      }
+    } finally { this.preparingRecord = false; }
   }
 
   async stop(): Promise<void> {
+    this.transportEpoch++;
+    this.metronome.cancel();
+    this.countInStart = this.countInEnd = null;
     const wasPlaying = this.playing;
     const wasRecording = this.recording;
 
@@ -781,6 +851,8 @@ export class SY1StudioEngine {
    */
   stepScheduler(nowAudioTime: number): void {
     if (!this.playing) return;
+    this.metronome.schedule(this.masterBus?.ctx || null, nowAudioTime, this.anchorAudioTime, this.anchorTick / STUDIO_PPQ,
+      this.bpm, this.clickEnabled, this.countInStart, this.countInEnd !== null && nowAudioTime < this.countInEnd ? this.countInEnd : null);
     const windowEnd = nowAudioTime + LOOKAHEAD_SEC;
     if (this.cursorAudioTime > windowEnd) return;
 
@@ -964,7 +1036,7 @@ export class SY1StudioEngine {
       track.noteOn(m, vel, 0);
       heldSet.add(track.id);
 
-      if (this.recording && track.armed) {
+      if (this.recording && !this.getCountInBeat() && track.armed) {
         track.addEvent({ type: "noteOn", tick, midi: m, velocity: vel });
         let recOpen = this.liveRecordedOpenNotes.get(track.id);
         if (!recOpen) {
@@ -991,7 +1063,7 @@ export class SY1StudioEngine {
       track.noteOff(m, 0);
       heldSet?.delete(track.id);
 
-      if (this.recording && track.armed) {
+      if (this.recording && !this.getCountInBeat() && track.armed) {
         const recOpen = this.liveRecordedOpenNotes.get(track.id);
         if (recOpen && recOpen.has(m)) {
           track.addEvent({ type: "noteOff", tick, midi: m });
@@ -1009,7 +1081,7 @@ export class SY1StudioEngine {
     const tick = this.recording ? Math.round(this.getCurrentTick()) : 0;
     for (const track of targets) {
       track.setPitchBend(v);
-      if (this.recording && track.armed) {
+      if (this.recording && !this.getCountInBeat() && track.armed) {
         track.addEvent({ type: "pitchBend", tick, value: v });
       }
     }
@@ -1022,12 +1094,12 @@ export class SY1StudioEngine {
     for (const track of targets) {
       if (cc === 64) {
         track.setSustainPedal(val7 >= 64, 0);
-        if (this.recording && track.armed) {
+        if (this.recording && !this.getCountInBeat() && track.armed) {
           track.addEvent({ type: "cc", tick, cc: 64, value: val7 });
         }
       } else if (cc === 1) {
         track.setModWheel(val7 / 127);
-        if (this.recording && track.armed) {
+        if (this.recording && !this.getCountInBeat() && track.armed) {
           track.addEvent({ type: "cc", tick, cc: 1, value: val7 });
         }
       }
@@ -1189,6 +1261,7 @@ export class SY1StudioEngine {
       loopStartBar: this.loopStartBar,
       loopEndBar: this.loopEndBar,
       focusedTrackId: this.focusedTrackId,
+      recordingSettings: this.getRecordingSettings(),
       tracks: this.tracks.map((t) => ({
         id: t.id,
         name: t.name,
@@ -1279,6 +1352,7 @@ export class SY1StudioEngine {
     }
 
     this.tracks = rebuilt;
+    this.setRecordingSettings(proj.recordingSettings || {metronome:false,countIn:false,clickVolume:0.25});
     this.focusedTrackId = rebuilt.some((t) => t.id === proj.focusedTrackId)
       ? proj.focusedTrackId
       : rebuilt[0].id;
@@ -1624,6 +1698,7 @@ export class SY1StudioEngine {
   }
 
   dispose(): void {
+    this.metronome.dispose();
     void this.stop();
     if (this.unsubMasterVol) {
       this.unsubMasterVol();
