@@ -52,10 +52,18 @@ class WaJs {
     dispatch_ = JS_Eval(ctx_, dispatch, std::strlen(dispatch), "<dispatch>", JS_EVAL_TYPE_GLOBAL);
     const char* timers = "(function(){return __runTimers();})";
     timers_ = JS_Eval(ctx_, timers, std::strlen(timers), "<timer-dispatch>", JS_EVAL_TYPE_GLOBAL);
+    // Resolve globals at invocation time, preserving state instrumentation and
+    // restore behavior, without compiling these expressions in audio callbacks.
+    dirty_ = compileStateCall("(function(){return __takeDirty();})");
+    storage_ = compileStateCall("(function(){return __dumpStorage();})");
+    flush_ = compileStateCall("(function(){SY1E.flushPatchSave();})");
   }
   ~WaJs() {
     JS_FreeValue(ctx_, dispatch_);
     JS_FreeValue(ctx_, timers_);
+    JS_FreeValue(ctx_, dirty_);
+    JS_FreeValue(ctx_, storage_);
+    JS_FreeValue(ctx_, flush_);
     JS_FreeContext(ctx_);
     JS_FreeRuntime(rt_);
   }
@@ -88,6 +96,16 @@ class WaJs {
     JS_FreeValue(ctx_, v);
     return out;
   }
+  bool takeStorageDirty() { return !callStateString(dirty_).empty(); }
+  std::string dumpStorage() { return callStateString(storage_); }
+  void flushPatchSave() {
+    JS_UpdateStackTop(rt_);
+    JSValue result = JS_Call(ctx_, flush_, JS_UNDEFINED, 0, nullptr);
+    if (JS_IsException(result)) (void) exceptionText();
+    JS_FreeValue(ctx_, result);
+    runJobs();  // same job boundary as the previous eval-based flush
+  }
+
   /** Call a global function path like "SY1E.triggerDrum" with numeric/string args given as a JS expression. */
   std::string run(const std::string& expr) { return eval(expr, "<run>"); }
 
@@ -145,6 +163,20 @@ class WaJs {
   JSRuntime* rt_;
   JSContext* ctx_;
   JSValue dispatch_ = JS_UNDEFINED, timers_ = JS_UNDEFINED;
+  JSValue dirty_ = JS_UNDEFINED, storage_ = JS_UNDEFINED, flush_ = JS_UNDEFINED;
+
+  JSValue compileStateCall(const char* source) {
+    return JS_Eval(ctx_, source, std::strlen(source), "<state-dispatch>", JS_EVAL_TYPE_GLOBAL);
+  }
+  std::string callStateString(JSValue function) {
+    JS_UpdateStackTop(rt_);
+    JSValue value = JS_Call(ctx_, function, JS_UNDEFINED, 0, nullptr);
+    std::string result;
+    if (!JS_IsException(value)) result = str(ctx_, value);
+    else JS_FreeValue(ctx_, JS_GetException(ctx_));
+    JS_FreeValue(ctx_, value);
+    return result;
+  }
   wa::Gain* dest_;
   std::vector<wa::Node*> nodes_;  // id -> node (nullptr once freed)
   std::vector<size_t> born_;

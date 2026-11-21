@@ -23,8 +23,10 @@ int main(int argc,char** argv){
 #endif
  auto read=[](const char* p){std::ifstream f(p);return std::string{std::istreambuf_iterator<char>(f),{}};};
  const auto shim=read("native/js/wa-shim.js"),bundle=read("native/js/dist/engine.js");
+ const auto baselineShim=argc>6?read(argv[6]):shim;
+ if(shim.empty()||baselineShim.empty()||bundle.empty())return 2;
  const PerfApi apis[2]={sy1_before_api(),sy1_after_api()};std::vector<void*> engines[2];
- for(int v=0;v<2;v++)for(int k=0;k<count;k++)engines[v].push_back(apis[v].create(rate,block,scene,shim.c_str(),bundle.c_str()));
+ for(int v=0;v<2;v++)for(int k=0;k<count;k++)engines[v].push_back(apis[v].create(rate,block,scene,(v==0?baselineShim:shim).c_str(),bundle.c_str()));
  const size_t n=size_t(seconds*rate/block);std::vector<double> times[2],cpuTimes[2];for(int v=0;v<2;v++){times[v].reserve(n);cpuTimes[v].reserve(n);}std::vector<float> l(block),r(block);
  for(size_t callback=0;callback<n;callback++)for(int order=0;order<2;order++){
   const int v=(callback+order)%2;const auto t=std::chrono::steady_clock::now();const double cpu0=cpuNow();for(void* e:engines[v])apis[v].process(e,l.data(),r.data(),block);cpuTimes[v].push_back(cpuNow()-cpu0);times[v].push_back(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t).count());

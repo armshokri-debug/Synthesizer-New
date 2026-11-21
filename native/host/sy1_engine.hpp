@@ -8,7 +8,7 @@
 #include <cstdio>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
+#include <thread>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -18,6 +18,7 @@
 #include "wajs.hpp"
 #include "ui_events.hpp"
 #include "ui_scope.hpp"
+#include "state_snapshots.hpp"
 
 namespace sy1 {
 
@@ -64,8 +65,7 @@ class Sy1Engine {
   }
   /** The plugin state: everything the app saves (machines, patches, banks, settings). */
   std::string state() {
-    std::lock_guard<std::mutex> l(stateMu_);
-    return state_;
+    return states_.read();
   }
 
   // ---- audio thread ------------------------------------------------------
@@ -95,13 +95,12 @@ class Sy1Engine {
         fifoPos_ = 0;
         pushScope();
         idleGc();
-        if (saveRequest_.exchange(false)) {
-          run("SY1E.flushPatchSave();");  // a knob turned just before the save is in it too
+        const unsigned requested = saveRequest_.load(std::memory_order_acquire);
+        if (requested != saveSeq_.load(std::memory_order_relaxed)) {
+          js_->flushPatchSave();  // a knob turned just before the save is in it too
           saveState();
-          std::lock_guard<std::mutex> l(stateMu_);
-          saveSeq_++;
-          stateCv_.notify_all();
-        } else if (++blocks_ % 375 == 0 && !js_->evalString("__takeDirty()").empty()) {
+          saveSeq_.store(requested, std::memory_order_release);
+        } else if (++blocks_ % 375 == 0 && js_->takeStorageDirty()) {
           saveState();  // about every second at 48 kHz, only when something changed
         }
       }
@@ -114,18 +113,22 @@ class Sy1Engine {
   }
   /** Save the state now (audio thread, or any thread while audio is not running). */
   void saveState() {
-    const std::string s = js_->evalString("__dumpStorage()");
-    std::lock_guard<std::mutex> l(stateMu_);
-    state_ = s;
+    // Serialization still allocates on the engine thread. Publication alone
+    // is isolated from slow host/UI readers; do not use this runtime concurrently.
+    states_.publish(js_->dumpStorage());
   }
   /** From another thread (DAW saving the project, window opening): the audio thread saves the
    *  state at its next block; waits up to timeoutMs, then returns whatever state is newest. */
   std::string freshState(int timeoutMs) {
-    std::unique_lock<std::mutex> l(stateMu_);
-    const unsigned want = saveSeq_ + 1;
-    saveRequest_ = true;
-    stateCv_.wait_for(l, std::chrono::milliseconds(timeoutMs), [&] { return saveSeq_ >= want; });
-    return state_;
+    const unsigned want = saveRequest_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    // Only the requesting host/UI thread waits. The audio thread publishes an
+    // atomic completion ticket without a mutex or condition-variable wakeup.
+    while (static_cast<int>(saveSeq_.load(std::memory_order_acquire) - want) < 0) {
+      if (std::chrono::steady_clock::now() >= deadline) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return states_.read();
   }
 
   static std::string quote(const std::string& s) {
@@ -151,18 +154,16 @@ class Sy1Engine {
   int fifoPos_ = wa::RQ;
   size_t blocks_ = 0;
   unsigned quiet_ = 0;
-  std::mutex inMu_, stateMu_;
+  std::mutex inMu_;
   struct Call { std::string name, args; };
   std::vector<Call> in_;
   std::vector<Call> drainScratch_;
   UiEvents out_;
   UiScope scope_;
-  std::string state_;
-  std::atomic<bool> saveRequest_{false};
-  unsigned saveSeq_ = 0;
-  std::condition_variable stateCv_;
+  StateSnapshots states_;
+  std::atomic<unsigned> saveRequest_{0}, saveSeq_{0};
+  static_assert(std::atomic<unsigned>::is_always_lock_free, "State tickets must be lock-free");
 
-  void run(const std::string& code) { js_->eval(code, "<call>"); }
   void drainIn() {
     {
       std::unique_lock<std::mutex> l(inMu_, std::try_to_lock);

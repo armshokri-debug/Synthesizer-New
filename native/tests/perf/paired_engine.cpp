@@ -24,6 +24,11 @@ void process(void* opaque,float* l,float* r,int block){
  e.process(l,r,block,[&](int){
   const double rate=e.js()->g.ctx.sampleRate;
   if(s!="idle"){const double ppq=e.time()*2;e.setHostClock(true,ppq,120);const long step=long(std::floor(ppq*4+1e-9)),prev=long(std::floor((e.time()-128/rate)*8+1e-9));if(step!=prev)e.hostCall("hostStep","["+std::to_string(step)+",0]");}
+  if(s=="knobs")for(int j=0;j<8;j++){
+   const auto tick=e.js()->g.ctx.frame/128+j;
+   e.hostCall("setSynthParam","[\"cutoff\","+std::to_string(100+(tick*97)%12000)+"]");
+   e.hostCall("setSynthParam","[\"res\","+std::to_string(tick%20)+"]");
+  }
   if(s=="cc"||s=="dense-cc")for(int j=0;j<(s=="dense-cc"?32:1);j++)e.hostCall("hostCC","[1,74,"+std::to_string((e.js()->g.ctx.frame/128+j)%128)+"]",j/rate);
   if(i.first&&(s=="tails"||s=="hold"||s=="sustain"))for(int n:{48,55,60,64,67,72})e.hostCall("midiNoteOff","["+std::to_string(n)+",1]");i.first=false;
  });

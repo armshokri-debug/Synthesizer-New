@@ -6,12 +6,14 @@
 #include <iterator>
 #include <string>
 std::string read(const char* path) {std::ifstream f(path);return {std::istreambuf_iterator<char>(f),{}};}
-int main(){
+int main(int argc, char** argv){
  const auto shim=read("native/js/wa-shim.js"),bundle=read("native/js/dist/engine.js");
  if(shim.empty()||bundle.empty())return 2;
+ const auto baselineShim = argc > 1 ? read(argv[1]) : shim;
+ if(baselineShim.empty())return 2;
  const auto a=sy1_before_api(),b=sy1_after_api();
- for(int n:{64,128,256,512})for(const char* scene:{"idle","chord","hold","sustain","tails","dense-cc","drums"}){
-  auto* x=a.create(48000,n,scene,shim.c_str(),bundle.c_str());auto* y=b.create(48000,n,scene,shim.c_str(),bundle.c_str());
+ for(int n:{32,64,128,256,512})for(const char* scene:{"idle","chord","hold","sustain","tails","dense-cc","drums","knobs"}){
+  auto* x=a.create(48000,n,scene,baselineShim.c_str(),bundle.c_str());auto* y=b.create(48000,n,scene,shim.c_str(),bundle.c_str());
   std::array<float,512> al,ar,bl,br;
   for(int k=0;k<48000/n;k++){
    a.process(x,al.data(),ar.data(),n);b.process(y,bl.data(),br.data(),n);
@@ -19,5 +21,5 @@ int main(){
   }
   a.destroy(x);b.destroy(y);
  }
- puts("PASS: 28 bit-identical full engine comparisons (7 scenes x 4 buffer sizes)");
+ puts("PASS: 40 bit-identical full engine comparisons (8 scenes x 5 buffer sizes including 32)");
 }

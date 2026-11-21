@@ -165,7 +165,15 @@
   // timers on the audio clock (the host calls __runTimers every block)
   let timers = [], nextId = 1;
   globalThis.setTimeout = (fn, ms) => { const id = nextId++; timers.push({ id, at: W.time() * 1000 + (+ms || 0), fn }); return id; };
-  globalThis.clearTimeout = (id) => { timers = timers.filter((t) => t.id !== id); };
+  globalThis.clearTimeout = (id) => {
+    // Stable compaction keeps cancellation/order semantics without allocating a
+    // replacement array on every Cutoff/Resonance patch-save debounce.
+    let write = 0;
+    for (let read = 0; read < timers.length; read++) {
+      if (timers[read].id !== id) timers[write++] = timers[read];
+    }
+    timers.length = write;
+  };
   globalThis.setInterval = (fn, ms) => { const id = nextId++; const iv = { id, at: W.time() * 1000 + (+ms || 0), fn, every: Math.max(1, +ms || 1) }; timers.push(iv); return id; };
   globalThis.clearInterval = globalThis.clearTimeout;
   globalThis.__runTimers = () => {

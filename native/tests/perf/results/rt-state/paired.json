@@ -1,0 +1,266 @@
+[
+  {
+    "scenario": "idle",
+    "instances": 6,
+    "rate": 48000,
+    "buffer": 32,
+    "callbacks": 3000,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 114.72,
+        "median_us": 0.811,
+        "mean_thread_cpu_us": 114.438,
+        "p99_thread_cpu_us": 541.473,
+        "p95_us": 439.517,
+        "p99_us": 545.534,
+        "max_us": 4530.31,
+        "deadline_misses": 16,
+        "budget_percent": 17.208
+      },
+      {
+        "name": "after",
+        "mean_us": 116.298,
+        "median_us": 0.701,
+        "mean_thread_cpu_us": 116.029,
+        "p99_thread_cpu_us": 590.816,
+        "p95_us": 441.951,
+        "p99_us": 592.013,
+        "max_us": 5468.05,
+        "deadline_misses": 17,
+        "budget_percent": 17.4447
+      }
+    ]
+  },
+  {
+    "scenario": "chord",
+    "instances": 6,
+    "rate": 48000,
+    "buffer": 32,
+    "callbacks": 3000,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 158.052,
+        "median_us": 0.842,
+        "mean_thread_cpu_us": 157.728,
+        "p99_thread_cpu_us": 730.643,
+        "p95_us": 639.111,
+        "p99_us": 731.338,
+        "max_us": 2682.33,
+        "deadline_misses": 79,
+        "budget_percent": 23.7078
+      },
+      {
+        "name": "after",
+        "mean_us": 157.404,
+        "median_us": 0.681,
+        "mean_thread_cpu_us": 156.825,
+        "p99_thread_cpu_us": 704.745,
+        "p95_us": 638.401,
+        "p99_us": 705.86,
+        "max_us": 1649.09,
+        "deadline_misses": 71,
+        "budget_percent": 23.6105
+      }
+    ]
+  },
+  {
+    "scenario": "dense-cc",
+    "instances": 6,
+    "rate": 48000,
+    "buffer": 32,
+    "callbacks": 3000,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 716.388,
+        "median_us": 1.022,
+        "mean_thread_cpu_us": 715.564,
+        "p99_thread_cpu_us": 3322.11,
+        "p95_us": 2941.6,
+        "p99_us": 3323.08,
+        "max_us": 11403.8,
+        "deadline_misses": 750,
+        "budget_percent": 107.458
+      },
+      {
+        "name": "after",
+        "mean_us": 696.888,
+        "median_us": 0.771,
+        "mean_thread_cpu_us": 695.384,
+        "p99_thread_cpu_us": 3302.84,
+        "p95_us": 2896.27,
+        "p99_us": 3304.01,
+        "max_us": 8186.11,
+        "deadline_misses": 750,
+        "budget_percent": 104.533
+      }
+    ]
+  },
+  {
+    "scenario": "knobs",
+    "instances": 6,
+    "rate": 48000,
+    "buffer": 32,
+    "callbacks": 3000,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 350.589,
+        "median_us": 0.992,
+        "mean_thread_cpu_us": 348.234,
+        "p99_thread_cpu_us": 1591.05,
+        "p95_us": 1399.85,
+        "p99_us": 1591.96,
+        "max_us": 22753.2,
+        "deadline_misses": 750,
+        "budget_percent": 52.5883
+      },
+      {
+        "name": "after",
+        "mean_us": 335.857,
+        "median_us": 0.711,
+        "mean_thread_cpu_us": 335.462,
+        "p99_thread_cpu_us": 1534.93,
+        "p95_us": 1375.14,
+        "p99_us": 1535.6,
+        "max_us": 3428.38,
+        "deadline_misses": 750,
+        "budget_percent": 50.3785
+      }
+    ]
+  },
+  {
+    "scenario": "idle",
+    "instances": 6,
+    "rate": 48000,
+    "buffer": 256,
+    "callbacks": 375,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 844.102,
+        "median_us": 810.875,
+        "mean_thread_cpu_us": 840.368,
+        "p99_thread_cpu_us": 1404.22,
+        "p95_us": 953.075,
+        "p99_us": 1407.08,
+        "max_us": 5538.96,
+        "deadline_misses": 1,
+        "budget_percent": 15.8269
+      },
+      {
+        "name": "after",
+        "mean_us": 838.752,
+        "median_us": 809.994,
+        "mean_thread_cpu_us": 832.115,
+        "p99_thread_cpu_us": 1160.84,
+        "p95_us": 949.459,
+        "p99_us": 1224.87,
+        "max_us": 3155.71,
+        "deadline_misses": 0,
+        "budget_percent": 15.7266
+      }
+    ]
+  },
+  {
+    "scenario": "chord",
+    "instances": 6,
+    "rate": 48000,
+    "buffer": 256,
+    "callbacks": 375,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 1242.22,
+        "median_us": 1198.64,
+        "mean_thread_cpu_us": 1235.79,
+        "p99_thread_cpu_us": 2142.32,
+        "p95_us": 1416.64,
+        "p99_us": 2606.62,
+        "max_us": 3305.88,
+        "deadline_misses": 0,
+        "budget_percent": 23.2916
+      },
+      {
+        "name": "after",
+        "mean_us": 1231.95,
+        "median_us": 1201.19,
+        "mean_thread_cpu_us": 1229.67,
+        "p99_thread_cpu_us": 1683.25,
+        "p95_us": 1462.52,
+        "p99_us": 1745.45,
+        "max_us": 2767.6,
+        "deadline_misses": 0,
+        "budget_percent": 23.099
+      }
+    ]
+  },
+  {
+    "scenario": "dense-cc",
+    "instances": 6,
+    "rate": 48000,
+    "buffer": 256,
+    "callbacks": 375,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 5487.82,
+        "median_us": 5415.81,
+        "mean_thread_cpu_us": 5485.93,
+        "p99_thread_cpu_us": 6584.84,
+        "p95_us": 5986.8,
+        "p99_us": 6586.17,
+        "max_us": 7548.96,
+        "deadline_misses": 266,
+        "budget_percent": 102.897
+      },
+      {
+        "name": "after",
+        "mean_us": 5439.96,
+        "median_us": 5299.67,
+        "mean_thread_cpu_us": 5426.46,
+        "p99_thread_cpu_us": 6821.08,
+        "p95_us": 5949.57,
+        "p99_us": 6823.12,
+        "max_us": 18870.7,
+        "deadline_misses": 162,
+        "budget_percent": 101.999
+      }
+    ]
+  },
+  {
+    "scenario": "knobs",
+    "instances": 6,
+    "rate": 48000,
+    "buffer": 256,
+    "callbacks": 375,
+    "versions": [
+      {
+        "name": "before",
+        "mean_us": 2890.04,
+        "median_us": 2728.17,
+        "mean_thread_cpu_us": 2885.86,
+        "p99_thread_cpu_us": 6976.79,
+        "p95_us": 3394.26,
+        "p99_us": 6978.15,
+        "max_us": 10686.5,
+        "deadline_misses": 7,
+        "budget_percent": 54.1883
+      },
+      {
+        "name": "after",
+        "mean_us": 2778.67,
+        "median_us": 2641.69,
+        "mean_thread_cpu_us": 2777.46,
+        "p99_thread_cpu_us": 5671.13,
+        "p95_us": 3339.79,
+        "p99_us": 5672.28,
+        "max_us": 9516.59,
+        "deadline_misses": 5,
+        "budget_percent": 52.1
+      }
+    ]
+  }
+]
