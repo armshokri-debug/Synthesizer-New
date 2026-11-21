@@ -1,3 +1,5 @@
+import { snapRegionTick } from "../studio/midi-regions";
+import { bindRegionControls, renderRegions } from "./studio-regions";
 /**
  * SY-1 Studio UI — Phase 4 Professional DAW Workspace
  *
@@ -62,6 +64,7 @@ let studioFavs = new Set<string>();
 
 let arrZoom = 1; // 1..4
 let arrScrollLeft = 0;
+let arrScrollTop = 0;
 let instPageFilter = "all";
 let exportMenuOpen = false;
 let keysVisible = false;
@@ -457,48 +460,6 @@ function renderLaneGrid(bars: number, zoom: number): string {
   return html;
 }
 
-function renderTrackNotes(track: SY1TrackEngine, totalTicks: number, color: string): string {
-  const spans = track.getNoteSpans(totalTicks);
-  if (spans.length === 0) {
-    return `<div class="st-lane-empty">Empty track · arm R to record or click Piano Roll below</div>`;
-  }
-  let minM = 127;
-  let maxM = 0;
-  let firstTick = totalTicks;
-  let lastTick = 0;
-  for (const s of spans) {
-    if (s.midi < minM) minM = s.midi;
-    if (s.midi > maxM) maxM = s.midi;
-    if (s.startTick < firstTick) firstTick = s.startTick;
-    if (s.endTick > lastTick) lastTick = s.endTick;
-  }
-  const lo = Math.min(minM, 48);
-  const hi = Math.max(maxM, lo + 24);
-  const spanM = Math.max(12, hi - lo);
-
-  const clipStartBar = Math.floor(firstTick / STUDIO_TICKS_PER_BAR);
-  const clipEndBar = Math.max(clipStartBar + 1, Math.ceil(lastTick / STUDIO_TICKS_PER_BAR));
-  const clipStartTick = clipStartBar * STUDIO_TICKS_PER_BAR;
-  const clipEndTick = Math.min(totalTicks, clipEndBar * STUDIO_TICKS_PER_BAR);
-  const clipTicks = Math.max(STUDIO_TICKS_PER_BAR, clipEndTick - clipStartTick);
-  const clipLeftPct = (clipStartTick / totalTicks) * 100;
-  const clipWidthPct = Math.min(100 - clipLeftPct, (clipTicks / totalTicks) * 100);
-
-  const noteBars = spans
-    .map((s) => {
-      const leftPct = Math.max(0, Math.min(100, ((s.startTick - clipStartTick) / clipTicks) * 100));
-      const widthPct = Math.max(0.6, Math.min(100 - leftPct, ((s.endTick - s.startTick) / clipTicks) * 100));
-      const topPct = 90 - ((s.midi - lo) / spanM) * 80;
-      return `<span class="st-note-bar" style="left:${leftPct.toFixed(3)}%;width:${widthPct.toFixed(3)}%;top:${topPct.toFixed(1)}%"></span>`;
-    })
-    .join("");
-
-  return `<div class="st-clip" style="left:${clipLeftPct.toFixed(3)}%;width:${clipWidthPct.toFixed(3)}%;--clip-color:${color}">
-    <div class="st-clip-head">${escapeHtml(track.presetName)}</div>
-    <div class="st-clip-body">${noteBars}</div>
-  </div>`;
-}
-
 // ------------------------------------------------------------ Mixer View ----
 
 function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEngine): string {
@@ -625,13 +586,13 @@ function renderStudioHtml(): string {
             <div class="st-hdr-meter" aria-hidden="true"><span class="st-hdr-meter-fill" data-st-hdr-meter="${escapeHtml(t.id)}" style="transform:scaleX(0)"></span></div>
             <span class="st-track-stats" data-st-meta="${escapeHtml(t.id)}">${noteCount} ${noteUnit}</span>
             <div class="st-track-tools">
-              <button type="button" class="st-btn st-tiny-btn" data-st-action="clear-track" data-track-id="${escapeHtml(t.id)}"${t.events.length === 0 ? " disabled" : ""}>Clear</button>
+              <button type="button" class="st-btn st-tiny-btn" data-st-action="clear-track" data-track-id="${escapeHtml(t.id)}"${studioEngine.regions.regions(t.id).length === 0 ? " disabled" : ""}>Clear</button>
             </div>
           </div>
         </div>
         <div class="st-lane" data-st-lane="1" data-track-id="${escapeHtml(t.id)}" style="${laneZoomStyle}" title="Click to focus track & seek · Double-click to edit in Piano Roll">
           <div class="st-lane-grid">${renderLaneGrid(tr.bars, arrZoom)}</div>
-          <div class="st-lane-notes">${renderTrackNotes(t, tr.totalTicks, color)}</div>
+          <div class="st-lane-notes">${renderRegions(t, tr.totalTicks, color)}</div>
           <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
         </div>
       </div>`;
@@ -858,7 +819,15 @@ function updatePlayheadOnly(): void {
   if (pctStr !== lastPlayheadPctStr) {
     lastPlayheadPctStr = pctStr;
     for (let i = 0; i < cachedPlayheadEls.length; i++) {
-      cachedPlayheadEls[i].style.left = pctStr;
+      const line = cachedPlayheadEls[i];
+      const region = line.closest<HTMLElement>("[data-pr-origin]");
+      if (!region) line.style.left = pctStr;
+      else {
+        const local = pos.currentTick - Number(region.dataset.prOrigin);
+        const length = Number(region.dataset.prTotalTicks);
+        line.style.visibility = local >= 0 && local <= length ? "visible" : "hidden";
+        line.style.left = `${Math.max(0, Math.min(100, local / length * 100))}%`;
+      }
     }
   }
   const countInBeat = studioEngine.getCountInBeat();
@@ -909,10 +878,13 @@ export function renderStudioPanel(): void {
 
   // Preserve active search input focus & caret across browser search updates
   const activeEl = document.activeElement as HTMLInputElement | null;
+  const restoreNoteFocus = activeEl?.id === "st-pr-grid";
   const restoreSearch = activeEl?.id === "st-browser-search";
   const searchSelStart = restoreSearch ? activeEl.selectionStart : null;
   const searchSelEnd = restoreSearch ? activeEl.selectionEnd : null;
 
+  const previousScroll = container.querySelector<HTMLElement>("#st-arr-scroll");
+  if (previousScroll) arrScrollTop = previousScroll.scrollTop;
   container.innerHTML = renderStudioHtml();
 
   cachedPlayheadEls = Array.from(container.querySelectorAll<HTMLElement>("[data-st-playhead]"));
@@ -930,10 +902,14 @@ export function renderStudioPanel(): void {
   lastClockStr = "";
 
   const arrScrollEl = container.querySelector<HTMLElement>("#st-arr-scroll");
-  if (arrScrollEl) arrScrollEl.scrollLeft = arrScrollLeft;
+  if (arrScrollEl) {
+    arrScrollEl.scrollLeft = arrScrollLeft;
+    arrScrollEl.scrollTop = arrScrollTop;
+  }
 
   if (activeDockTab === "piano-roll" && !dockCollapsed) {
     syncPianoRollScroll(container);
+    if (restoreNoteFocus) container.querySelector<HTMLElement>("#st-pr-grid")?.focus({ preventScroll: true });
   }
 
   if (exportMenuOpen) {
@@ -977,10 +953,15 @@ function seekFromPointer(el: HTMLElement, clientX: number): void {
   const rect = el.getBoundingClientRect();
   if (rect.width <= 0) return;
   const ratio = Math.max(0, Math.min(0.9999, (clientX - rect.left) / rect.width));
-  const bars = studioEngine.getTransportSnapshot().bars;
-  const barIndex = Math.floor(ratio * bars);
-  studioEngine.seekToTick(barIndex * STUDIO_TICKS_PER_BAR);
+  const tick = snapRegionTick(ratio * studioEngine.getTotalTicks(), studioEngine.regions.grid);
+  studioEngine.seekToTick(tick);
   updatePlayheadOnly();
+}
+
+export function showStudioPianoRoll(): void {
+  activeDockTab = "piano-roll";
+  dockCollapsed = false;
+  renderStudioPanel();
 }
 
 export function initStudioPanel(opts: { onClose: () => void }): void {
@@ -990,6 +971,11 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
 
   const container = document.getElementById("sy1-studio");
   if (!container) return;
+  bindRegionControls(container, {
+    render: renderStudioPanel,
+    openEditor: showStudioPianoRoll,
+    error: message => setStatus(message, "error")
+  });
 
   // Responsive initial browser state: collapsed on narrow portrait screens so timeline has full width
   if (typeof window !== "undefined" && window.innerWidth <= 768) {
@@ -1012,7 +998,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     });
   };
 
-  bindPianoRollEvents(container, requestRender);
+  bindPianoRollEvents(container, requestRender, message => setStatus(message, "error"));
 
   const updateTrackRangeLabelsDOM = (trackId: string) => {
     const t = studioEngine.getTrack(trackId);
@@ -1070,6 +1056,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       const target = e.target as HTMLElement | null;
       if (target && target.id === "st-arr-scroll") {
         arrScrollLeft = target.scrollLeft;
+        arrScrollTop = target.scrollTop;
       }
     },
     true
@@ -1189,7 +1176,10 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "clear-track":
-          if (trackId) studioEngine.clearTrackClip(trackId);
+          if (trackId && window.confirm("Clear every MIDI region on this track? You can undo this.")) {
+            try { studioEngine.regions.clearTrack(trackId); }
+            catch (error) { setStatus(String(error), "error"); renderStudioPanel(); }
+          }
           break;
         case "arr-zoom-in":
           arrZoom = Math.min(4, Math.round((arrZoom + 0.5) * 100) / 100);

@@ -1,3 +1,5 @@
+import type { MidiRegion } from "./midi-regions";
+
 /**
  * SY-1 Studio — Core Domain Types & Constants
  */
@@ -91,6 +93,7 @@ export interface StudioProjectTrackData {
   armed: boolean;
   midiChannel: number;
   events: StudioMidiEvent[];
+  regions?: MidiRegion[];
 }
 
 export interface StudioProjectData {

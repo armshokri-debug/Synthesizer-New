@@ -33,6 +33,8 @@ import type { MachineDef } from "../machines/types";
 import { extractNoteSpans } from "./midi-io";
 import { StudioMidiEvent, StudioNoteSpan, StudioTrackSnapshot, TrackAudioState } from "./types";
 
+import { flattenRegions, regionFromEvents, regionId, type MidiRegion } from "./midi-regions";
+
 export type TrackEngineKind = "hq" | "analog" | "strings" | "fm" | "vector" | "drums";
 
 /** All 15 Iranian city synthesizers & drum machines supported natively per Studio track. */
@@ -154,6 +156,9 @@ export class SY1TrackEngine {
   armed = false;
   midiChannel: number; // 0 = All, 1..16
   events: StudioMidiEvent[] = [];
+  private regions: MidiRegion[] | null = null;
+  private lastRecordedRegionId: string | null = null;
+  private take: { regions: MidiRegion[]; events: StudioMidiEvent[]; id: string } | null = null;
 
   private ctx: BaseAudioContext | null = null;
   private bus: SynthFXBus | null = null;
@@ -872,12 +877,78 @@ export class SY1TrackEngine {
   }
 
   // ------------------------------------------------------------------ clip ----
+  cancelRegionPlayback(destination?: AudioNode): void {
+    this.allNotesOff();
+    // Disconnect both the dry and FX paths of drum hits queued by the old lookahead.
+    if (this.isDrumTrack() && this.ctx && destination) {
+      const ctx = this.ctx;
+      this.detachAudio();
+      void this.attachAudio(ctx, destination);
+    }
+  }
+
+  getRegions(total: number): MidiRegion[] {
+    if (this.take) return this.regionsWithTake(total);
+    return this.regions ?? (this.events.length ? [regionFromEvents(this.id, `${this.id}-legacy`, this.events, total)] : []);
+  }
+
+  setRegions(regions: MidiRegion[], playback = flattenRegions(regions)): void {
+    this.setEvents(playback, true);
+    this.regions = regions;
+  }
+
+  beginRegionTake(total: number): void {
+    this.take = { regions: this.getRegions(total), events: [], id: regionId() };
+  }
+
+  private regionsWithTake(total: number): MidiRegion[] {
+    const take = this.take;
+    if (!take || !take.events.length) return take?.regions ?? this.regions ?? [];
+    const recorded = regionFromEvents(this.id, take.id, take.events, total);
+    // Preserve source boundaries of edited, split and looped regions during overdubs.
+    const target = take.regions.find(region => !region.loop && region.offset === 0 &&
+      region.length === region.sourceLength && recorded.startTick >= region.startTick &&
+      recorded.startTick + recorded.length <= region.startTick + region.length);
+    if (!target) return [...take.regions, recorded];
+    const shift = recorded.startTick - target.startTick;
+    return take.regions.map(region => region !== target ? region : {
+      ...region, events: [...region.events, ...recorded.events.map(event => ({ ...event, tick: event.tick + shift }))]
+    });
+  }
+
+  finishRegionTake(total: number): MidiRegion[] | undefined {
+    if (!this.take) return;
+    const regions = this.regionsWithTake(total);
+    const hasEvents = this.take.events.length > 0;
+    const previous = this.take.regions;
+    this.take = null;
+    if (!hasEvents) return;
+    const changed = regions.find(region => !previous.includes(region));
+    // The original tick stream is already playable throughout recording.
+    this.setRegions(regions, this.events);
+    this.lastRecordedRegionId = changed?.id ?? null;
+    return previous;
+  }
+
+  latestRecordedRegion(total: number): MidiRegion | undefined {
+    return this.getRegions(total).find(region => region.id === this.lastRecordedRegionId);
+  }
+
   addEvent(ev: StudioMidiEvent): void {
     const n = this.events.length;
     if (n > 0 && compareStudioEvents(this.events[n - 1], ev) > 0) {
       this.eventsDirty = true;
     }
     this.events.push(ev);
+    if (this.take) this.take.events.push(ev);
+    else if (this.regions) {
+      const region = this.regions.find(item => !item.loop && item.offset === 0 && item.sourceLength === item.length &&
+        ev.tick >= item.startTick && (ev.tick < item.startTick + item.length ||
+        (ev.type === "noteOff" && ev.tick === item.startTick + item.length)));
+      this.regions = region
+        ? this.regions.map(item => item === region ? { ...item, events: [...item.events, { ...ev, tick: ev.tick - item.startTick }] } : item)
+        : [...this.regions, regionFromEvents(this.id, regionId(), [ev], ev.tick + 1)];
+    }
     if (this.cachedNoteCount !== null && this.cachedEventsLen === n) {
       if (ev.type === "noteOn") this.cachedNoteCount++;
       this.cachedEventsLen = n + 1;
@@ -887,14 +958,16 @@ export class SY1TrackEngine {
     this.emitChange();
   }
 
-  setEvents(events: StudioMidiEvent[]): void {
+  setEvents(events: StudioMidiEvent[], quiet = false): void {
+    this.regions = null;
     this.events = events.map((e) => ({ ...e }));
     this.eventsDirty = this.events.length > 1;
     this.cachedNoteCount = null;
-    this.emitChange();
+    if (!quiet) this.emitChange();
   }
 
   clearEvents(): void {
+    this.regions = null;
     this.events = [];
     this.eventsDirty = false;
     this.cachedNoteCount = 0;
@@ -975,6 +1048,7 @@ export class SY1TrackEngine {
       next.push({ type: "noteOff", tick: endTick, midi });
     }
     next.sort(compareStudioEvents);
+    this.regions = null;
     this.events = next;
     this.eventsDirty = false;
     this.cachedNoteCount = spans.length;

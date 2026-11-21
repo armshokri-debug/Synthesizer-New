@@ -18,6 +18,8 @@ import { getTempo, onTempoChange, setTempo } from "../engine/tempo";
 import { encodeStudioMidi } from "./midi-io";
 import { createProjectBlob, sanitizeProjectName, serializeStudioProject, slugifyFilename, validateStudioProject } from "./project-io";
 import { getStudioMachineDef, SY1TrackEngine } from "./track-engine";
+import { RegionEditor } from "./region-editor";
+import { cloneRegion, flattenRegions, type MidiRegion } from "./midi-regions";
 import { StudioMetronome } from "./metronome";
 import {
   STUDIO_BEATS_PER_BAR,
@@ -174,6 +176,27 @@ export interface StudioEngineOptions {
 const DEFAULT_TRACK_PRESETS = ["softKeys", "moogBass", "warmPad", "lead"];
 
 export class SY1StudioEngine {
+  readonly regions = new RegionEditor({
+    tracks: () => this.tracks,
+    length: () => this.getTotalTicks(),
+    focus: id => this.setFocusedTrack(id),
+    recording: () => this.recording || this.preparingRecord,
+    commit: () => this.refreshRegionPlayback()
+  });
+
+  private refreshRegionPlayback(): void {
+    if (this.playing) {
+      const tick = this.getCurrentTick();
+      this.playbackOpenNotes.clear();
+      this.playbackSustainDown.clear();
+      this.liveHeldTracksByMidi.clear();
+      for (const track of this.tracks) track.cancelRegionPlayback(this.masterBus?.sum);
+      this.seekToTick(tick);
+      this.stepScheduler(this.nowAudioTime());
+      this.notifyKeys();
+    } else this.notify();
+  }
+
   private tracks: SY1TrackEngine[] = [];
   private focusedTrackId: string;
   private projectId = "sy1-default";
@@ -212,7 +235,8 @@ export class SY1StudioEngine {
   private playbackOpenNotes = new Map<string, Set<number>>();
   private playbackSustainDown = new Set<string>();
   private liveHeldTracksByMidi = new Map<number, Set<string>>();
-  private liveRecordedOpenNotes = new Map<string, Set<number>>();
+  private liveRecordedOpenNotes = new Map<string, Map<number, { tick: number; velocity: number }>>();
+  private pendingLoopWrap: { at: number; end: number; start: number } | null = null;
 
   private recorder: LiveRecorderSession | null = null;
   private lastLiveTake: StudioTake | null = null;
@@ -328,14 +352,13 @@ export class SY1StudioEngine {
     if (!this.recording || !this.playing || (this.countInEnd !== null && at < this.countInEnd - 1e-6)) return;
     const track = this.getTrack(trackId);
     if (!track) return;
+    this.finishRecordingLoopBoundary(this.nowAudioTime());
     const tick = Math.round(this.getCurrentTick(at));
     const cmd = bytes[0] & 0xf0, midi = bytes[1] & 127, value = bytes[2] & 127;
-    let open = this.liveRecordedOpenNotes.get(trackId);
-    if (!open) { open = new Set(); this.liveRecordedOpenNotes.set(trackId, open); }
     if (cmd === 0x90 && value > 0) {
-      track.addEvent({type:"noteOn",tick,midi,velocity:value/127}); open.add(midi);
+      this.recordNoteOn(track, midi, value / 127, tick);
     } else if (cmd === 0x80 || (cmd === 0x90 && value === 0)) {
-      if (open.has(midi)) { track.addEvent({type:"noteOff",tick,midi}); open.delete(midi); }
+      this.recordNoteOff(track, midi, tick);
     } else if (cmd === 0xe0) {
       track.addEvent({type:"pitchBend",tick,value:((value<<7|midi)-8192)/8192});
     } else if (cmd === 0xb0 && (midi === 1 || midi === 64)) {
@@ -469,6 +492,10 @@ export class SY1StudioEngine {
 
   getCurrentTick(atAudioTime = this.nowAudioTime()): number {
     if (!this.playing) return this.playheadTick;
+    const wrap = this.pendingLoopWrap;
+    if (wrap && atAudioTime < wrap.at) {
+      return Math.max(0, wrap.end - (wrap.at - atAudioTime) * this.ticksPerSecond(this.anchorBpm));
+    }
     const elapsedSec = Math.max(0, atAudioTime - this.anchorAudioTime);
     const rawTick = this.anchorTick + elapsedSec * this.ticksPerSecond(this.anchorBpm);
     if (this.loopEnabled) {
@@ -509,6 +536,7 @@ export class SY1StudioEngine {
     const idx = this.tracks.length + 1;
     const track = this.createTrackInstance(idx, presetId || DEFAULT_TRACK_PRESETS[(idx - 1) % DEFAULT_TRACK_PRESETS.length], false);
     this.tracks.push(track);
+    if (this.recording) track.beginRegionTake(this.getTotalTicks());
     this.recomputeAudibility();
     const ctx = getAudioCtxIfAny();
     if (ctx && this.masterBus && this.masterBus.ctx === ctx) {
@@ -601,19 +629,32 @@ export class SY1StudioEngine {
   replaceTrackNotes(id: string, spans: StudioNoteSpan[]): void {
     const t = this.getTrack(id);
     if (!t) return;
-    t.replaceNoteSpans(spans);
+    this.regions.editNotes(id, spans);
   }
 
   quantizeTrackNotes(id: string, gridTicks: number, selectedIndices?: Iterable<number>): number {
     const t = this.getTrack(id);
     if (!t) return 0;
-    return t.quantizeNotes(gridTicks, this.getTotalTicks(), selectedIndices);
+    const selected = selectedIndices ? new Set(selectedIndices) : null;
+    const limit = this.regions.editorLength(id);
+    const spans = this.regions.editorNotes(id);
+    let changed = 0;
+    const next = spans.map((span, index) => {
+      if (selected?.size && !selected.has(index)) return span;
+      const grid = Math.max(1, gridTicks);
+      const startTick = Math.min(limit - 1, Math.round(span.startTick / grid) * grid);
+      if (startTick !== span.startTick) changed++;
+      return { ...span, startTick, endTick: Math.min(limit, startTick + span.endTick - span.startTick) };
+    });
+    if (changed) this.regions.editNotes(id, next);
+    return changed;
   }
 
   clearTrackClip(id: string): void {
     const t = this.getTrack(id);
     if (!t) return;
     t.clearEvents();
+    this.regions.reset();
     this.notify();
   }
 
@@ -715,6 +756,8 @@ export class SY1StudioEngine {
   }
 
   seekToTick(tick: number): void {
+    if (this.recording) return;
+    this.pendingLoopWrap = null;
     this.metronome.cancel();
     this.countInStart = this.countInEnd = null;
     const clamped = Math.max(0, Math.min(this.getTotalTicks() - 1, Math.round(tick)));
@@ -776,6 +819,7 @@ export class SY1StudioEngine {
       if (!this.tracks.some((t) => t.armed)) {
         this.getFocusedTrack().armed = true;
       }
+      for (const track of this.tracks) track.beginRegionTake(this.getTotalTicks());
       this.recording = true;
       this.liveRecordedOpenNotes.clear();
 
@@ -795,6 +839,7 @@ export class SY1StudioEngine {
 
   async stop(): Promise<void> {
     this.transportEpoch++;
+    this.finishRecordingLoopBoundary(this.nowAudioTime());
     this.metronome.cancel();
     this.countInStart = this.countInEnd = null;
     const wasPlaying = this.playing;
@@ -810,11 +855,18 @@ export class SY1StudioEngine {
 
     if (wasRecording) {
       this.closeLiveRecordedNotes(stopTick);
+      const previous = new Map<string, MidiRegion[]>();
+      for (const track of this.tracks) {
+        const regions = track.finishRegionTake(this.getTotalTicks());
+        if (regions) previous.set(track.id, regions);
+      }
+      this.regions.registerTake(previous);
       this.recording = false;
       await this.stopLiveMixRecorder();
     }
 
     this.playing = false;
+    this.pendingLoopWrap = null;
     this.playheadTick = 0;
     this.anchorTick = 0;
     this.cursorTick = 0;
@@ -851,6 +903,7 @@ export class SY1StudioEngine {
    */
   stepScheduler(nowAudioTime: number): void {
     if (!this.playing) return;
+    this.finishRecordingLoopBoundary(nowAudioTime);
     this.metronome.schedule(this.masterBus?.ctx || null, nowAudioTime, this.anchorAudioTime, this.anchorTick / STUDIO_PPQ,
       this.bpm, this.clickEnabled, this.countInStart, this.countInEnd !== null && nowAudioTime < this.countInEnd ? this.countInEnd : null);
     const windowEnd = nowAudioTime + LOOKAHEAD_SEC;
@@ -888,9 +941,8 @@ export class SY1StudioEngine {
 
         // Close any playback-held notes cleanly at the exact loop boundary
         this.releasePlaybackNotes(loopEndAudio);
-        if (this.recording) {
-          this.closeLiveRecordedNotes(loopEnd);
-        }
+        this.pendingLoopWrap = { at: loopEndAudio, end: loopEnd, start: loopStart };
+        this.finishRecordingLoopBoundary(nowAudioTime);
 
         // Re-anchor cleanly at loopStart to prevent floating-point drift across infinite cycles
         this.anchorAudioTime = loopEndAudio;
@@ -985,16 +1037,47 @@ export class SY1StudioEngine {
     }
   }
 
-  private closeLiveRecordedNotes(closeTick: number): void {
-    const clampedTick = Math.max(0, Math.round(closeTick));
-    this.liveRecordedOpenNotes.forEach((notes, trackId) => {
+  private recordNoteOn(track: SY1TrackEngine, midi: number, velocity: number, tick: number): void {
+    let notes = this.liveRecordedOpenNotes.get(track.id);
+    if (!notes) {
+      notes = new Map();
+      this.liveRecordedOpenNotes.set(track.id, notes);
+    }
+    if (notes.has(midi)) this.recordNoteOff(track, midi, tick);
+    track.addEvent({ type: "noteOn", tick, midi, velocity });
+    notes.set(midi, { tick, velocity });
+  }
+
+  private recordNoteOff(track: SY1TrackEngine, midi: number, tick: number): void {
+    const notes = this.liveRecordedOpenNotes.get(track.id);
+    const note = notes?.get(midi);
+    if (!notes || !note) return;
+    // Generated MIDI can report a scheduled release across the loop seam in advance.
+    const end = this.loopEnabled && tick < note.tick ? this.getLoopEndTick() : tick;
+    track.addEvent({ type: "noteOff", tick: Math.max(note.tick + 1, end), midi });
+    notes.delete(midi);
+  }
+
+  private finishRecordingLoopBoundary(now: number): void {
+    const wrap = this.pendingLoopWrap;
+    if (!wrap || now < wrap.at) return;
+    this.pendingLoopWrap = null;
+    if (this.recording) this.closeLiveRecordedNotes(wrap.end, wrap.start);
+  }
+
+  private closeLiveRecordedNotes(closeTick: number, reopenAt?: number): void {
+    for (const [trackId, notes] of this.liveRecordedOpenNotes) {
       const track = this.getTrack(trackId);
-      if (!track || notes.size === 0) return;
-      notes.forEach((midi) => {
-        track.addEvent({ type: "noteOff", tick: clampedTick, midi });
-      });
-      notes.clear();
-    });
+      if (!track) continue;
+      for (const [midi, note] of notes) {
+        track.addEvent({ type: "noteOff", tick: Math.max(note.tick + 1, Math.round(closeTick)), midi });
+        if (reopenAt !== undefined) {
+          track.addEvent({ type: "noteOn", tick: reopenAt, midi, velocity: note.velocity });
+          notes.set(midi, { ...note, tick: reopenAt });
+        }
+      }
+      if (reopenAt === undefined) notes.clear();
+    }
   }
 
   // ------------------------------------------------------------- live input ----
@@ -1030,6 +1113,7 @@ export class SY1StudioEngine {
       this.liveHeldTracksByMidi.set(m, heldSet);
     }
 
+    this.finishRecordingLoopBoundary(this.nowAudioTime());
     const tick = this.recording ? Math.round(this.getCurrentTick()) : 0;
 
     for (const track of targets) {
@@ -1037,13 +1121,7 @@ export class SY1StudioEngine {
       heldSet.add(track.id);
 
       if (this.recording && !this.getCountInBeat() && track.armed) {
-        track.addEvent({ type: "noteOn", tick, midi: m, velocity: vel });
-        let recOpen = this.liveRecordedOpenNotes.get(track.id);
-        if (!recOpen) {
-          recOpen = new Set<number>();
-          this.liveRecordedOpenNotes.set(track.id, recOpen);
-        }
-        recOpen.add(m);
+        this.recordNoteOn(track, m, vel, tick);
       }
     }
     this.notifyKeys();
@@ -1057,6 +1135,7 @@ export class SY1StudioEngine {
         ? this.tracks.filter((t) => heldSet.has(t.id) && (midiChannel === 0 || t.midiChannel === 0 || t.midiChannel === midiChannel))
         : this.resolveLiveTargets(midiChannel);
 
+    this.finishRecordingLoopBoundary(this.nowAudioTime());
     const tick = this.recording ? Math.round(this.getCurrentTick()) : 0;
 
     for (const track of targets) {
@@ -1064,11 +1143,7 @@ export class SY1StudioEngine {
       heldSet?.delete(track.id);
 
       if (this.recording && !this.getCountInBeat() && track.armed) {
-        const recOpen = this.liveRecordedOpenNotes.get(track.id);
-        if (recOpen && recOpen.has(m)) {
-          track.addEvent({ type: "noteOff", tick, midi: m });
-          recOpen.delete(m);
-        }
+        this.recordNoteOff(track, m, tick);
       }
     }
     if (heldSet && heldSet.size === 0) this.liveHeldTracksByMidi.delete(m);
@@ -1078,6 +1153,7 @@ export class SY1StudioEngine {
   livePitchBend(norm: number, midiChannel = 0): void {
     const v = Math.max(-1, Math.min(1, Number(norm) || 0));
     const targets = this.resolveLiveTargets(midiChannel);
+    this.finishRecordingLoopBoundary(this.nowAudioTime());
     const tick = this.recording ? Math.round(this.getCurrentTick()) : 0;
     for (const track of targets) {
       track.setPitchBend(v);
@@ -1089,6 +1165,7 @@ export class SY1StudioEngine {
 
   liveCC(cc: number, value: number, midiChannel = 0): void {
     const targets = this.resolveLiveTargets(midiChannel);
+    this.finishRecordingLoopBoundary(this.nowAudioTime());
     const tick = this.recording ? Math.round(this.getCurrentTick()) : 0;
     const val7 = Math.max(0, Math.min(127, Math.round(value)));
     for (const track of targets) {
@@ -1262,21 +1339,25 @@ export class SY1StudioEngine {
       loopEndBar: this.loopEndBar,
       focusedTrackId: this.focusedTrackId,
       recordingSettings: this.getRecordingSettings(),
-      tracks: this.tracks.map((t) => ({
-        id: t.id,
-        name: t.name,
-        machineId: t.machineId,
-        presetId: t.presetId,
-        presetName: t.presetName,
-        patch: { ...t.patch },
-        volume: t.volume,
-        pan: t.pan,
-        mute: t.mute,
-        solo: t.solo,
-        armed: t.armed,
-        midiChannel: t.midiChannel,
-        events: t.events.map((ev) => ({ ...ev }))
-      }))
+      tracks: this.tracks.map((t) => {
+        const regions = t.getRegions(this.getTotalTicks());
+        return {
+          id: t.id,
+          name: t.name,
+          machineId: t.machineId,
+          presetId: t.presetId,
+          presetName: t.presetName,
+          patch: { ...t.patch },
+          volume: t.volume,
+          pan: t.pan,
+          mute: t.mute,
+          solo: t.solo,
+          armed: t.armed,
+          midiChannel: t.midiChannel,
+          events: regions.length ? flattenRegions(regions) : [],
+          regions: regions.map(cloneRegion)
+        };
+      })
     };
   }
 
@@ -1345,13 +1426,15 @@ export class SY1StudioEngine {
       track.mute = td.mute;
       track.solo = td.solo;
       track.armed = td.armed;
-      track.setEvents(td.events);
+      if (td.regions) track.setRegions(td.regions, td.events);
+      else track.setEvents(td.events);
       track.syncTempo(proj.bpm);
       track.onChange(() => this.notify());
       rebuilt.push(track);
     }
 
     this.tracks = rebuilt;
+    this.regions.reset();
     this.setRecordingSettings(proj.recordingSettings || {metronome:false,countIn:false,clickVolume:0.25});
     this.focusedTrackId = rebuilt.some((t) => t.id === proj.focusedTrackId)
       ? proj.focusedTrackId
