@@ -36,6 +36,15 @@ let autosaveMetaCache: { name: string; updatedAt: number; trackCount: number; bp
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let suppressNextAutosave = false;
 let onCloseStudio: (() => void) | null = null;
+let cachedPlayheadEls: HTMLElement[] = [];
+let cachedClockEl: HTMLElement | null = null;
+let lastPlayheadPctStr = "";
+let lastClockStr = "";
+
+/** Diagnostics helper: true only while transport playhead animation loop is actively running. */
+export function isStudioPlayheadLoopActive(): boolean {
+  return rafId !== 0;
+}
 
 function setStatus(msg: string, tone: StatusTone = "info"): void {
   statusMessage = msg;
@@ -422,12 +431,12 @@ function renderStudioHtml(): string {
             <input type="range" class="st-range" min="0" max="1" step="0.01" value="${t.volume.toFixed(2)}" data-st-range="volume" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} volume" />
           </div>
           <div class="st-fader-wrap" title="Track Pan (${panStr})" style="max-width:74px">
-            <span class="st-fader-lbl">${panStr}</span>
+            <span class="st-fader-lbl" data-st-pan-lbl="${escapeHtml(t.id)}">${panStr}</span>
             <input type="range" class="st-range" min="-1" max="1" step="0.02" value="${t.pan.toFixed(2)}" data-st-range="pan" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} pan" />
           </div>
         </div>
         <div class="st-track-meta">
-          <span>${noteCount} ${noteCount === 1 ? "note" : "notes"} · ${volPct}% · ${audioTag}</span>
+          <span data-st-meta="${escapeHtml(t.id)}">${noteCount} ${noteCount === 1 ? "note" : "notes"} · ${volPct}% · ${audioTag}</span>
           <div class="st-group" style="gap:4px">
             <select class="st-select st-ch-select" data-st-select="channel" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} MIDI input channel">
               ${midiChannelOptionsHtml(t.midiChannel)}
@@ -570,23 +579,29 @@ function renderStudioHtml(): string {
 function updatePlayheadOnly(): void {
   const container = document.getElementById("sy1-studio");
   if (!container || container.hidden) return;
-  const tr = studioEngine.getTransportSnapshot();
-  const pct = tr.totalTicks > 0 ? Math.max(0, Math.min(100, (tr.currentTick / tr.totalTicks) * 100)) : 0;
-  container.querySelectorAll<HTMLElement>("[data-st-playhead]").forEach((el) => {
-    el.style.left = pct.toFixed(3) + "%";
-  });
-  const clock = document.getElementById("st-clock");
-  if (clock) {
-    clock.textContent = `${String(tr.currentBar).padStart(2, "0")} : ${tr.currentBeat}`;
+  const pos = studioEngine.getPlayheadPosition();
+  const pct = pos.totalTicks > 0 ? Math.max(0, Math.min(100, (pos.currentTick / pos.totalTicks) * 100)) : 0;
+  const pctStr = pct.toFixed(3) + "%";
+  if (pctStr !== lastPlayheadPctStr) {
+    lastPlayheadPctStr = pctStr;
+    for (let i = 0; i < cachedPlayheadEls.length; i++) {
+      cachedPlayheadEls[i].style.left = pctStr;
+    }
+  }
+  const clockStr = `${String(pos.currentBar).padStart(2, "0")} : ${pos.currentBeat}`;
+  if (cachedClockEl && clockStr !== lastClockStr) {
+    lastClockStr = clockStr;
+    cachedClockEl.textContent = clockStr;
   }
 }
 
 function startPlayheadLoop(): void {
-  if (rafId) return;
+  if (rafId || !studioEngine.isPlaying()) return;
   const step = () => {
     const container = document.getElementById("sy1-studio");
-    if (!container || container.hidden) {
+    if (!container || container.hidden || !studioEngine.isPlaying()) {
       rafId = 0;
+      if (container && !container.hidden) updatePlayheadOnly();
       return;
     }
     updatePlayheadOnly();
@@ -606,6 +621,10 @@ export function renderStudioPanel(): void {
   const container = document.getElementById("sy1-studio");
   if (!container || container.hidden) return;
   container.innerHTML = renderStudioHtml();
+  cachedPlayheadEls = Array.from(container.querySelectorAll<HTMLElement>("[data-st-playhead]"));
+  cachedClockEl = document.getElementById("st-clock");
+  lastPlayheadPctStr = "";
+  lastClockStr = "";
 }
 
 function updateFocusedKnobDOM(key: string): void {
@@ -648,14 +667,41 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   // Coalesce rapid state updates into a single microtask render (avoids thrashing during drag)
   let renderQueued = false;
   let draggingKnobParam: string | null = null;
+  let draggingRange: { trackId: string; type: string } | null = null;
+  let pendingAutosaveAfterDrag = false;
+
+  const updateTrackRangeLabelsDOM = (trackId: string) => {
+    const t = studioEngine.getTrack(trackId);
+    if (!t) return;
+    const panStr = Math.abs(t.pan) < 0.04 ? "C" : (t.pan < 0 ? `L${Math.round(-t.pan * 100)}` : `R${Math.round(t.pan * 100)}`);
+    const panLbl = container.querySelector<HTMLElement>(`[data-st-pan-lbl="${trackId}"]`);
+    if (panLbl) panLbl.textContent = panStr;
+    const metaEl = container.querySelector<HTMLElement>(`[data-st-meta="${trackId}"]`);
+    if (metaEl) {
+      const noteCount = t.getNoteCount();
+      const volPct = Math.round(t.volume * 100);
+      const audioTag = t.getAudioState() === "hq" ? "HQ" : t.getAudioState() === "classic" ? "Classic" : "Ready";
+      metaEl.textContent = `${noteCount} ${noteCount === 1 ? "note" : "notes"} · ${volPct}% · ${audioTag}`;
+    }
+  };
 
   studioEngine.onChange(() => {
     if (studioEngine.isActive()) {
-      scheduleAutosave();
+      if (draggingKnobParam || draggingRange) {
+        pendingAutosaveAfterDrag = true;
+      } else {
+        scheduleAutosave();
+      }
+      if (studioEngine.isPlaying()) startPlayheadLoop();
+      else stopPlayheadLoop();
     }
     if (container.hidden) return;
     if (draggingKnobParam) {
       updateFocusedKnobDOM(draggingKnobParam);
+      return;
+    }
+    if (draggingRange) {
+      updateTrackRangeLabelsDOM(draggingRange.trackId);
       return;
     }
     // Preserve focus inside text input while typing project name
@@ -966,6 +1012,18 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       studioEngine.setBars(Number(el.value));
       return;
     }
+    const rangeType = el.getAttribute("data-st-range");
+    if (rangeType) {
+      if (draggingRange) {
+        draggingRange = null;
+        if (pendingAutosaveAfterDrag) {
+          pendingAutosaveAfterDrag = false;
+          scheduleAutosave();
+        }
+        renderStudioPanel();
+      }
+      return;
+    }
     const selType = el.getAttribute("data-st-select");
     const trackId = el.getAttribute("data-track-id") || "";
     if (selType === "preset" && trackId) {
@@ -978,7 +1036,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
   });
 
-  // ---- Track volume, pan & project name live input ----
+  // ---- Track volume, pan & project name live input (no innerHTML rebuild while dragging range!) ----
   container.addEventListener("input", (e) => {
     const el = e.target as HTMLInputElement | null;
     if (!el) return;
@@ -989,11 +1047,13 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     const rangeType = el.getAttribute("data-st-range");
     const trackId = el.getAttribute("data-track-id") || "";
     if (!rangeType || !trackId) return;
+    draggingRange = { trackId, type: rangeType };
     if (rangeType === "volume") studioEngine.setTrackVolume(trackId, Number(el.value));
     else if (rangeType === "pan") studioEngine.setTrackPan(trackId, Number(el.value));
+    updateTrackRangeLabelsDOM(trackId);
   });
 
-  // ---- Studio Rotary Knob pointer / wheel / dblclick / keyboard ----
+  // ---- Studio Rotary Knob & Ruler Scrubbing pointer / wheel / dblclick / keyboard ----
   let knobDrag: {
     key: string;
     startY: number;
@@ -1002,10 +1062,38 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     pointerId: number;
     el: HTMLElement;
   } | null = null;
+  let rulerDrag: {
+    el: HTMLElement;
+    pointerId: number;
+  } | null = null;
 
   container.addEventListener("pointerdown", (e) => {
     if (e.button === 2) return;
-    const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-knob");
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+
+    const rangeEl = target.closest<HTMLInputElement>("[data-st-range]");
+    if (rangeEl) {
+      const rangeType = rangeEl.getAttribute("data-st-range") || "";
+      const trackId = rangeEl.getAttribute("data-track-id") || "";
+      if (rangeType && trackId) {
+        studioEngine.prepareAudioSync();
+        draggingRange = { trackId, type: rangeType };
+      }
+      return;
+    }
+
+    const ruler = target.closest<HTMLElement>("[data-st-ruler]");
+    if (ruler) {
+      e.preventDefault();
+      studioEngine.prepareAudioSync();
+      rulerDrag = { el: ruler, pointerId: e.pointerId };
+      seekFromPointer(ruler, e.clientX);
+      try { ruler.setPointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
+
+    const knob = target.closest<HTMLElement>(".st-knob");
     if (!knob) return;
     const key = knob.getAttribute("data-st-param");
     if (!key) return;
@@ -1026,6 +1114,11 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   });
 
   container.addEventListener("pointermove", (e) => {
+    if (rulerDrag && e.pointerId === rulerDrag.pointerId) {
+      e.preventDefault();
+      seekFromPointer(rulerDrag.el, e.clientX);
+      return;
+    }
     if (!knobDrag || e.pointerId !== knobDrag.pointerId) return;
     e.preventDefault();
     const dy = knobDrag.startY - e.clientY;
@@ -1035,17 +1128,32 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     studioEngine.getFocusedTrack().setParam(knobDrag.key, nextVal);
   });
 
-  const endKnobDrag = (e?: PointerEvent) => {
+  const endInteractiveDrags = (e?: PointerEvent) => {
+    if (rulerDrag && (!e || e.pointerId === rulerDrag.pointerId)) {
+      rulerDrag = null;
+    }
+    if (draggingRange) {
+      draggingRange = null;
+      if (pendingAutosaveAfterDrag) {
+        pendingAutosaveAfterDrag = false;
+        scheduleAutosave();
+      }
+      renderStudioPanel();
+    }
     if (!knobDrag || (e && e.pointerId !== knobDrag.pointerId)) return;
     knobDrag.el.classList.remove("is-dragging");
     knobDrag = null;
     draggingKnobParam = null;
+    if (pendingAutosaveAfterDrag) {
+      pendingAutosaveAfterDrag = false;
+      scheduleAutosave();
+    }
     renderStudioPanel();
   };
 
-  container.addEventListener("pointerup", endKnobDrag);
-  container.addEventListener("pointercancel", endKnobDrag);
-  window.addEventListener("blur", () => endKnobDrag());
+  container.addEventListener("pointerup", endInteractiveDrags);
+  container.addEventListener("pointercancel", endInteractiveDrags);
+  window.addEventListener("blur", () => endInteractiveDrags());
 
   container.addEventListener("dblclick", (e) => {
     const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-knob");
@@ -1097,11 +1205,13 @@ export function showStudioPanel(): void {
   if (synthEl) synthEl.hidden = true;
   if (studioEl) studioEl.hidden = false;
   renderStudioPanel();
-  startPlayheadLoop();
+  if (studioEngine.isPlaying()) startPlayheadLoop();
 }
 
 export function hideStudioPanel(): void {
   stopPlayheadLoop();
+  cachedPlayheadEls = [];
+  cachedClockEl = null;
   const synthEl = document.getElementById("sy1-panel");
   const studioEl = document.getElementById("sy1-studio");
   if (studioEl) studioEl.hidden = true;

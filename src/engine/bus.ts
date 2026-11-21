@@ -51,6 +51,10 @@ export interface SynthFXBus {
   mainToFx: GainNode;
   /** Effects-only input (no dry path): per-voice drum sends. */
   sendIn: GainNode;
+  /** Cached last drive value to skip redundant 1024-sample WaveShaper curve allocations. */
+  lastDriveApplied?: number;
+  /** All internal AudioNodes owned by this bus so disposeSynthBus breaks every cyclic feedback loop cleanly. */
+  _nodes?: AudioNode[];
 }
 
 let audioCtx: AudioContext | null = null;
@@ -112,11 +116,34 @@ async function applyOutputDevice(): Promise<boolean> {
   }
 }
 
+const audioStateListeners = new Set<(state: string, ctx: AudioContext) => void>();
+
+/** Subscribe to shared AudioContext state transitions (including iPadOS Safari "interrupted" / "suspended" / "running"). */
+export function onAudioContextStateChange(cb: (state: string, ctx: AudioContext) => void): () => void {
+  audioStateListeners.add(cb);
+  return () => audioStateListeners.delete(cb);
+}
+
+let unlockedOnce = false;
+
 export function getAudioCtx(): AudioContext {
   if (!audioCtx) {
     const AC = window.AudioContext || (window as any).webkitAudioContext;
     if (AC) {
       audioCtx = new AC({ latencyHint: "interactive" });
+      const ctx = audioCtx;
+      if (typeof ctx.addEventListener === "function") {
+        ctx.addEventListener("statechange", () => {
+          // On iPadOS Safari, app switching / screen lock moves AudioContext to "interrupted" or "suspended".
+          // Reset unlockedOnce so the next user gesture re-runs audioSession & silent unlock buffer cleanly.
+          if (ctx.state !== "running") {
+            unlockedOnce = false;
+          }
+          audioStateListeners.forEach((cb) => {
+            try { cb(ctx.state, ctx); } catch (e) {}
+          });
+        });
+      }
       if (outputDevice) applyOutputDevice();
     }
   }
@@ -126,8 +153,6 @@ export function getAudioCtx(): AudioContext {
 export function getAudioCtxIfAny(): AudioContext | null {
   return audioCtx;
 }
-
-let unlockedOnce = false;
 
 /**
  * Wake the audio context. Browsers only allow this inside a user gesture, so it
@@ -146,18 +171,21 @@ export function unlockAudio(): void {
     ctx.resume().catch(() => {});
   }
   if (!unlockedOnce) {
-    // Older iOS only unlocks after a sound is started inside the gesture: play one silent sample
+    // Older iOS / post-interrupt Safari only unlocks after a sound is started inside the gesture: play one silent sample
     try {
       const src = ctx.createBufferSource();
       src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
       src.connect(ctx.destination);
+      src.onended = () => {
+        try { src.disconnect(); } catch (e) {}
+      };
       src.start(0);
       unlockedOnce = true;
     } catch (e) {}
   }
 }
 
-/** Resume audio on any gesture anywhere on the page (and again after the OS suspends it). */
+/** Resume audio on any gesture anywhere on the page (and again after the OS suspends/interrupts it). */
 export function installAudioUnlock(onGesture: () => void): void {
   const handler = () => {
     const ctx = getAudioCtxIfAny();
@@ -167,10 +195,18 @@ export function installAudioUnlock(onGesture: () => void): void {
   ["pointerdown", "touchstart", "touchend", "mousedown", "click", "keydown"].forEach((type) => {
     window.addEventListener(type, handler, { capture: true, passive: true });
   });
-  document.addEventListener("visibilitychange", () => {
+  const resumeIfVisible = () => {
+    if (typeof document !== "undefined" && document.hidden) return;
+    try {
+      const nav = navigator as any;
+      if (nav.audioSession && nav.audioSession.type !== "playback") nav.audioSession.type = "playback";
+    } catch (e) {}
     const ctx = getAudioCtxIfAny();
-    if (!document.hidden && ctx && ctx.state !== "running") ctx.resume().catch(() => {});
-  });
+    if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
+  };
+  document.addEventListener("visibilitychange", resumeIfVisible);
+  window.addEventListener("pageshow", resumeIfVisible);
+  window.addEventListener("focus", resumeIfVisible);
 }
 
 const synthBuses = new WeakMap<BaseAudioContext, SynthFXBus>();
@@ -200,8 +236,10 @@ export function makeDriveCurve(amount: number): Float32Array {
 
 /** Gentle fixed tanh soft-clip used in the delay feedback loop so hot repeats warm up instead of distorting harshly. */
 export const CLIP_RANGE = 4;
+let cachedSoftClipCurve: Float32Array | null = null;
 /** soft(x): identity up to 0.9, then 0.9 + 0.1*tanh((|x|-0.9)/0.1): never above 1.0. Over x in +-CLIP_RANGE. */
 export function makeSoftClipCurve(): Float32Array {
+  if (cachedSoftClipCurve) return cachedSoftClipCurve;
   const n = 8193; // odd: exact 0 in the middle
   const c = new Float32Array(n);
   for (let i = 0; i < n; i++) {
@@ -210,10 +248,13 @@ export function makeSoftClipCurve(): Float32Array {
     const y = a <= 0.9 ? a : 0.9 + 0.1 * Math.tanh((a - 0.9) / 0.1);
     c[i] = x < 0 ? -y : y;
   }
+  cachedSoftClipCurve = c;
   return c;
 }
 
+let cachedTanhCurve: Float32Array | null = null;
 function makeTanhCurve(): Float32Array {
+  if (cachedTanhCurve) return cachedTanhCurve;
   const n = 1024;
   const curve = new Float32Array(n);
   const k = 1.6; // fixed, moderate drive — not user-controllable
@@ -221,6 +262,7 @@ function makeTanhCurve(): Float32Array {
     const x = (i / (n - 1)) * 2 - 1;
     curve[i] = Math.tanh(x * k) / Math.tanh(k);
   }
+  cachedTanhCurve = curve;
   return curve;
 }
 
@@ -248,14 +290,21 @@ function makeDamp(ctx: BaseAudioContext): AudioNode {
 const REVERB_ALLPASS_G = 0.5;
 const REVERB_FB_MAX = 0.97;
 
+const dampPeakGainCache = new Map<string, number>();
+
 /**
  * Web Audio's biquad lowpass does not stay <=1 near its cutoff at this frequency/sample-rate ratio
  * (bilinear-transform warping) — it has a real passband bump regardless of Q. Rather than guess the
- * size of that bump, measure it once per AudioContext with the filter's own getFrequencyResponse,
+ * size of that bump, measure it once per sample-rate & filter kind with the filter's own getFrequencyResponse,
  * so the comb feedback can be compensated by the EXACT value and the reverb can run as close to its
  * requested decay time as safely possible (not an over-cautious fixed guess).
  */
 function measureDampPeakGain(ctx: BaseAudioContext): number {
+  const kind = typeof (ctx as any).createIIRFilter === "function" ? "iir" : "bq";
+  const cacheKey = `${ctx.sampleRate}:${kind}`;
+  const cached = dampPeakGainCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   const probe = makeDamp(ctx) as BiquadFilterNode | IIRFilterNode;
   const n = 300;
   const freqs = new Float32Array(n);
@@ -264,9 +313,12 @@ function measureDampPeakGain(ctx: BaseAudioContext): number {
   const mag = new Float32Array(n);
   const phase = new Float32Array(n);
   probe.getFrequencyResponse(freqs, mag, phase);
+  try { probe.disconnect(); } catch (e) {}
   let peak = 1;
   for (let i = 0; i < n; i++) if (Number.isFinite(mag[i]) && mag[i] > peak) peak = mag[i];
-  return peak * 1.01; // the one-pole peaks at exactly 1 (DC); 1% margin
+  const compensated = peak * 1.01; // the one-pole peaks at exactly 1 (DC); 1% margin
+  dampPeakGainCache.set(cacheKey, compensated);
+  return compensated;
 }
 
 /** Per-comb feedback gain that targets an approximate RT60 (seconds) for that comb's own delay length,
@@ -278,21 +330,28 @@ function combFeedbackForRT60(delaySec: number, rt60: number, dampPeakGain: numbe
 }
 
 /** input -> N parallel damped combs (feedback = f(revSize)) -> M series allpass diffusers -> output. No audio files. */
-function buildReverb(ctx: BaseAudioContext, input: AudioNode, revSize: number): { combs: ReverbComb[]; output: AudioNode; dampPeakGain: number } {
+function buildReverb(
+  ctx: BaseAudioContext,
+  input: AudioNode,
+  revSize: number,
+  ownedNodes: AudioNode[]
+): { combs: ReverbComb[]; output: AudioNode; dampPeakGain: number } {
   const dampPeakGain = measureDampPeakGain(ctx);
   const combInputScale = ctx.createGain();
   combInputScale.gain.value = 0.14; // keeps 8 summed combs from building up too hot (the one-pole damping keeps more low end ringing than the old biquad)
   input.connect(combInputScale);
 
   const combSum = ctx.createGain();
-  const combs: ReverbComb[] = REVERB_COMB_DELAYS_SEC.map((delaySec) => {
+  ownedNodes.push(combInputScale, combSum);
+
+  const combs: ReverbComb[] = REVERB_COMB_DELAYS_SEC.map((delaySec, idx) => {
     const delay = ctx.createDelay(1);
     delay.delayTime.value = delaySec;
     const damp = makeDamp(ctx);
     // a slow, tiny wobble of each comb's length (different rate per comb) smears its fixed
     // resonances, so long tails stay smooth instead of ringing on single metallic notes
     const wob = ctx.createOscillator();
-    wob.frequency.value = 0.13 + 0.11 * (REVERB_COMB_DELAYS_SEC.indexOf(delaySec) % 8);
+    wob.frequency.value = 0.13 + 0.11 * (idx % 8);
     const wobAmt = ctx.createGain();
     wobAmt.gain.value = 0.00035; // ±0.35 ms
     wob.connect(wobAmt);
@@ -307,6 +366,7 @@ function buildReverb(ctx: BaseAudioContext, input: AudioNode, revSize: number): 
     fb.connect(delay); // feedback loop (sums with combInputScale at the delay's input)
     damp.connect(combSum);
 
+    ownedNodes.push(delay, damp, wob, wobAmt, fb);
     return { delay, damp, fb, wob, delaySec };
   });
 
@@ -329,6 +389,7 @@ function buildReverb(ctx: BaseAudioContext, input: AudioNode, revSize: number): 
     u.connect(negGain); // -g*u branch
     negGain.connect(out);
     delay.connect(out); // z branch
+    ownedNodes.push(u, delay, fbGain, negGain, out);
     stage = out;
   }
 
@@ -472,10 +533,11 @@ export function createSynthBus(
   chorusWet.gain.value = (p.chorusMix ?? 0) * 0.9;
   chorusMerge.connect(chorusWet);
 
+  const ownedNodes: AudioNode[] = [];
   const revWet = ctx.createGain();
   revWet.gain.value = p.revMix * 0.9;
 
-  const { combs: reverbCombs, output: reverbOut, dampPeakGain } = buildReverb(ctx, fxIn, p.revSize);
+  const { combs: reverbCombs, output: reverbOut, dampPeakGain } = buildReverb(ctx, fxIn, p.revSize, ownedNodes);
   reverbOut.connect(revWet);
   revWet.connect(sum);
 
@@ -489,7 +551,7 @@ export function createSynthBus(
   limiter.release.value = 0.2;
 
   const analyser = ctx.createAnalyser();
-  analyser.fftSize = 2048;
+  analyser.fftSize = connectToDest ? 2048 : 256;
 
   chorusWet.connect(sum);
   sum.connect(master);
@@ -513,6 +575,41 @@ export function createSynthBus(
     out.connect(analyser);
     analyser.connect(ctx.destination);
   }
+
+  ownedNodes.push(
+    input,
+    drive,
+    driveComp,
+    eqLow,
+    eqMid,
+    eqHigh,
+    sum,
+    fxIn,
+    mainToFx,
+    sendIn,
+    delay,
+    fb,
+    delayTone,
+    delayHP,
+    delaySat,
+    delayWet,
+    chorusIn,
+    dl,
+    dr,
+    chorusLfo,
+    chorusDepthL,
+    chorusDepthR,
+    chorusMerge,
+    chorusWet,
+    revWet,
+    master,
+    limiter,
+    clipIn,
+    clip,
+    tap,
+    out,
+    analyser
+  );
 
   return {
     ctx,
@@ -546,7 +643,9 @@ export function createSynthBus(
     mainToFx,
     sendIn,
     clipIn,
-    clip
+    clip,
+    lastDriveApplied: Number(p.drive),
+    _nodes: ownedNodes
   };
 }
 
@@ -556,7 +655,10 @@ export function applyBusParam(bus: SynthFXBus, key: string, value: any): void {
   const now = ctx.currentTime;
   const v = Number(value);
   if (key === "drive") {
-    bus.drive.curve = makeDriveCurve(v) as any;
+    if (bus.lastDriveApplied !== v) {
+      bus.drive.curve = makeDriveCurve(v) as any;
+      bus.lastDriveApplied = v;
+    }
     bus.driveComp.gain.setTargetAtTime(1 / (1 + v * 1.5), now, 0.02);
   } else if (key === "eqLow") bus.eqLow.gain.setTargetAtTime(v, now, 0.02);
   else if (key === "eqMid") bus.eqMid.gain.setTargetAtTime(v, now, 0.02);
@@ -574,12 +676,19 @@ export function applyBusParam(bus: SynthFXBus, key: string, value: any): void {
   else if (key === "revSize") setReverbSize(bus, v);
 }
 
-/** Disconnect and stop internal oscillators of a disposable track FX bus. */
+/** Disconnect every internal node and stop all oscillators of a disposable track FX bus (breaks all 13 feedback cycles). */
 export function disposeSynthBus(bus: SynthFXBus): void {
   try { bus.chorusLfo.stop(); } catch (e) {}
   bus.reverbCombs.forEach((c) => {
     try { c.wob.stop(); } catch (e) {}
   });
+  if (bus._nodes && bus._nodes.length > 0) {
+    for (let i = 0; i < bus._nodes.length; i++) {
+      try { bus._nodes[i].disconnect(); } catch (e) {}
+    }
+    bus._nodes.length = 0;
+    return;
+  }
   try { bus.input.disconnect(); } catch (e) {}
   try { bus.tap.disconnect(); } catch (e) {}
   try { bus.out.disconnect(); } catch (e) {}

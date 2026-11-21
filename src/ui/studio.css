@@ -37,6 +37,7 @@
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* ---- Transport Header ---- */
@@ -443,7 +444,7 @@
   width: 100%;
   accent-color: var(--accent);
   cursor: pointer;
-  touch-action: none;
+  touch-action: pan-x;
 }
 
 .st-track-meta {

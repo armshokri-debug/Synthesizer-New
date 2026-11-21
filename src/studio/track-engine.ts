@@ -33,6 +33,10 @@ function isOfflineCtx(ctx: BaseAudioContext): boolean {
   return typeof OfflineAudioContext !== "undefined" && ctx instanceof OfflineAudioContext;
 }
 
+function compareStudioEvents(a: StudioMidiEvent, b: StudioMidiEvent): number {
+  return a.tick - b.tick || (a.type === "noteOff" ? -1 : 1) - (b.type === "noteOff" ? -1 : 1);
+}
+
 export interface SY1TrackOptions {
   id: string;
   name: string;
@@ -83,6 +87,9 @@ export class SY1TrackEngine {
   private modWheel = 0;
   private nextVoiceId = 1;
   private currentBpm = 110;
+  private eventsDirty = false;
+  private cachedNoteCount: number | null = 0;
+  private cachedEventsLen = 0;
 
   private listeners = new Set<() => void>();
 
@@ -252,13 +259,20 @@ export class SY1TrackEngine {
     if (key === "hold" && fromPreset) value = "off";
 
     const before = this.patch[key];
+    let nextVal: any;
     if (def.type) {
-      this.patch[key] = value;
+      nextVal = value;
     } else {
       let v = Math.max(def.min!, Math.min(def.max!, Number(value)));
       if (def.step) v = Math.round(v / def.step) * def.step;
-      this.patch[key] = v;
+      nextVal = v;
     }
+
+    // Short-circuit identical parameter writes during rapid UI/MIDI scrubbing to avoid redundant worklet & UI churn
+    if (!fromPreset && !internal && nextVal === before && key !== "lfoSync") {
+      return;
+    }
+    this.patch[key] = nextVal;
 
     if (!fromPreset && !internal && key !== "hold" && key !== "oriental") {
       this.presetId = "custom";
@@ -617,25 +631,78 @@ export class SY1TrackEngine {
 
   // ------------------------------------------------------------------ clip ----
   addEvent(ev: StudioMidiEvent): void {
+    const n = this.events.length;
+    if (n > 0 && compareStudioEvents(this.events[n - 1], ev) > 0) {
+      this.eventsDirty = true;
+    }
     this.events.push(ev);
+    if (this.cachedNoteCount !== null && this.cachedEventsLen === n) {
+      if (ev.type === "noteOn") this.cachedNoteCount++;
+      this.cachedEventsLen = n + 1;
+    } else {
+      this.cachedNoteCount = null;
+    }
     this.emitChange();
   }
 
   setEvents(events: StudioMidiEvent[]): void {
     this.events = events.map((e) => ({ ...e }));
+    this.eventsDirty = this.events.length > 1;
+    this.cachedNoteCount = null;
     this.emitChange();
   }
 
   clearEvents(): void {
     this.events = [];
+    this.eventsDirty = false;
+    this.cachedNoteCount = 0;
+    this.cachedEventsLen = 0;
     this.emitChange();
   }
 
+  ensureEventsSorted(): void {
+    if (!this.eventsDirty) return;
+    this.events.sort(compareStudioEvents);
+    this.eventsDirty = false;
+  }
+
+  /**
+   * Zero-allocation O(log N + K) range query for events strictly inside [startTick, endTick).
+   * Eliminates per-tick linear scans, array allocations and re-sorts in the 25 ms scheduler.
+   */
+  forEachEventInRange(startTick: number, endTick: number, cb: (ev: StudioMidiEvent) => void): void {
+    const evs = this.events;
+    const len = evs.length;
+    if (len === 0 || endTick <= startTick) return;
+    if (this.eventsDirty) {
+      evs.sort(compareStudioEvents);
+      this.eventsDirty = false;
+    }
+    // Lower bound: first index with evs[i].tick >= startTick
+    let lo = 0;
+    let hi = len;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (evs[mid].tick < startTick) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo; i < len; i++) {
+      const ev = evs[i];
+      if (ev.tick >= endTick) break;
+      cb(ev);
+    }
+  }
+
   getNoteCount(): number {
+    if (this.cachedNoteCount !== null && this.cachedEventsLen === this.events.length) {
+      return this.cachedNoteCount;
+    }
     let n = 0;
     for (let i = 0; i < this.events.length; i++) {
       if (this.events[i].type === "noteOn") n++;
     }
+    this.cachedNoteCount = n;
+    this.cachedEventsLen = this.events.length;
     return n;
   }
 
@@ -664,11 +731,13 @@ export class SY1TrackEngine {
   }
 
   detachAudio(): void {
-    this.allNotesOff();
+    this.allNotesOff(0);
     if (this.hqNode) {
+      try { this.hqNode.port.onmessage = null; } catch (e) {}
       try { this.hqNode.disconnect(); } catch (e) {}
       this.hqNode = null;
     }
+    this.classicVoices.clear();
     if (this.bus) {
       disposeSynthBus(this.bus);
       this.bus = null;
@@ -682,5 +751,15 @@ export class SY1TrackEngine {
     this.ctx = null;
     this.attachPromise = null;
     this.audioState = "idle";
+  }
+
+  /** Fully dispose audio graph, state listeners, and retained clip buffers. */
+  dispose(): void {
+    this.detachAudio();
+    this.listeners.clear();
+    this.events.length = 0;
+    this.eventsDirty = false;
+    this.cachedNoteCount = 0;
+    this.cachedEventsLen = 0;
   }
 }

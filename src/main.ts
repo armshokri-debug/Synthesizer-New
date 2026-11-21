@@ -46,6 +46,7 @@ import { batchPluginVisuals } from "./ui/plugin-visuals";
 import { studioEngine } from "./studio/studio-engine";
 import { studioStorage } from "./studio/storage";
 import {
+  runOffline4TrackStressProbe,
   runOfflineBounceProbe,
   runOfflineIsolationProbe,
   runOfflineParityProbe,
@@ -57,6 +58,7 @@ import {
   hydrateStudioFromStorage,
   importStudioProjectJson,
   initStudioPanel,
+  isStudioPlayheadLoopActive,
   saveStudioProjectNow,
   showStudioPanel
 } from "./ui/studio-panel";
@@ -208,7 +210,9 @@ function initApp(): void {
         runOfflineIsolationProbe,
         runOfflineBounceProbe,
         runOfflineStemsProbe,
-        runPostRestoreParityProbe
+        runPostRestoreParityProbe,
+        runOffline4TrackStressProbe,
+        isPlayheadLoopActive: isStudioPlayheadLoopActive
       }
     };
   }

@@ -13,8 +13,35 @@
 |---|---|---|---|
 | **Phase 0** | Protected Checkpoint, Baseline Audit, Branch Setup, Architecture Blueprint, Test Plan | **COMPLETE** (Committed `2415939`) | Signed off |
 | **Phase 1** | Multi-Track SY-1 Audio Engine (2 isolated tracks expandable to 4), Shared `AudioContext` + Transport (`Play`/`Stop`/`Rec`/`Loop`, BPM, `8/12/64/128/custom` bars), MIDI Rec + SMF-1 Export, 24-bit WAV Live & Bounce Export, Studio UI, Automated Bun + Chromium Verification | **COMPLETE** (Verified GitHub Commit `079b29f2392d7381c21f997601239fbe2bb9b61a`) | Signed off |
-| **Phase 2** | Project Save / Open (`IndexedDB`), Autosave & Refresh Recovery, Versioned `.sy1studio` Export / Import with Validation, Separate 24-bit Stereo WAV Stems (`bounceTrackStemsWav`), Preserved Mix WAV + SMF-1 MIDI, Recording RAM Safety Guardrails (30-min cap preserved), Minimal Project UI | **COMPLETE — Local Unpushed, Ready for Real Chrome Testing** | Stopped after Phase 2 per instruction |
-| **Phase 3** | Clip Editing UX, MIDI Re-Import UI, Chunked OPFS/IndexedDB Long-Take Storage, Real macOS Chrome & iPadOS Safari Acceptance | `NOT STARTED` | Do not begin until Phase 2 real Chrome sign-off |
+| **Phase 2** | Project Save / Open (`IndexedDB`), Autosave & Refresh Recovery, Versioned `.sy1studio` Export / Import with Validation, Separate 24-bit Stereo WAV Stems (`bounceTrackStemsWav`), Preserved Mix WAV + SMF-1 MIDI, Recording RAM Safety Guardrails (30-min cap preserved), Minimal Project UI | **COMPLETE** (Verified GitHub `main` Commit `20340c00c5de9c857a5c52debdd68f9edbd782b1`) | Signed off & synced |
+| **Phase 3** | Audio Stability & Performance for 4 Simultaneous Tracks (Zero-Leak Bus/Master/Track Disposal, `O(log N + K)` Scheduler + Stall Guard, iPadOS Safari Interrupt/Background Recovery, Idle `rAF` Elimination & Non-Destructive Slider Drag, 4-Track Automated Stress & Regression Suites) | **COMPLETE — Local Unpushed, Ready for Approval** | Stopped after Phase 3 per instruction |
+
+---
+
+## Phase 3 Log — 2026-11-21
+
+### Completed Implementation (Zero DSP / Gain-Staging Changes)
+1. **100% AudioNode, Oscillator & Buffer Disposal (`src/engine/bus.ts`, `src/studio/track-engine.ts`, `src/studio/studio-engine.ts`)**
+   - Fixed a critical leak in `disposeSynthBus()` that previously left **91 of 95 internal AudioNodes and all 13 cyclic feedback loops** (tape delay, 8 Freeverb combs, 4 Schroeder allpasses) connected on every track detach/project reload. All internal nodes are now tracked and disconnected (`95/95` disconnected, `0` leaked).
+   - Cached immutable `makeSoftClipCurve()`, `makeTanhCurve()`, `makeStudioMasterClipCurve()`, and per-sampleRate `measureDampPeakGain()` probe results; tracked `lastDriveApplied` to eliminate redundant 1024-sample `makeDriveCurve()` allocations.
+   - Added `disposeStudioMasterBus()`, full `SY1TrackEngine.dispose()` (clearing `hqNode.port.onmessage`, `classicVoices`, `listeners`, and event buffers), called `old.dispose()` on `loadProject()`/`dispose()`, and immediately cleared `rec.chunks` + `onmessage` after `encodeWav()` in `stopLiveMixRecorder()`.
+2. **Scheduler `O(log N + K)` Performance & Stall / Stuck-Note Protection (`src/studio/track-engine.ts`, `src/studio/studio-engine.ts`)**
+   - Replaced per-25ms `O(N)` linear scan + array allocation + re-sort in `scheduleSegment()` with lazy-sorted zero-allocation `forEachEventInRange()` binary search — reducing 1,000-step 8,000-event scheduler time from **`67.26 ms` to `8.76 ms` (7.68× faster, −87.0% CPU)**.
+   - Added `SCHEDULER_STALL_THRESHOLD_SEC = 0.35` recovery guard in `stepScheduler()` to cleanly release active playback notes and phase-lock re-anchor after main-thread stalls or iPad background sleep without burst-firing stale backlog events.
+   - Cleared `playbackOpenNotes` / `playbackSustainDown` on mid-playback `setTrackPreset()`, and short-circuited identical parameter writes in `SY1TrackEngine.setParam()` to eliminate redundant worklet messages and UI churn.
+3. **iPadOS Safari Audio Init, Interrupt & Touch Ergonomics (`src/engine/bus.ts`, `src/studio/studio-engine.ts`, `src/ui/studio-panel.ts`, `src/ui/studio.css`)**
+   - Exported `onAudioContextStateChange()` and wired `SY1StudioEngine.handleAudioContextStateChange()` so `"interrupted"` / `"suspended"` cleanly releases all voices (`0` stuck notes) and resets `unlockedOnce` for re-unlock, while returning to `"running"` cleanly re-anchors the audio clock without backlog burst. Added `pageshow` & `focus` resume hooks and `onended` disconnect on the 1-sample silent unlock buffer.
+   - Eliminated idle 60–120 Hz `rAF` loop when stopped, cached playhead & clock DOM references using lightweight `getPlayheadPosition()`, fixed Volume/Pan `<input type="range">` DOM destruction during drags (`draggingRange` guard), deferred autosave timer churn during active knob/slider drags, and added pointer-captured touch ruler scrubbing + `-webkit-touch-callout: none` / `touch-action: pan-x`.
+4. **Automated 4-Track Stress & Regression Suites (`tests/studio-phase3.test.ts`, `src/studio/parity-probe.ts`, `scripts/studio-chromium-verify.mjs`)**
+   - Added 10 new Bun tests covering 4-track 32-loop stress + sweeps/presets/recording, 4-instance `HQEngine` DSP stress, 8,000-event scheduler performance & `+2.0 s` stall recovery, 100% AudioNode/oscillator disposal across 12× 4-track `loadProject()` cycles, and iPad `"interrupted"` -> `"running"` recovery.
+   - Extended real headless Chromium CDP verification with `runOffline4TrackStressProbe(48000, 2.0)` (4 simultaneous full AudioWorklet tracks, `RTF = 0.791`, `0` NaN/Inf, peak `<= 1.0`), idle `rAF` check, range slider DOM-preservation check, and 10× 4-track reload heap check (`26.45 MB -> 13.04 MB`).
+
+### Automated Verification Executed (Simulated / Headless)
+- **`npm run lint` (`tsc --noEmit`) & `npm run build` (`vite build`):** **PASS** (0 errors).
+- **Protected-file check (`git diff c3f7c3e... -- native plugin src/dsp/hq-engine.ts src/engine/worklet/sy1-processor.ts`):** **PASS** (0 diffs).
+- **Bun Automated Suite (`studio-phase1` + `studio-phase2` + `studio-phase3`):** **41/41 PASS** (0 fail, 8,568 assertions).
+- **Real Headless Chromium CDP Verification (`node scripts/studio-chromium-verify.mjs`):** **ALL Phase 1, Phase 2 & Phase 3 CHECKS PASS** (`0` page errors, `0` console errors; 6-preset `chainMaxAbsDiff === 0.0`; Track 2 isolation `0.0`; 2- & 4-track stems `-119.55 dB` / `-117.02 dB`; 4-track stress `RTF = 0.791`, `nonFiniteSamples = 0`, `peak <= 1.0`; `idleRafWhileStopped = false`; `sliderConnectedDuringDrag = true`; 10× reload heap `-13.41 MB`).
+- **Real Hardware Tests (macOS Chrome speakers/Web MIDI & iPadOS Safari real touch/interrupt/Jetsam):** **`NOT RUN`** (physical hardware unavailable in container).
 
 ---
 

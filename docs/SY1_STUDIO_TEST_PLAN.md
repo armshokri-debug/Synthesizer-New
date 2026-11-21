@@ -220,4 +220,39 @@
 | **E5 (Safety)** | 30-Minute Cap & Live Recording RAM Ceilings (Bun) | **PASS** | `RECORDER_MAX_SECONDS === 1800` preserved; `STUDIO_LIVE_BYTES_PER_FRAME === 14`, desktop cap `256 MB`, mobile/iPad cap `128 MB` verified. Real long-duration capture on physical iPad Safari: **`NOT RUN`**. |
 | **H (Real Devices)** | Real macOS Intel Chrome & iPadOS Safari Manual Acceptance (multi-stem download prompt, real speakers, Web MIDI, touch) | **NOT RUN** | Ready for user verification in real Chrome / iPad Safari. |
 
+---
+
+## Phase 3 Executed Verification Ledger (2026-11-21)
+
+**Environments Tested (Simulated / Headless Automated):**
+1. **Linux Bun (`bun test --preload ./tests/vite-url-preload.ts tests/studio-phase1.test.ts tests/studio-phase2.test.ts tests/studio-phase3.test.ts`):** **41/41 PASS** (22 Phase 1 + 9 Phase 2 + 10 Phase 3), 0 FAIL, 8,568 `expect()` assertions.
+2. **Linux Headless Chromium (`/ms-playwright/chrome-headless-shell-linux64/chrome-headless-shell` via CDP `node scripts/studio-chromium-verify.mjs`):** **ALL Phase 1 + Phase 2 + Phase 3 checks PASS**, 0 page errors, 0 console errors.
+3. **Real Physical Hardware Tests (macOS Intel Chrome speakers/Web MIDI/60-120s real-time audio callbacks; iPadOS Safari real touch, audio interruption & Jetsam RAM):** **`NOT RUN`** (physical hardware unavailable in Linux container).
+
+### Measured Before vs After Improvements (Apples-to-Apples Benchmarks)
+| Metric | Before Phase 3 | After Phase 3 | Delta |
+|---|---|---|---|
+| Lookahead scheduler (1,000 steps × 4 tracks × 2,000 events = 8,000 events) | `67.26 ms` (`O(N)` scan + alloc + sort) | **`8.76 ms`** (`O(log N + K)` zero-alloc binary search) | **7.68× faster (−87.0% CPU)** |
+| `disposeSynthBus()` AudioNode teardown (per track bus) | `4 / 95` disconnected (**91 nodes & 13 feedback loops leaked**) | **`95 / 95` disconnected (0 leaked)** (`94/94` warm cache) | **−100% AudioNode leaks** |
+| `disposeSynthBus()` oscillator teardown (per track bus) | `9 / 9` stopped | **`9 / 9` stopped** + all modulators disconnected | Clean teardown |
+| Idle Studio UI `requestAnimationFrame` when stopped | Continuous 60–120 Hz + `querySelectorAll` + snapshot alloc | **0 Hz (stopped automatically when `!isPlaying()`)** | **−100% idle UI wakeups** |
+| Range slider drag (Volume / Pan) | Full `innerHTML` rebuild per `input` (destroyed `<input>`) | **In-place label update (`volSlider.isConnected === true`)** | Zero mid-drag DOM rebuilds |
+| 10× 4-track `loadProject()` reload cycles (Chromium JS Heap) | N/A (leaked 91×4 = 364 nodes/cycle) | `26.45 MB -> 13.04 MB` (`−13.41 MB`, GC reclaims cleanly) | Bounded heap, 0 leaks |
+
+### Phase 3 Detailed Verification Results
+| Suite / ID | Test Case | Environment | Status | Exact Measured Result / Notes |
+|---|---|---|---|---|
+| Build / Lint | `npm run lint` (`tsc --noEmit`) & `npm run build` (`vite build`) | Linux | **PASS** | Zero TypeScript errors; clean Vite production bundle including all AudioWorklets. |
+| Protected Diff | `git diff c3f7c3e... -- native plugin src/dsp/hq-engine.ts src/engine/worklet/sy1-processor.ts` | Git | **PASS** | 0 diffs; zero DSP or native VST3/AU modifications. |
+| Phase 1 & 2 Reg | All Phase 1 (22) & Phase 2 (9) Bun tests + Chromium parity (`chainMaxAbsDiff === 0` on all 6 presets), isolation (`0.0`), 2-track & 4-track stems (`-119.55 dB` / `-117.02 dB`), Save->Reload->Restore, Export/Import, Quota | Bun + Headless Chromium | **PASS** | Zero regression in sound parity, isolation, MIDI/WAV exports, or IndexedDB persistence. |
+| **P3-Stress-Bun** | 4 simultaneous tracks: poly chords + rapid Cutoff/Res sweeps + mid-playback preset switches + live MIDI overdub + 32 loop cycles @ 140 BPM | Bun (Simulated Clock) | **PASS** | 32/32 downbeats exact (`< 1e-5 s`), `> 2000` events dispatched, `0` stuck voices across all 4 tracks. |
+| **P3-DSP-4Inst** | 4 simultaneous independent `HQEngine` instances (SuperSaw + WarmPad + AcidBass + MoogBass) for 2s w/ rapid sweeps & preset switch | Bun (Pure DSP) | **PASS** | `0` NaN/Inf samples across 96,000 stereo frames × 4 engines; strong finite output on all 4 instances. |
+| **P3-4Track-WebAudio** | Real 4-track `AudioWorklet("sy1-voices")` + `SynthFXBus` heavy stress (`runOffline4TrackStressProbe`, 48 kHz, 2.0 s, chords + arp + bass + rapid Cutoff/Res sweeps + mid-render preset switch) | Headless Chromium (`OfflineAudioContext`) | **PASS** | `renderMs = 1582.3 ms` (**`RTF = 0.791`**), `nonFiniteSamples = 0`, `peakL = 1.00000`, `peakR = 0.99999` (master soft-clipper ceiling holds), `rmsL = 0.41334`, `rmsR = 0.41863`, `activeVoicesAfterDispose = 0`. |
+| **P3-Scheduler** | 8,000 events across 4 tracks (1,000 steps) + `+2.0 s` main-thread stall / background jump recovery | Bun (Simulated Clock) | **PASS** | 1,000 steps completed in `5.52–8.76 ms`; `+2.0 s` stall cleanly released open notes and scheduled only the fresh `[2.05, 2.15]` window (`<= 2` notes, 0 backlog burst). |
+| **P3-Disposal** | `disposeSynthBus()` (10×), `disposeStudioMasterBus()`, 12× 4-track attach/`loadProject()` cycles, drive curve cache, `setParam()` no-op short-circuit | Bun (Counting Mock AudioContext) | **PASS** | `> 4,000` nodes created & disconnected with **`0` leaked AudioNodes and `0` leaked oscillators**; `0` redundant WaveShaper curve allocations or notifications on identical writes. |
+| **P3-iPad-Recovery** | `AudioContext` state transitions `"running" -> "interrupted" -> "running"` while 4 tracks play | Bun (Simulated State Event) | **PASS** | `"interrupted"` released all active voices (`0` stuck); `"running"` at `+3.0 s` re-anchored cleanly without backlog burst and resumed playback. |
+| **P3-UI-Stress** | Idle `rAF` check, continuous Volume slider drag DOM identity, 10× 4-track `loadProject()` JS Heap check | Headless Chromium (CDP) | **PASS** | `idleRafWhileStopped = false`, `sliderConnectedDuringDrag = true`, `finalT1Vol = 0.65`, `heapBefore = 26.45 MB -> heapAfter = 13.04 MB` (`-13.41 MB`). |
+| **H (Hardware)** | Real macOS Chrome (physical audio speakers, 60–120 s live dropout listening, real Web MIDI) & Real iPadOS Safari (real touch, app-switch audio unlock, Jetsam RAM) | Physical Hardware | **NOT RUN** | Requires physical macOS & iPadOS devices outside this Linux container. |
+
+
 

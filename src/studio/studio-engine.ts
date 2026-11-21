@@ -9,6 +9,7 @@ import {
   getAudioCtxIfAny,
   getMasterVolume,
   masterGainFor,
+  onAudioContextStateChange,
   onMasterVolumeChange,
   unlockAudio
 } from "../engine/bus";
@@ -57,6 +58,10 @@ export function getLiveRecordingRamBudgetBytes(): number {
 
 const SCHEDULER_INTERVAL_MS = 25;
 const LOOKAHEAD_SEC = 0.1;
+/** If the audio clock jumps further ahead than this (main-thread stall or iPad background sleep), re-anchor cleanly instead of burst-firing stale backlog. */
+const SCHEDULER_STALL_THRESHOLD_SEC = 0.35;
+
+let cachedStudioMasterClipCurve: Float32Array | null = null;
 
 /**
  * Transparent Studio master safety soft-clipper:
@@ -67,6 +72,7 @@ const LOOKAHEAD_SEC = 0.1;
  *   hot tracks sum together.
  */
 export function makeStudioMasterClipCurve(): Float32Array {
+  if (cachedStudioMasterClipCurve) return cachedStudioMasterClipCurve;
   const n = 8193;
   const c = new Float32Array(n);
   const knee = 0.98;
@@ -77,6 +83,7 @@ export function makeStudioMasterClipCurve(): Float32Array {
     const y = a <= knee ? a : knee + head * Math.tanh((a - knee) / head);
     c[i] = x < 0 ? -y : y;
   }
+  cachedStudioMasterClipCurve = c;
   return c;
 }
 
@@ -112,7 +119,7 @@ export function createStudioMasterBus(
   out.gain.value = options.unityOut ? 1 : masterGainFor(getMasterVolume());
 
   const analyser = ctx.createAnalyser();
-  analyser.fftSize = 2048;
+  analyser.fftSize = connectToDest ? 2048 : 256;
 
   sum.connect(clipIn);
   clipIn.connect(clip);
@@ -125,6 +132,17 @@ export function createStudioMasterBus(
   }
 
   return { ctx, sum, clipIn, clip, tap, out, analyser };
+}
+
+/** Disconnect all nodes of a StudioMasterBus cleanly. */
+export function disposeStudioMasterBus(bus: StudioMasterBus | null): void {
+  if (!bus) return;
+  try { bus.sum.disconnect(); } catch (e) {}
+  try { bus.clipIn.disconnect(); } catch (e) {}
+  try { bus.clip.disconnect(); } catch (e) {}
+  try { bus.tap.disconnect(); } catch (e) {}
+  try { bus.out.disconnect(); } catch (e) {}
+  try { bus.analyser.disconnect(); } catch (e) {}
 }
 
 interface LiveRecorderSession {
@@ -162,6 +180,7 @@ export class SY1StudioEngine {
   private masterBus: StudioMasterBus | null = null;
   private unsubMasterVol: (() => void) | null = null;
   private unsubTempo: (() => void) | null = null;
+  private unsubAudioState: (() => void) | null = null;
 
   private active = false;
   private playing = false;
@@ -213,6 +232,9 @@ export class SY1StudioEngine {
     if (!this.isolatedTempo) {
       this.unsubTempo = onTempoChange((nextBpm) => this.handleTempoChange(nextBpm));
     }
+    this.unsubAudioState = onAudioContextStateChange((state, ctx) => {
+      this.handleAudioContextStateChange(state, ctx.currentTime);
+    });
   }
 
   private createTrackInstance(index: number, presetId: string, armed: boolean): SY1TrackEngine {
@@ -274,6 +296,36 @@ export class SY1StudioEngine {
     return this.active;
   }
 
+  isPlaying(): boolean {
+    return this.playing;
+  }
+
+  /**
+   * Handle AudioContext state transitions (especially iPadOS Safari "interrupted" / "suspended" -> "running").
+   * Releases active voices cleanly on interrupt and re-anchors the scheduler clock cleanly on resume so no
+   * stuck notes or burst-fire backlog clicks occur.
+   */
+  handleAudioContextStateChange(state: string, nowAudioTime = this.nowAudioTime()): void {
+    if (state === "interrupted" || state === "suspended") {
+      if (this.playing || this.active) {
+        this.releasePlaybackNotes(0);
+        for (const t of this.tracks) t.allNotesOff(0);
+        this.liveHeldTracksByMidi.clear();
+        this.notifyKeys();
+      }
+      return;
+    }
+    if (state === "running" && this.playing) {
+      const resyncTick = this.getCurrentTick(nowAudioTime);
+      this.anchorAudioTime = nowAudioTime;
+      this.anchorTick = resyncTick;
+      this.anchorBpm = this.bpm;
+      this.cursorAudioTime = nowAudioTime;
+      this.cursorTick = resyncTick;
+      this.stepScheduler(nowAudioTime);
+    }
+  }
+
   /** Lazily attach StudioMasterBus and all tracks to the single shared AudioContext. */
   async ensureAudio(): Promise<AudioContext | null> {
     if (typeof window === "undefined") return null;
@@ -282,6 +334,7 @@ export class SY1StudioEngine {
     if (!ctx) return null;
 
     if (!this.masterBus || this.masterBus.ctx !== ctx) {
+      disposeStudioMasterBus(this.masterBus);
       this.masterBus = createStudioMasterBus(ctx, { connectToDestination: true });
       if (this.unsubMasterVol) this.unsubMasterVol();
       this.unsubMasterVol = onMasterVolumeChange((v) => {
@@ -302,6 +355,7 @@ export class SY1StudioEngine {
     const ctx = getAudioCtx();
     if (!ctx) return null;
     if (!this.masterBus || this.masterBus.ctx !== ctx) {
+      disposeStudioMasterBus(this.masterBus);
       this.masterBus = createStudioMasterBus(ctx, { connectToDestination: true });
       if (this.unsubMasterVol) this.unsubMasterVol();
       this.unsubMasterVol = onMasterVolumeChange((v) => {
@@ -454,6 +508,8 @@ export class SY1StudioEngine {
   setTrackPreset(id: string, presetId: string): void {
     const t = this.getTrack(id);
     if (!t) return;
+    this.playbackOpenNotes.get(id)?.clear();
+    this.playbackSustainDown.delete(id);
     t.applyPreset(presetId);
   }
 
@@ -680,6 +736,18 @@ export class SY1StudioEngine {
     const windowEnd = nowAudioTime + LOOKAHEAD_SEC;
     if (this.cursorAudioTime > windowEnd) return;
 
+    // Stall / background sleep recovery guard: if the audio clock jumped far ahead of the scheduler
+    // cursor (e.g. main-thread hitch or iPad Safari returning from background), release open notes and
+    // re-anchor cleanly at `nowAudioTime` instead of burst-firing dozens of stale past notes.
+    if (nowAudioTime - this.cursorAudioTime > SCHEDULER_STALL_THRESHOLD_SEC) {
+      this.releasePlaybackNotes(nowAudioTime);
+      const resyncTick = this.getCurrentTick(nowAudioTime);
+      this.anchorAudioTime = nowAudioTime;
+      this.anchorTick = resyncTick;
+      this.cursorAudioTime = nowAudioTime;
+      this.cursorTick = resyncTick;
+    }
+
     const secPerTick = this.secondsPerTick(this.anchorBpm);
     const ticksPerSec = this.ticksPerSecond(this.anchorBpm);
     const totalTicks = this.getTotalTicks();
@@ -732,32 +800,26 @@ export class SY1StudioEngine {
 
   private scheduleSegment(startTick: number, endTick: number, segStartAudio: number, secPerTick: number): void {
     if (endTick <= startTick) return;
-    for (const track of this.tracks) {
+    const observer = this.dispatchObserver;
+    for (let ti = 0; ti < this.tracks.length; ti++) {
+      const track = this.tracks[ti];
       if (track.events.length === 0) continue;
-      // Collect events strictly inside [startTick, endTick)
-      const due: StudioMidiEvent[] = [];
-      for (let i = 0; i < track.events.length; i++) {
-        const ev = track.events[i];
-        if (ev.tick >= startTick && ev.tick < endTick) {
-          due.push(ev);
+
+      let openSet: Set<number> | undefined;
+      track.forEachEventInRange(startTick, endTick, (ev) => {
+        if (!openSet) {
+          openSet = this.playbackOpenNotes.get(track.id);
+          if (!openSet) {
+            openSet = new Set<number>();
+            this.playbackOpenNotes.set(track.id, openSet);
+          }
         }
-      }
-      if (due.length === 0) continue;
-      due.sort((a, b) => a.tick - b.tick || (a.type === "noteOff" ? -1 : 1) - (b.type === "noteOff" ? -1 : 1));
-
-      let openSet = this.playbackOpenNotes.get(track.id);
-      if (!openSet) {
-        openSet = new Set<number>();
-        this.playbackOpenNotes.set(track.id, openSet);
-      }
-
-      for (const ev of due) {
         const at = segStartAudio + (ev.tick - startTick) * secPerTick;
         this.dispatchEventToTrack(track, ev, at, openSet);
-        if (this.dispatchObserver) {
-          this.dispatchObserver({ trackId: track.id, event: ev, audioTime: at });
+        if (observer) {
+          observer({ trackId: track.id, event: ev, audioTime: at });
         }
-      }
+      });
     }
   }
 
@@ -1008,6 +1070,7 @@ export class SY1StudioEngine {
       const finish = () => {
         if (finished) return;
         finished = true;
+        try { rec.node.port.onmessage = null; } catch (e) {}
         try { this.masterBus?.tap.disconnect(rec.node); } catch (e) {}
         try { rec.node.disconnect(); rec.sink.disconnect(); } catch (e) {}
         if (rec.frames > 0) {
@@ -1022,6 +1085,9 @@ export class SY1StudioEngine {
             createdAt: Date.now()
           };
         }
+        // Release raw Float32 capture chunks immediately so multi-megabyte buffers can be GC'd
+        rec.chunks[0].length = 0;
+        rec.chunks[1].length = 0;
         resolve();
       };
       const prev = rec.node.port.onmessage;
@@ -1113,8 +1179,12 @@ export class SY1StudioEngine {
 
     await this.stop();
     for (const old of this.tracks) {
-      old.detachAudio();
+      old.dispose();
     }
+    this.playbackOpenNotes.clear();
+    this.playbackSustainDown.clear();
+    this.liveHeldTracksByMidi.clear();
+    this.liveRecordedOpenNotes.clear();
 
     this.projectId = proj.id;
     this.projectName = proj.name;
@@ -1223,9 +1293,10 @@ export class SY1StudioEngine {
     const preRollFrames = 256;
     const preRollSec = preRollFrames / sampleRate;
     const offline = new OfflineAudioContext(2, totalFrames + preRollFrames, sampleRate);
-    const destination: AudioNode = useMasterBus
-      ? createStudioMasterBus(offline, { connectToDestination: true, unityOut: true }).sum
-      : offline.destination;
+    const offlineMaster = useMasterBus
+      ? createStudioMasterBus(offline, { connectToDestination: true, unityOut: true })
+      : null;
+    const destination: AudioNode = offlineMaster ? offlineMaster.sum : offline.destination;
 
     const clones: { src: SY1TrackEngine; clone: SY1TrackEngine; events: StudioMidiEvent[] }[] = [];
 
@@ -1348,7 +1419,8 @@ export class SY1StudioEngine {
     const L = rawL.slice(preRollFrames, preRollFrames + totalFrames);
     const R = rawR.slice(preRollFrames, preRollFrames + totalFrames);
 
-    clones.forEach((c) => c.clone.detachAudio());
+    clones.forEach((c) => c.clone.dispose());
+    disposeStudioMasterBus(offlineMaster);
     return { L, R, sampleRate: rendered.sampleRate };
   }
 
@@ -1450,13 +1522,20 @@ export class SY1StudioEngine {
     return stems;
   }
 
-  // ---------------------------------------------------------------- snapshot ---
-  getTransportSnapshot(): StudioTransportSnapshot {
+  /** Lightweight playhead position readout for 60 Hz rAF without allocating a full StudioTransportSnapshot. */
+  getPlayheadPosition(): { currentTick: number; totalTicks: number; currentBar: number; currentBeat: number } {
+    const totalTicks = this.getTotalTicks();
     const tick = this.getCurrentTick();
-    const clampedTick = Math.max(0, Math.min(this.getTotalTicks(), tick));
+    const clampedTick = Math.max(0, Math.min(totalTicks, tick));
     const currentBar = Math.min(this.bars, Math.floor(clampedTick / STUDIO_TICKS_PER_BAR) + 1);
     const tickInBar = clampedTick % STUDIO_TICKS_PER_BAR;
     const currentBeat = Math.min(STUDIO_BEATS_PER_BAR, Math.floor(tickInBar / STUDIO_PPQ) + 1);
+    return { currentTick: clampedTick, totalTicks, currentBar, currentBeat };
+  }
+
+  // ---------------------------------------------------------------- snapshot ---
+  getTransportSnapshot(): StudioTransportSnapshot {
+    const pos = this.getPlayheadPosition();
     const liveFrames = this.recorder ? this.recorder.frames : 0;
 
     return {
@@ -1468,11 +1547,11 @@ export class SY1StudioEngine {
       bars: this.bars,
       loopStartBar: this.loopStartBar,
       loopEndBar: this.loopEndBar,
-      totalTicks: this.getTotalTicks(),
+      totalTicks: pos.totalTicks,
       bpm: this.bpm,
-      currentTick: clampedTick,
-      currentBar,
-      currentBeat,
+      currentTick: pos.currentTick,
+      currentBar: pos.currentBar,
+      currentBeat: pos.currentBeat,
       focusedTrackId: this.focusedTrackId,
       maxLiveSeconds: RECORDER_MAX_SECONDS,
       liveRecSeconds: this.recorder ? liveFrames / this.recorder.ctx.sampleRate : 0,
@@ -1498,8 +1577,16 @@ export class SY1StudioEngine {
       this.unsubTempo();
       this.unsubTempo = null;
     }
-    for (const t of this.tracks) t.detachAudio();
+    if (this.unsubAudioState) {
+      this.unsubAudioState();
+      this.unsubAudioState = null;
+    }
+    for (const t of this.tracks) t.dispose();
+    disposeStudioMasterBus(this.masterBus);
     this.masterBus = null;
+    this.stateListeners.clear();
+    this.keyHighlightListener = null;
+    this.dispatchObserver = null;
   }
 }
 

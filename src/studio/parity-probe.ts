@@ -6,9 +6,9 @@
  * sound parity and zero cross-track leakage with measured sample-level metrics.
  */
 
-import { createSynthBus } from "../engine/bus";
+import { createSynthBus, disposeSynthBus } from "../engine/bus";
 import { createHQNode } from "../engine/hq";
-import { createStudioMasterBus, createStudioEngine } from "./studio-engine";
+import { createStudioMasterBus, createStudioEngine, disposeStudioMasterBus } from "./studio-engine";
 import { buildSy1PresetPatch, SY1TrackEngine } from "./track-engine";
 
 export interface ParityMetric {
@@ -115,7 +115,10 @@ async function renderStandaloneOnce(
     await new Promise((r) => setTimeout(r, 15));
     await ctx.resume();
   });
-  return await ctx.startRendering();
+  const buf = await ctx.startRendering();
+  try { node.disconnect(); } catch (e) {}
+  disposeSynthBus(bus);
+  return buf;
 }
 
 async function renderStudioSingleTrackOnce(
@@ -138,7 +141,8 @@ async function renderStudioSingleTrackOnce(
     await ctx.resume();
   });
   const buf = await ctx.startRendering();
-  track.detachAudio();
+  track.dispose();
+  disposeStudioMasterBus(master);
   return buf;
 }
 
@@ -671,5 +675,145 @@ export async function runPostRestoreParityProbe(sampleRate = 48000): Promise<{
     postRestoreBars,
     postRestoreTrack1Cutoff,
     postRestoreTrack2Cutoff
+  };
+}
+
+/**
+ * Phase 3: Real Chromium OfflineAudioContext 4-Track Heavy Stress Probe.
+ * Drives 4 simultaneous full SY-1 AudioWorklet + SynthFXBus tracks with:
+ *  - Polyphonic 4-note chords on Track 1 & Track 2
+ *  - Rapid 16th-note arpeggios on Track 3 & bass on Track 4
+ *  - Rapid Cutoff & Resonance parameter automation sweeps
+ *  - Mid-playback preset switch on Track 1
+ * Verifies finite output (0 NaN/Inf), peak ceiling <= 1.0, active stereo signal,
+ * render CPU real-time factor (RTF), and clean node disposal.
+ */
+export async function runOffline4TrackStressProbe(sampleRate = 48000, durationSec = 2.0): Promise<{
+  sampleRate: number;
+  durationSec: number;
+  frames: number;
+  trackCount: number;
+  renderMs: number;
+  realtimeFactor: number;
+  nonFiniteSamples: number;
+  peakL: number;
+  peakR: number;
+  rmsL: number;
+  rmsR: number;
+  activeVoicesAfterDispose: number;
+}> {
+  const frames = Math.round(sampleRate * durationSec);
+  const ctx = new OfflineAudioContext(2, frames, sampleRate);
+  const master = createStudioMasterBus(ctx, { connectToDestination: true, unityOut: true });
+
+  const presets = ["superSaw", "warmPad", "acidBass", "moogBass"];
+  const pans = [-0.5, 0.5, -0.25, 0.25];
+  const tracks = presets.map((presetId, idx) =>
+    new SY1TrackEngine({
+      id: `stress-${idx + 1}`,
+      name: `Stress ${idx + 1}`,
+      presetId,
+      volume: 0.72,
+      pan: pans[idx],
+      forceHQ: true
+    })
+  );
+  await Promise.all(tracks.map((t) => t.attachAudio(ctx, master.sum)));
+
+  // Schedule dense 4-track polyphonic chords + rapid notes at quantum 1
+  ctx.suspend(128 / sampleRate).then(async () => {
+    const chord1 = [60, 64, 67, 71];
+    const chord2 = [53, 57, 60, 64];
+    for (const m of chord1) {
+      tracks[0].noteOn(m, 0.85, 0.02);
+      tracks[0].noteOff(m, 0.9);
+    }
+    for (const m of chord2) {
+      tracks[1].noteOn(m, 0.75, 0.04);
+      tracks[1].noteOff(m, 1.85);
+    }
+    for (let i = 0; i < 16; i++) {
+      const tOn = 0.05 + i * 0.11;
+      const tOff = tOn + 0.08;
+      const note = 48 + ((i * 5) % 24);
+      tracks[2].noteOn(note, 0.85, tOn);
+      tracks[2].noteOff(note, tOff);
+    }
+    const bassNotes = [36, 36, 43, 41];
+    for (let i = 0; i < bassNotes.length; i++) {
+      tracks[3].noteOn(bassNotes[i], 0.9, 0.02 + i * 0.45);
+      tracks[3].noteOff(bassNotes[i], 0.42 + i * 0.45);
+    }
+    await new Promise((r) => setTimeout(r, 15));
+    await ctx.resume();
+  });
+
+  // Rapid Cutoff & Resonance sweeps + mid-render preset switch on Track 1
+  const sweepTimes = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75];
+  sweepTimes.forEach((sec, idx) => {
+    const qTime = Math.floor((sec * sampleRate) / 128) * (128 / sampleRate);
+    ctx.suspend(qTime).then(async () => {
+      tracks[2].setParam("cutoff", 220 + idx * 1400);
+      tracks[2].setParam("res", 2 + (idx % 4) * 3.2);
+      tracks[3].setParam("cutoff", 1800 - idx * 180);
+      if (idx === 3) {
+        // Mid-playback preset switch on Track 1 followed by fresh chord
+        tracks[0].applyPreset("pluck");
+        for (const m of [62, 65, 69, 72]) {
+          tracks[0].noteOn(m, 0.85, qTime + 0.02);
+          tracks[0].noteOff(m, qTime + 0.6);
+        }
+      }
+      await new Promise((r) => setTimeout(r, 5));
+      await ctx.resume();
+    }).catch(() => {});
+  });
+
+  const t0 = performance.now();
+  const buf = await ctx.startRendering();
+  const renderMs = performance.now() - t0;
+
+  const L = buf.getChannelData(0);
+  const R = buf.getChannelData(1);
+  let nonFiniteSamples = 0;
+  let peakL = 0;
+  let peakR = 0;
+  let sqL = 0;
+  let sqR = 0;
+  for (let i = 0; i < L.length; i++) {
+    const l = L[i];
+    const r = R[i];
+    if (!Number.isFinite(l) || !Number.isFinite(r)) {
+      nonFiniteSamples++;
+      continue;
+    }
+    const al = Math.abs(l);
+    const ar = Math.abs(r);
+    if (al > peakL) peakL = al;
+    if (ar > peakR) peakR = ar;
+    sqL += l * l;
+    sqR += r * r;
+  }
+
+  let activeVoicesAfterDispose = 0;
+  for (const t of tracks) {
+    t.dispose();
+    activeVoicesAfterDispose += t.getActiveVoiceCount();
+  }
+  disposeStudioMasterBus(master);
+
+  return {
+    sampleRate,
+    durationSec,
+    frames: L.length,
+    trackCount: tracks.length,
+    renderMs: Number(renderMs.toFixed(2)),
+    realtimeFactor: Number((renderMs / (durationSec * 1000)).toFixed(3)),
+    nonFiniteSamples,
+    peakL: Number(peakL.toFixed(5)),
+    peakR: Number(peakR.toFixed(5)),
+    rmsL: Number(Math.sqrt(sqL / Math.max(1, L.length)).toFixed(5)),
+    rmsR: Number(Math.sqrt(sqR / Math.max(1, R.length)).toFixed(5)),
+    activeVoicesAfterDispose
   };
 }

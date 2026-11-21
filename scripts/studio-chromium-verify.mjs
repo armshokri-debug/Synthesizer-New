@@ -18,6 +18,10 @@
  *   - P2-SaveReload: Real IndexedDB Save -> real CDP Page.reload -> Restore (plus standalone intact)
  *   - P2-ExportImport: .sy1studio JSON export -> state mutation -> import restore + corrupt file rejection
  *   - P2-Quota: Real Chromium QuotaExceededError & unavailable IndexedDB error handling
+ *  Phase 3 Stability & Performance Suite:
+ *   - P3-4TrackStress: Real 4-track AudioWorklet + SynthFXBus heavy stress (chords, rapid Cutoff/Res, preset switch, RTF)
+ *   - P3-UIStressAndHeap: Idle rAF stopped when not playing, Volume/Pan slider stays connected mid-drag,
+ *     and 10 consecutive 4-track Save/LoadProject cycles JS heap check
  */
 
 import { spawn } from "node:child_process";
@@ -515,6 +519,69 @@ async function main() {
       };
     })()`);
 
+    // -------------------------------------------------------------------------
+    // Phase 3 Real Headless Chromium Stability, Stress & Heap Verification
+    // -------------------------------------------------------------------------
+
+    // 11. P3-4TrackStress: 4 simultaneous AudioWorklet + SynthFXBus tracks under heavy chords, Cutoff/Res sweeps & preset switch
+    const stress4Track = await cdp.evaluate(`(async () => {
+      return await window.SY1_STUDIO.diagnostics.runOffline4TrackStressProbe(48000, 2.0);
+    })()`);
+
+    // 12. P3-UIStressAndHeap: Idle rAF verification, Volume slider DOM preservation mid-drag, 10x 4-track reload heap check
+    const uiStressAndHeap = await cdp.evaluate(`(async () => {
+      const eng = window.SY1_STUDIO.engine;
+      if (!window.SY1_STUDIO.isOpen()) {
+        document.getElementById("open-studio-btn").click();
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      await eng.stop();
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Verify rAF playhead loop is NOT spinning when stopped
+      const idleRafWhileStopped = window.SY1_STUDIO.diagnostics.isPlayheadLoopActive();
+
+      // Expand to 4 tracks
+      while (eng.getTracks().length < 4) eng.addTrack();
+      await new Promise((r) => setTimeout(r, 60));
+
+      // Drag Track 1 Volume slider continuously and verify DOM element is NOT destroyed mid-drag
+      const volSlider = document.querySelector('input[data-st-range="volume"][data-track-id="track-1"]');
+      volSlider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      let sliderConnectedDuringDrag = true;
+      for (const val of ["0.85", "0.70", "0.55", "0.40", "0.65"]) {
+        volSlider.value = val;
+        volSlider.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 10));
+        if (!volSlider.isConnected) sliderConnectedDuringDrag = false;
+      }
+      volSlider.dispatchEvent(new Event("change", { bubbles: true }));
+      volSlider.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      const finalT1Vol = Number(eng.getTracks()[0].volume.toFixed(2));
+
+      // 10 consecutive 4-track project reload cycles (verifies clean AudioNode & listener teardown)
+      const projJson = eng.exportProject();
+      const heapBeforeMB = performance.memory ? Number((performance.memory.usedJSHeapSize / 1048576).toFixed(2)) : null;
+      for (let i = 0; i < 10; i++) {
+        await eng.loadProject(projJson);
+      }
+      await new Promise((r) => setTimeout(r, 120));
+      const heapAfterMB = performance.memory ? Number((performance.memory.usedJSHeapSize / 1048576).toFixed(2)) : null;
+
+      // Clean up autosave after UI stress
+      await window.SY1_STUDIO.storage.clearAutosave();
+
+      return {
+        idleRafWhileStopped,
+        trackCount: eng.getTracks().length,
+        sliderConnectedDuringDrag,
+        finalT1Vol,
+        heapBeforeMB,
+        heapAfterMB,
+        heapDeltaMB: heapBeforeMB !== null && heapAfterMB !== null ? Number((heapAfterMB - heapBeforeMB).toFixed(2)) : null
+      };
+    })()`);
+
     const report = {
       phase1: {
         standalone,
@@ -538,6 +605,10 @@ async function main() {
         postReloadCheck,
         exportImportCheck,
         quotaAndCleanup
+      },
+      phase3: {
+        stress4Track,
+        uiStressAndHeap
       },
       pageErrors,
       consoleErrors
@@ -657,11 +728,31 @@ async function main() {
       failures.push(`Quota/cleanup check failed: ${JSON.stringify(quotaAndCleanup)}`);
     }
 
+    // Phase 3 assertions
+    if (
+      stress4Track.trackCount !== 4 ||
+      stress4Track.nonFiniteSamples !== 0 ||
+      !(stress4Track.peakL > 0.05 && stress4Track.peakR > 0.05) ||
+      !(stress4Track.peakL <= 1.0 && stress4Track.peakR <= 1.0) ||
+      !(stress4Track.rmsL > 0.01 && stress4Track.rmsR > 0.01) ||
+      stress4Track.activeVoicesAfterDispose !== 0
+    ) {
+      failures.push(`Phase 3 4-track AudioWorklet stress probe failed: ${JSON.stringify(stress4Track)}`);
+    }
+    if (
+      uiStressAndHeap.idleRafWhileStopped !== false ||
+      uiStressAndHeap.trackCount !== 4 ||
+      uiStressAndHeap.sliderConnectedDuringDrag !== true ||
+      uiStressAndHeap.finalT1Vol !== 0.65
+    ) {
+      failures.push(`Phase 3 UI stress/slider/rAF check failed: ${JSON.stringify(uiStressAndHeap)}`);
+    }
+
     if (failures.length > 0) {
       console.error("VERIFICATION FAILURES:\n - " + failures.join("\n - "));
       process.exitCode = 1;
     } else {
-      console.log("ALL REAL CHROMIUM PHASE 1 & PHASE 2 VERIFICATION CHECKS PASSED!");
+      console.log("ALL REAL CHROMIUM PHASE 1, PHASE 2 & PHASE 3 VERIFICATION CHECKS PASSED!");
     }
   } finally {
     cdp?.close();
