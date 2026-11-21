@@ -346,8 +346,9 @@ interface Take {
 }
 let take: Take | null = null;
 let lastTake: { wav: Blob; mid: Blob | null; name: string; seconds: number; notes: number; bpm: number } | null = null;
-const MAX_SECONDS = 30 * 60;
-let workletReady: WeakSet<AudioContext> = new WeakSet();
+export const RECORDER_MAX_SECONDS = 30 * 60;
+const MAX_SECONDS = RECORDER_MAX_SECONDS;
+const workletReady = new WeakMap<AudioContext, Promise<boolean>>();
 
 const RECORDER_SRC = `
 class SY1Recorder extends AudioWorkletProcessor {
@@ -377,6 +378,25 @@ class SY1Recorder extends AudioWorkletProcessor {
 registerProcessor("sy1-recorder", SY1Recorder);
 `;
 
+/** Load the "sy1-recorder" AudioWorklet processor at most once per AudioContext. */
+export function ensureRecorderWorklet(ctx: AudioContext): Promise<boolean> {
+  if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") return Promise.resolve(false);
+  const existing = workletReady.get(ctx);
+  if (existing) return existing;
+  const p = (async () => {
+    try {
+      const url = URL.createObjectURL(new Blob([RECORDER_SRC], { type: "application/javascript" }));
+      await ctx.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  })();
+  workletReady.set(ctx, p);
+  return p;
+}
+
 export function isRecording(): boolean {
   return !!take;
 }
@@ -396,16 +416,8 @@ export async function startTake(): Promise<boolean> {
   const t = hooks.getTap();
   if (!t) return false;
   const { ctx, tap } = t;
-  try {
-    if (!workletReady.has(ctx)) {
-      const url = URL.createObjectURL(new Blob([RECORDER_SRC], { type: "application/javascript" }));
-      await ctx.audioWorklet.addModule(url);
-      URL.revokeObjectURL(url);
-      workletReady.add(ctx);
-    }
-  } catch (e) {
-    return false;
-  }
+  const ready = await ensureRecorderWorklet(ctx);
+  if (!ready) return false;
   const node = new AudioWorkletNode(ctx, "sy1-recorder", {
     numberOfInputs: 1,
     numberOfOutputs: 1,

@@ -46,24 +46,35 @@ export function setVoiceModWheel(norm: number): void {
   activeSynthVoices.forEach((vc) => vc.update("modWheel"));
 }
 
+export interface VoiceRoutingOptions {
+  busInput?: AudioNode;
+  voicePool?: Set<SynthVoice>;
+  getPitchBend?: () => number;
+  getModWheel?: () => number;
+}
+
 export function createSynthVoice(
-  ctx: AudioContext,
+  ctx: BaseAudioContext,
   freq: number,
   when: number,
   synthPatch: SynthPatch,
   velocity = 1,
   fromHz = 0,
-  glide = 0
+  glide = 0,
+  routing?: VoiceRoutingOptions
 ): SynthVoice {
   const p = synthPatch;
-  const bus = getSynthBus(ctx, synthPatch);
+  const targetInput = routing?.busInput ?? getSynthBus(ctx, synthPatch).input;
+  const pool = routing?.voicePool ?? activeSynthVoices;
+  const readBend = routing?.getPitchBend ?? (() => currentPitchBend);
+  const readMod = routing?.getModWheel ?? (() => currentModWheel);
 
   // Voice stealing keeps weak phones from overloading
-  const sounding = Array.from(activeSynthVoices).filter((v) => !v.isReleased());
+  const sounding = Array.from(pool).filter((v) => !v.isReleased());
   if (sounding.length >= SYNTH_MAX_VOICES) {
     sounding[0].release(ctx.currentTime, 0.02);
   }
-  const all = Array.from(activeSynthVoices);
+  const all = Array.from(pool);
   if (all.length >= SYNTH_MAX_VOICES + 6) {
     all[0].kill();
   }
@@ -83,7 +94,7 @@ export function createSynthVoice(
   filter.connect(amp);
   amp.connect(trem);
   trem.connect(out);
-  out.connect(bus.input);
+  out.connect(targetInput);
 
   const srcs: (OscillatorNode | AudioBufferSourceNode)[] = [];
   const osc = (wave: string, octave: number, detune: number, level: number) => {
@@ -104,7 +115,7 @@ export function createSynthVoice(
     return { o, g };
   };
 
-  const bendCents = currentPitchBend * (p.bendRange ?? 2) * 100;
+  const bendCents = readBend() * (p.bendRange ?? 2) * 100;
   const o1 = osc(p.osc1Wave, p.osc1Oct, bendCents, 1 - p.oscMix);
   const o2 = osc(p.osc2Wave, p.osc2Oct, p.osc2Detune + bendCents, p.oscMix);
   const s1 = osc("sine", p.osc1Oct - 1, bendCents, p.sub * 0.8);
@@ -146,7 +157,7 @@ export function createSynthVoice(
 
   const applyLfoRouting = () => {
     try { lfoGain.disconnect(); } catch (e) {}
-    const d = Math.min(1, synthPatch.lfoDepth + currentModWheel);
+    const d = Math.min(1, synthPatch.lfoDepth + readMod());
     if (synthPatch.lfoTarget === "filter") {
       lfoGain.gain.setValueAtTime(d * 2400, ctx.currentTime);
       lfoGain.connect(filter.detune);
@@ -179,7 +190,7 @@ export function createSynthVoice(
         try { s.stop(now + 0.05); } catch (e) {}
       });
       released = true;
-      activeSynthVoices.delete(voice);
+      pool.delete(voice);
     },
     release(t, fastTau) {
       if (released) return;
@@ -191,7 +202,7 @@ export function createSynthVoice(
       srcs.forEach((s) => {
         try { s.stop(stopAt); } catch (e) {}
       });
-      setTimeout(() => activeSynthVoices.delete(voice), Math.max(0, (stopAt - ctx.currentTime) * 1000) + 50);
+      setTimeout(() => pool.delete(voice), Math.max(0, (stopAt - ctx.currentTime) * 1000) + 50);
     },
     retune(freqHz, glideT, at) {
       const t0 = Math.max(ctx.currentTime, at);
@@ -223,7 +234,7 @@ export function createSynthVoice(
         noiseGain.gain.setTargetAtTime(q.noise * 0.5, now, 0.02);
       } else if (key === "osc2Detune" || key === "bendRange" || key === "pitchBend") {
         const tau = key === "pitchBend" ? 0.005 : 0.02;
-        const bc = currentPitchBend * (q.bendRange ?? 2) * 100;
+        const bc = readBend() * (q.bendRange ?? 2) * 100;
         o1.o.detune.setTargetAtTime(bc, now, tau);
         o2.o.detune.setTargetAtTime(q.osc2Detune + bc, now, tau);
         s1.o.detune.setTargetAtTime(bc, now, tau);
@@ -250,6 +261,6 @@ export function createSynthVoice(
     }
   };
 
-  activeSynthVoices.add(voice);
+  pool.add(voice);
   return voice;
 }

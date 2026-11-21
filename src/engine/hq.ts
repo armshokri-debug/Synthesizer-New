@@ -56,6 +56,45 @@ export function useHQ(): boolean {
   return engine === "hq" && state === "ready";
 }
 
+const hqModules = new WeakMap<BaseAudioContext, Promise<boolean>>();
+
+/** Load the "sy1-voices" AudioWorklet processor at most once per AudioContext / OfflineAudioContext. */
+export function ensureHQModule(ctx: BaseAudioContext): Promise<boolean> {
+  if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") {
+    return Promise.resolve(false);
+  }
+  const existing = hqModules.get(ctx);
+  if (existing) return existing;
+  const p = ctx.audioWorklet
+    .addModule(processorUrl)
+    .then(() => true)
+    .catch(() => false);
+  hqModules.set(ctx, p);
+  return p;
+}
+
+/** Instantiate an isolated "sy1-voices" AudioWorkletNode (its own HQEngine DSP instance) connected to busInput. */
+export async function createHQNode(
+  ctx: BaseAudioContext,
+  busInput: AudioNode,
+  initialPatch: Record<string, unknown>
+): Promise<AudioWorkletNode | null> {
+  const ok = await ensureHQModule(ctx);
+  if (!ok) return null;
+  try {
+    const n = new AudioWorkletNode(ctx, "sy1-voices", {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [2]
+    });
+    n.connect(busInput);
+    n.port.postMessage({ t: "patch", patch: { ...initialPatch } });
+    return n;
+  } catch (e) {
+    return null;
+  }
+}
+
 /** Start loading the worklet (once). Safe to call on every gesture. */
 export function initHQ(ctx: AudioContext, busInput: AudioNode, getPatch: () => Record<string, unknown>): void {
   if (state !== "idle") return;
@@ -65,9 +104,13 @@ export function initHQ(ctx: AudioContext, busInput: AudioNode, getPatch: () => R
     return;
   }
   state = "loading";
-  ctx.audioWorklet
-    .addModule(processorUrl)
-    .then(() => {
+  ensureHQModule(ctx)
+    .then((ok) => {
+      if (!ok) {
+        state = "failed";
+        notify();
+        return;
+      }
       node = new AudioWorkletNode(ctx, "sy1-voices", {
         numberOfInputs: 0,
         numberOfOutputs: 1,

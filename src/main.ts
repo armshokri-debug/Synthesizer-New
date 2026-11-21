@@ -6,10 +6,11 @@ import "./index.css";
 import { getAnalogState } from "./engine/analog";
 import "./ui/skins.css";
 import "./ui/keyboard.css";
+import "./ui/studio.css";
 import { installAudioUnlock } from "./engine/bus";
 import { applySkin } from "./ui/skins";
 import { getEngine, getHQState } from "./engine/hq";
-import { requestMidi } from "./engine/midi";
+import { requestMidi, setMidiInputInterceptor } from "./engine/midi";
 import { SYNTH_PARAMS } from "./engine/params";
 import {
   allNotesOff,
@@ -29,9 +30,9 @@ import {
   setSynthParam
 } from "./engine/synth";
 import { getTempo, setTempo } from "./engine/tempo";
-import { initKeyboardInteractions, renderKeyboard, syncOriental } from "./ui/keyboard";
+import { initKeyboardInteractions, renderKeyboard, setKeyboardTarget, syncKeyboardHighlights, syncOriental } from "./ui/keyboard";
 import { initKnobInteractions } from "./ui/knob";
-import { initPanelInteractions, renderPanel, selectDrumVoiceForNote } from "./ui/panel";
+import { fitPanel, initPanelInteractions, renderPanel, selectDrumVoiceForNote, setStudioOpenHandler } from "./ui/panel";
 import { startSynthScope } from "./ui/scope";
 import { initArpPanel } from "./ui/arp-panel";
 import { initOrientalPanel } from "./ui/oriental-panel";
@@ -42,6 +43,23 @@ import { setMirrorSink } from "./engine/mirror";
 import { applyEngineCall } from "./engine/calls";
 import { getParamMacro, paramNorm } from "./engine/cc-map";
 import { batchPluginVisuals } from "./ui/plugin-visuals";
+import { studioEngine } from "./studio/studio-engine";
+import { studioStorage } from "./studio/storage";
+import {
+  runOfflineBounceProbe,
+  runOfflineIsolationProbe,
+  runOfflineParityProbe,
+  runOfflineStemsProbe,
+  runPostRestoreParityProbe
+} from "./studio/parity-probe";
+import {
+  hideStudioPanel,
+  hydrateStudioFromStorage,
+  importStudioProjectJson,
+  initStudioPanel,
+  saveStudioProjectNow,
+  showStudioPanel
+} from "./ui/studio-panel";
 
 function initApp(): void {
   // Inside the AU/VST3 plugin: the plugin's engine makes the sound; this window mirrors
@@ -106,6 +124,93 @@ function initApp(): void {
       const pad = (e.target as HTMLElement).closest(".pad") as HTMLElement | null;
       if (pad) selectDrumVoiceForNote(Number(pad.dataset.midi));
     });
+  }
+
+  // Web-only SY-1 Studio initialization (strictly disabled inside AU/VST3 plugin)
+  if (!plugin) {
+    const enterStudioMode = () => {
+      allNotesOff();
+      studioEngine.setActive(true);
+      studioEngine.setKeyHighlightListener(syncKeyboardHighlights);
+      setKeyboardTarget({
+        noteOn: (m, v) => studioEngine.liveNoteOn(m, v),
+        noteOff: (m) => studioEngine.liveNoteOff(m),
+        setPitchBend: (n) => studioEngine.livePitchBend(n),
+        setModWheel: (n) => studioEngine.liveModWheel(n),
+        prepareAudio: () => { studioEngine.prepareAudioSync(); },
+        isNoteSounding: (m) => studioEngine.isFocusedNoteSounding(m),
+        releasePhysical: () => studioEngine.allNotesOff(),
+        getHold: () => studioEngine.getFocusedTrack().patch.hold === "on",
+        toggleHold: () => {
+          const ft = studioEngine.getFocusedTrack();
+          ft.setParam("hold", ft.patch.hold === "on" ? "off" : "on");
+        },
+        getBadge: () => {
+          const ft = studioEngine.getFocusedTrack();
+          return { machine: "sy1", name: "SY-1 Studio", role: `${ft.name} · ${ft.presetName}` };
+        }
+      });
+      setMidiInputInterceptor((cmd, d1, d2, ch) => {
+        if (cmd === 0x90) {
+          if (d2 > 0) studioEngine.liveNoteOn(d1, d2 / 127, ch);
+          else studioEngine.liveNoteOff(d1, ch);
+          return true;
+        }
+        if (cmd === 0x80) {
+          studioEngine.liveNoteOff(d1, ch);
+          return true;
+        }
+        if (cmd === 0xe0) {
+          const val14 = (d2 << 7) | d1;
+          studioEngine.livePitchBend((val14 - 8192) / 8192, ch);
+          return true;
+        }
+        if (cmd === 0xb0 && (d1 === 64 || d1 === 1)) {
+          studioEngine.liveCC(d1, d2, ch);
+          return true;
+        }
+        return false;
+      });
+      showStudioPanel();
+    };
+
+    const exitStudioMode = () => {
+      studioEngine.setActive(false);
+      studioEngine.setKeyHighlightListener(null);
+      setMidiInputInterceptor(null);
+      setKeyboardTarget(null);
+      hideStudioPanel();
+      fitPanel();
+    };
+
+    initStudioPanel({ onClose: exitStudioMode });
+    setStudioOpenHandler(enterStudioMode);
+    const readyHydrate = hydrateStudioFromStorage();
+    studioEngine.onChange(() => {
+      if (studioEngine.isActive()) {
+        const ft = studioEngine.getFocusedTrack();
+        const roleEl = document.getElementById("kb-machine-role");
+        if (roleEl) roleEl.textContent = `${ft.name} · ${ft.presetName}`;
+      }
+    });
+
+    (window as any).SY1_STUDIO = {
+      engine: studioEngine,
+      storage: studioStorage,
+      ready: readyHydrate,
+      saveProject: saveStudioProjectNow,
+      importProjectJson: importStudioProjectJson,
+      open: enterStudioMode,
+      close: exitStudioMode,
+      isOpen: () => studioEngine.isActive(),
+      diagnostics: {
+        runOfflineParityProbe,
+        runOfflineIsolationProbe,
+        runOfflineBounceProbe,
+        runOfflineStemsProbe,
+        runPostRestoreParityProbe
+      }
+    };
   }
 
   // Public window API for embedding or external control
