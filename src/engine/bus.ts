@@ -8,11 +8,12 @@ interface ReverbComb {
   delay: DelayNode;
   damp: AudioNode;
   fb: GainNode;
+  wob: OscillatorNode;
   delaySec: number;
 }
 
 export interface SynthFXBus {
-  ctx: AudioContext;
+  ctx: BaseAudioContext;
   input: GainNode;
   drive: WaveShaperNode;
   driveComp: GainNode;
@@ -172,10 +173,10 @@ export function installAudioUnlock(onGesture: () => void): void {
   });
 }
 
-const synthBuses = new WeakMap<AudioContext, SynthFXBus>();
+const synthBuses = new WeakMap<BaseAudioContext, SynthFXBus>();
 let synthNoiseBuffer: AudioBuffer | null = null;
 
-export function getSharedNoiseBuffer(ctx: AudioContext): AudioBuffer {
+export function getSharedNoiseBuffer(ctx: BaseAudioContext): AudioBuffer {
   if (!synthNoiseBuffer || synthNoiseBuffer.sampleRate !== ctx.sampleRate) {
     synthNoiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = synthNoiseBuffer.getChannelData(0);
@@ -198,9 +199,9 @@ export function makeDriveCurve(amount: number): Float32Array {
 }
 
 /** Gentle fixed tanh soft-clip used in the delay feedback loop so hot repeats warm up instead of distorting harshly. */
-const CLIP_RANGE = 4;
+export const CLIP_RANGE = 4;
 /** soft(x): identity up to 0.9, then 0.9 + 0.1*tanh((|x|-0.9)/0.1): never above 1.0. Over x in +-CLIP_RANGE. */
-function makeSoftClipCurve(): Float32Array {
+export function makeSoftClipCurve(): Float32Array {
   const n = 8193; // odd: exact 0 in the middle
   const c = new Float32Array(n);
   for (let i = 0; i < n; i++) {
@@ -254,7 +255,7 @@ const REVERB_FB_MAX = 0.97;
  * so the comb feedback can be compensated by the EXACT value and the reverb can run as close to its
  * requested decay time as safely possible (not an over-cautious fixed guess).
  */
-function measureDampPeakGain(ctx: AudioContext): number {
+function measureDampPeakGain(ctx: BaseAudioContext): number {
   const probe = makeDamp(ctx) as BiquadFilterNode | IIRFilterNode;
   const n = 300;
   const freqs = new Float32Array(n);
@@ -277,7 +278,7 @@ function combFeedbackForRT60(delaySec: number, rt60: number, dampPeakGain: numbe
 }
 
 /** input -> N parallel damped combs (feedback = f(revSize)) -> M series allpass diffusers -> output. No audio files. */
-function buildReverb(ctx: AudioContext, input: AudioNode, revSize: number): { combs: ReverbComb[]; output: AudioNode; dampPeakGain: number } {
+function buildReverb(ctx: BaseAudioContext, input: AudioNode, revSize: number): { combs: ReverbComb[]; output: AudioNode; dampPeakGain: number } {
   const dampPeakGain = measureDampPeakGain(ctx);
   const combInputScale = ctx.createGain();
   combInputScale.gain.value = 0.14; // keeps 8 summed combs from building up too hot (the one-pole damping keeps more low end ringing than the old biquad)
@@ -306,7 +307,7 @@ function buildReverb(ctx: AudioContext, input: AudioNode, revSize: number): { co
     fb.connect(delay); // feedback loop (sums with combInputScale at the delay's input)
     damp.connect(combSum);
 
-    return { delay, damp, fb, delaySec };
+    return { delay, damp, fb, wob, delaySec };
   });
 
   // Series Schroeder allpass diffusers: y = -g*u + z, u = x + g*z, z = delay(u)
@@ -355,10 +356,24 @@ export function setMainToFx(on: boolean): void {
   if (b && ctx) b.mainToFx.gain.setTargetAtTime(on ? 1 : 0, ctx.currentTime, 0.02);
 }
 
-export function getSynthBus(ctx: AudioContext, synthPatch: Record<string, any>): SynthFXBus {
-  let bus = synthBuses.get(ctx);
-  if (bus) return bus;
+export interface CreateSynthBusOptions {
+  /** Connect tap -> out -> analyser -> ctx.destination (default true for standalone SY-1). */
+  connectToDestination?: boolean;
+  /** Initial mainToFx gate (default follows standalone mainFxOn; Studio synth tracks pass true). */
+  mainFxOn?: boolean;
+}
 
+/**
+ * Create an independent SY-1 FX bus with the exact standalone signal chain,
+ * gain staging, EQ, tape delay, stereo chorus, Freeverb, limiter and soft clipper.
+ */
+export function createSynthBus(
+  ctx: BaseAudioContext,
+  synthPatch: Record<string, any>,
+  options: CreateSynthBusOptions = {}
+): SynthFXBus {
+  const connectToDest = options.connectToDestination !== false;
+  const initialMainFx = options.mainFxOn !== undefined ? options.mainFxOn : mainFxOn;
   const p = synthPatch;
   const input = ctx.createGain();
   const drive = ctx.createWaveShaper();
@@ -396,7 +411,7 @@ export function getSynthBus(ctx: AudioContext, synthPatch: Record<string, any>):
   // Effects input: the main signal (unless a drum machine turns it off) plus per-voice sends
   const fxIn = ctx.createGain();
   const mainToFx = ctx.createGain();
-  mainToFx.gain.value = mainFxOn ? 1 : 0;
+  mainToFx.gain.value = initialMainFx ? 1 : 0;
   const sendIn = ctx.createGain();
   eqHigh.connect(mainToFx);
   mainToFx.connect(fxIn);
@@ -493,11 +508,13 @@ export function getSynthBus(ctx: AudioContext, synthPatch: Record<string, any>):
   const out = ctx.createGain();
   out.gain.value = masterGainFor(masterVol);
   clip.connect(tap);
-  tap.connect(out);
-  out.connect(analyser);
-  analyser.connect(ctx.destination);
+  if (connectToDest) {
+    tap.connect(out);
+    out.connect(analyser);
+    analyser.connect(ctx.destination);
+  }
 
-  bus = {
+  return {
     ctx,
     input,
     drive,
@@ -531,7 +548,48 @@ export function getSynthBus(ctx: AudioContext, synthPatch: Record<string, any>):
     clipIn,
     clip
   };
+}
 
+/** Apply a single synth patch FX parameter to a SynthFXBus with the exact standalone curves and time constants. */
+export function applyBusParam(bus: SynthFXBus, key: string, value: any): void {
+  const ctx = bus.ctx;
+  const now = ctx.currentTime;
+  const v = Number(value);
+  if (key === "drive") {
+    bus.drive.curve = makeDriveCurve(v) as any;
+    bus.driveComp.gain.setTargetAtTime(1 / (1 + v * 1.5), now, 0.02);
+  } else if (key === "eqLow") bus.eqLow.gain.setTargetAtTime(v, now, 0.02);
+  else if (key === "eqMid") bus.eqMid.gain.setTargetAtTime(v, now, 0.02);
+  else if (key === "eqHigh") bus.eqHigh.gain.setTargetAtTime(v, now, 0.02);
+  else if (key === "delayTime") bus.delay.delayTime.setTargetAtTime(v, now, 0.05);
+  else if (key === "delayFb") bus.fb.gain.setTargetAtTime(Math.min(0.95, v), now, 0.02);
+  else if (key === "delayMix") bus.delayWet.gain.setTargetAtTime(v * 0.7, now, 0.02);
+  else if (key === "revMix") bus.revWet.gain.setTargetAtTime(v * 0.9, now, 0.02);
+  else if (key === "chorusMix") bus.chorusWet.gain.setTargetAtTime(v * 0.9, now, 0.03);
+  else if (key === "chorusRate") bus.chorusLfo.frequency.setTargetAtTime(v, now, 0.05);
+  else if (key === "chorusDepth") {
+    bus.chorusDepthL.gain.setTargetAtTime(0.004 * v, now, 0.05);
+    bus.chorusDepthR.gain.setTargetAtTime(-0.004 * v, now, 0.05);
+  } else if (key === "volume") bus.master.gain.setTargetAtTime(v, now, 0.02);
+  else if (key === "revSize") setReverbSize(bus, v);
+}
+
+/** Disconnect and stop internal oscillators of a disposable track FX bus. */
+export function disposeSynthBus(bus: SynthFXBus): void {
+  try { bus.chorusLfo.stop(); } catch (e) {}
+  bus.reverbCombs.forEach((c) => {
+    try { c.wob.stop(); } catch (e) {}
+  });
+  try { bus.input.disconnect(); } catch (e) {}
+  try { bus.tap.disconnect(); } catch (e) {}
+  try { bus.out.disconnect(); } catch (e) {}
+  try { bus.analyser.disconnect(); } catch (e) {}
+}
+
+export function getSynthBus(ctx: BaseAudioContext, synthPatch: Record<string, any>): SynthFXBus {
+  let bus = synthBuses.get(ctx);
+  if (bus) return bus;
+  bus = createSynthBus(ctx, synthPatch, { connectToDestination: true });
   synthBuses.set(ctx, bus);
   return bus;
 }

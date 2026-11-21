@@ -691,7 +691,7 @@ export function renderSynthPanelHtml(): string {
   return `
     <div class="synth-panel" dir="ltr" data-machine="${m.id}">
       <div class="synth-top">
-        <div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" id="machine-btn" aria-haspopup="dialog" aria-expanded="false" title="Choose an instrument">${escapeHtml(m.name)}</button><select class="sr-only" id="machine-select" aria-hidden="true" tabindex="-1">${renderMachineOptions()}</select></div>
+        <div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" id="machine-btn" aria-haspopup="dialog" aria-expanded="false" title="Choose an instrument">${escapeHtml(m.name)}</button><select class="sr-only" id="machine-select" aria-hidden="true" tabindex="-1">${renderMachineOptions()}</select>${!(globalThis as any).__SY1_PLUGIN__ ? `<button type="button" class="synth-midi-btn synth-studio-btn" id="open-studio-btn" data-action="studio-open" title="Open SY-1 Studio multi-track recorder">Studio</button>` : ""}</div>
         <canvas class="synth-scope" width="320" height="56" aria-hidden="true"></canvas>
         <div class="synth-out">${renderMasterKnob()}${renderRecButton()}</div>
         <div class="synth-conn-wrap">
@@ -850,6 +850,11 @@ export function setPanelRenderHook(fn: () => void): void {
   renderHooks.add(fn);
 }
 
+let studioOpenHandler: (() => void) | null = null;
+export function setStudioOpenHandler(fn: (() => void) | null): void {
+  studioOpenHandler = fn;
+}
+
 export function renderPanel(): void {
   const container = document.getElementById("sy1-panel");
   if (!container) return;
@@ -1000,6 +1005,11 @@ export function initPanelInteractions(): void {
     switch (action) {
       case "conn-toggle": {
         setConnOpen(!connOpen);
+        break;
+      }
+      case "studio-open": {
+        setConnOpen(false);
+        if (studioOpenHandler) studioOpenHandler();
         break;
       }
       case "synth-set": {

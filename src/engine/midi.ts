@@ -12,6 +12,13 @@ export interface MidiInputInfo {
   name: string;
 }
 
+export type MidiInputInterceptor = (cmd: number, d1: number, d2: number, channel: number) => boolean;
+let inputInterceptor: MidiInputInterceptor | null = null;
+
+export function setMidiInputInterceptor(fn: MidiInputInterceptor | null): void {
+  inputInterceptor = fn;
+}
+
 const STORAGE_DEV_KEY = "musicher_synth_midi_device";
 
 let midiAccess: any = null;
@@ -153,14 +160,19 @@ function dispatchMidi(e: any, data: any): void {
   if (status >= 0xf0) return;
 
   const ch = (status & 0x0f) + 1;
+  const cmd = status & 0xf0;
+  const d1 = data[1] & 0x7f;
+  const d2 = data.length > 2 ? data[2] & 0x7f : 0;
+
+  if (inputInterceptor) {
+    if (activityBlinkCallback) activityBlinkCallback();
+    if (inputInterceptor(cmd, d1, d2, ch)) return;
+  }
+
   const selectedChannel = cc.getMidiChannel();
   if (selectedChannel !== 0 && ch !== selectedChannel) return;
 
   if (activityBlinkCallback) activityBlinkCallback();
-
-  const cmd = status & 0xf0;
-  const d1 = data[1] & 0x7f;
-  const d2 = data.length > 2 ? data[2] & 0x7f : 0;
 
   if (cmd === 0x90) {
     if (d2 > 0) {

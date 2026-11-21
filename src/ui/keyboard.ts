@@ -14,8 +14,50 @@ let baseMidi = 48; // C3
 const MIN_BASE = 24; // C1
 const MAX_BASE = 84; // C6 (keyboard then ends on C8)
 
+export interface KeyboardTarget {
+  noteOn: (midi: number, velocity?: number) => void;
+  noteOff: (midi: number) => void;
+  setPitchBend: (norm: number) => void;
+  setModWheel: (norm: number) => void;
+  prepareAudio: () => void;
+  isNoteSounding: (midi: number) => boolean;
+  releasePhysical: () => void;
+  getHold: () => boolean;
+  toggleHold: () => void;
+  getBadge: () => { machine: string; name: string; role: string };
+}
+
+let externalTarget: KeyboardTarget | null = null;
+
+export function setKeyboardTarget(target: KeyboardTarget | null): void {
+  externalTarget = target;
+  renderKeyboard();
+}
+
+export function syncKeyboardHighlights(): void {
+  document.querySelectorAll<HTMLElement>(".key[data-midi]").forEach((el) => {
+    const m = Number(el.dataset.midi);
+    const on = externalTarget ? externalTarget.isNoteSounding(m) : isNoteSounding(m);
+    el.classList.toggle("is-pressed", on);
+  });
+}
+
+function targetNoteOn(m: number, vel?: number): void {
+  if (externalTarget) externalTarget.noteOn(m, vel);
+  else noteOn(m, vel);
+}
+function targetNoteOff(m: number): void {
+  if (externalTarget) externalTarget.noteOff(m);
+  else noteOff(m);
+}
+function targetPrepareAudio(): void {
+  if (externalTarget) externalTarget.prepareAudio();
+  else prepareAudio();
+}
+
 /** Pitch-class map of the active oriental scale, or null when ORIENTAL is off. */
 function activeKeyMap(): KeyInfo[] | null {
+  if (externalTarget) return null;
   const p = getSynthPatch();
   if (p.oriental !== "on" || getMachine().kind === "drums") return null;
   const id = String(p.tuning || "shur");
@@ -34,11 +76,18 @@ function fmtCentBadge(c: number): string {
 }
 
 function syncMachineBadge(): void {
-  const m = getMachine();
-  document.documentElement.setAttribute("data-machine", m.id);
   const badge = document.getElementById("kb-machine-badge");
   const nameEl = document.getElementById("kb-machine-name");
   const roleEl = document.getElementById("kb-machine-role");
+  if (externalTarget) {
+    const info = externalTarget.getBadge();
+    if (badge) badge.setAttribute("data-machine", info.machine);
+    if (nameEl) nameEl.textContent = info.name;
+    if (roleEl) roleEl.textContent = info.role;
+    return;
+  }
+  const m = getMachine();
+  document.documentElement.setAttribute("data-machine", m.id);
   if (badge) badge.setAttribute("data-machine", m.id);
   if (nameEl) nameEl.textContent = m.name;
   if (roleEl) roleEl.textContent = m.role;
@@ -51,7 +100,7 @@ export function renderKeyboard(): void {
   syncHold();
   syncOriental();
   const area = kb.closest(".kb-area");
-  const drums = getMachine().kind === "drums";
+  const drums = !externalTarget && getMachine().kind === "drums";
   if (area) area.classList.toggle("is-drums", drums);
   kb.classList.toggle("is-pads", drums);
   if (drums) {
@@ -89,15 +138,16 @@ export function renderKeyboard(): void {
   };
 
   kb.style.setProperty("--whites", String(whites.length));
+  const checkSounding = (m: number) => (externalTarget ? externalTarget.isNoteSounding(m) : isNoteSounding(m));
   kb.innerHTML =
     whites.map((m) => {
-      const sounding = isNoteSounding(m) ? " is-pressed" : "";
+      const sounding = checkSounding(m) ? " is-pressed" : "";
       return `<div class="key${keyClass(m)}${sounding}" data-midi="${m}">${renderKeyContent(m, m % 12 === 0 ? midiToName(m) : "")}</div>`;
     }).join("") +
     blacks.map((m) => {
       const leftWhite = whites.indexOf(m - 1);
       const left = ((leftWhite + 1) / whites.length) * 100;
-      const sounding = isNoteSounding(m) ? " is-pressed" : "";
+      const sounding = checkSounding(m) ? " is-pressed" : "";
       return `<div class="key black${keyClass(m)}${sounding}" data-midi="${m}" style="left:calc(${left}% - (100% / ${whites.length} * 0.29))">${renderKeyContent(m, "")}</div>`;
     }).join("");
 
@@ -162,7 +212,7 @@ function initMini(): void {
 function syncHold(): void {
   const btn = document.getElementById("kb-hold");
   if (!btn) return;
-  const on = getSynthPatch().hold === "on";
+  const on = externalTarget ? externalTarget.getHold() : getSynthPatch().hold === "on";
   btn.classList.toggle("active", on);
   btn.setAttribute("aria-pressed", on ? "true" : "false");
 }
@@ -209,21 +259,30 @@ function initWheels(): void {
       const r = el.getBoundingClientRect();
       const n = Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height));
       show(n);
-      if (bend) setPitchBend(n * 2 - 1);
-      else setModWheel(n);
+      if (bend) {
+        if (externalTarget) externalTarget.setPitchBend(n * 2 - 1);
+        else setPitchBend(n * 2 - 1);
+      } else {
+        if (externalTarget) externalTarget.setModWheel(n);
+        else setModWheel(n);
+      }
     };
     el.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       id = e.pointerId;
       try { el.setPointerCapture(id); } catch (err) {}
-      prepareAudio();
+      targetPrepareAudio();
       apply(e);
     });
     el.addEventListener("pointermove", (e) => { if (e.pointerId === id) apply(e); });
     const end = (e: PointerEvent) => {
       if (e.pointerId !== id) return;
       id = null;
-      if (bend) { show(0.5); setPitchBend(0); }
+      if (bend) {
+        show(0.5);
+        if (externalTarget) externalTarget.setPitchBend(0);
+        else setPitchBend(0);
+      }
     };
     el.addEventListener("pointerup", end);
     el.addEventListener("pointercancel", end);
@@ -262,7 +321,14 @@ export function initKeyboardInteractions(): void {
   if (octUpBtn) octUpBtn.addEventListener("click", () => shiftOctave(1));
   const holdBtn = document.getElementById("kb-hold");
   if (holdBtn) {
-    const toggleHold = () => setSynthParam("hold", getSynthPatch().hold === "on" ? "off" : "on");
+    const toggleHold = () => {
+      if (externalTarget) {
+        externalTarget.toggleHold();
+        syncHold();
+      } else {
+        setSynthParam("hold", getSynthPatch().hold === "on" ? "off" : "on");
+      }
+    };
     holdBtn.addEventListener("pointerdown", (e) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
       e.preventDefault();
@@ -301,7 +367,7 @@ export function initKeyboardInteractions(): void {
         kbEl.setPointerCapture(e.pointerId);
       } catch (err) {}
       pointerNotes.set(e.pointerId, m);
-      noteOn(m);
+      targetNoteOn(m);
     });
 
     kbEl.addEventListener("pointermove", (e) => {
@@ -309,9 +375,9 @@ export function initKeyboardInteractions(): void {
       const m = keyAt(kbEl, e.clientX, e.clientY);
       const prev = pointerNotes.get(e.pointerId);
       if (m != null && m !== prev) {
-        if (prev != null) noteOff(prev);
+        if (prev != null) targetNoteOff(prev);
         pointerNotes.set(e.pointerId, m);
-        noteOn(m);
+        targetNoteOn(m);
       }
     });
 
@@ -319,7 +385,7 @@ export function initKeyboardInteractions(): void {
       const m = pointerNotes.get(e.pointerId);
       if (m != null) {
         pointerNotes.delete(e.pointerId);
-        noteOff(m);
+        targetNoteOff(m);
       }
     };
 
@@ -332,29 +398,30 @@ export function initKeyboardInteractions(): void {
   document.addEventListener("keydown", (e) => {
     if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
-    if (target?.closest?.(".sk, input, textarea, select")) return;
+    if (target?.closest?.(".sk, .st-knob, input, textarea, select")) return;
 
     const k = e.key.toLowerCase();
-    if (k === "z" && getMachine().kind !== "drums") {
+    const isDrums = !externalTarget && getMachine().kind === "drums";
+    if (k === "z" && !isDrums) {
       shiftOctave(-1);
       return;
     }
-    if (k === "x" && getMachine().kind !== "drums") {
+    if (k === "x" && !isDrums) {
       shiftOctave(1);
       return;
     }
 
-    if (getMachine().kind === "drums") {
+    if (isDrums) {
       if (k in DRUM_KEYMAP && !downKeys.has(k)) {
         downKeys.set(k, DRUM_KEYMAP[k]);
-        noteOn(DRUM_KEYMAP[k], 0.9);
+        targetNoteOn(DRUM_KEYMAP[k], 0.9);
       }
       return;
     }
     if (k in KEYMAP && !downKeys.has(k)) {
       const m = baseMidi + KEYMAP[k];
       downKeys.set(k, m);
-      noteOn(m);
+      targetNoteOn(m);
     }
   });
 
@@ -362,22 +429,24 @@ export function initKeyboardInteractions(): void {
     const k = e.key.toLowerCase();
     if (downKeys.has(k)) {
       const midi = downKeys.get(k)!;
-      noteOff(midi);
+      targetNoteOff(midi);
       downKeys.delete(k);
     }
   });
 
   // Blur and tab visibility handlers release only physically held keys
   window.addEventListener("blur", () => {
-    pointerNotes.forEach((m) => noteOff(m));
+    pointerNotes.forEach((m) => targetNoteOff(m));
     pointerNotes.clear();
-    releasePhysicalNotes();
+    if (externalTarget) externalTarget.releasePhysical();
+    else releasePhysicalNotes();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
-      pointerNotes.forEach((m) => noteOff(m));
+      pointerNotes.forEach((m) => targetNoteOff(m));
       pointerNotes.clear();
-      releasePhysicalNotes();
+      if (externalTarget) externalTarget.releasePhysical();
+      else releasePhysicalNotes();
     }
   });
 }
