@@ -438,6 +438,9 @@ export class SY1TrackEngine {
 
   /** Load an arbitrary patch snapshot (used for offline bounce clones & project restore). */
   loadPatchSnapshot(patch: SynthPatch, presetId: string, presetName: string, machineId?: string): void {
+    // Snapshot replacement must release the previous instrument's held notes and
+    // sustain latch, just like preset switching, before changing its engine.
+    this.allNotesOff(0);
     const prevKind = this.engineKind;
     Object.keys(patch).forEach((k) => {
       this.patch[k] = patch[k];
