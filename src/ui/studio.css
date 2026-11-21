@@ -2313,3 +2313,8 @@ html.is-studio .sy1-shell::after {
     width: 52px;
   }
 }
+
+/* Compact instrument headers; MIDI routing remains in the secondary Mixer. */
+.st-track-focus { flex:0 0 28px !important; min-width:28px !important; text-align:center; }
+.st-mix-routing { display:flex; flex-direction:column; gap:4px; padding:6px; color:var(--st-ink-dim); font-size:0.7rem; }
+.st-click-level { display:flex; flex-direction:column; gap:4px; padding:8px; font-size:0.75rem; color:var(--st-ink-dim); }

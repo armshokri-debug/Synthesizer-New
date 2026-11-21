@@ -1,0 +1,278 @@
+{
+  "environment": "Linux Chromium; viewport emulation, not physical devices",
+  "checks": [
+    {
+      "name": "Count-in does not record early input",
+      "pass": true
+    },
+    {
+      "name": "Synth records instrument, notes and exact patch",
+      "pass": true,
+      "detail": {
+        "id": "track-1",
+        "machine": "tabriz",
+        "notes": [
+          {
+            "midi": 48,
+            "startTick": 565,
+            "endTick": 593,
+            "velocity": 1
+          }
+        ],
+        "patch": "{\"osc1Wave\":\"sawtooth\",\"osc1Oct\":-1,\"osc2Wave\":\"sawtooth\",\"osc2Oct\":-1,\"osc2Detune\":7,\"oscMix\":0.5,\"sub\":0,\"noise\":0,\"unison\":1,\"uniDetune\":20,\"uniWidth\":0.5,\"filterType\":\"lp24\",\"cutoff\":380,\"res\":5,\"envAmt\":0.55,\"fA\":0.002,\"fD\":0.3,\"fS\":0.25,\"fR\":0.35,\"aA\":0.002,\"aD\":0.5,\"aS\":0.85,\"aR\":0.08,\"velSens\":0.5,\"lfoRate\":5,\"lfoDepth\":0,\"lfoTarget\":\"pitch\",\"bendRange\":2,\"drive\":0,\"eqLow\":0,\"eqMid\":0,\"eqHigh\":0,\"delayTime\":0.32,\"delayFb\":0.35,\"delayMix\":0,\"revSize\":2.2,\"revMix\":0.03,\"volume\":0.7,\"osc3Wave\":\"sawtooth\",\"osc3Oct\":-2,\"osc3Detune\":-4,\"osc3Level\":0.6,\"keyTrack\":0.33,\"filterDrive\":0.45,\"drift\":0.25,\"polyMode\":\"mono\",\"glide\":0.04,\"legato\":\"on\",\"hold\":\"off\",\"lfoShape\":\"sine\",\"lfoSync\":0,\"chorusMix\":0,\"chorusRate\":0.6,\"chorusDepth\":0.5,\"arpOn\":\"off\",\"arpMode\":\"up\",\"arpRate\":6,\"arpOct\":1,\"arpGate\":0.6,\"arpSwing\":0,\"oriental\":\"off\",\"tuning\":\"shur\",\"tuneRoot\":0,\"microTone\":\"24tet\",\"scaleAlt\":0,\"scoop\":0,\"scoopTime\":0.08,\"vibDelay\":0.3,\"vibDepth\":0,\"vibRate\":5.5,\"tahrir\":0,\"tahrirSpeed\":12,\"strModel\":\"santur\",\"strHard\":0.55,\"strPos\":0.18,\"strDecay\":3.5,\"strDamp\":0.3,\"strBright\":0.65,\"strStiff\":0.25,\"strCourses\":2,\"strDetune\":4,\"strBody\":0.45,\"strTone\":0.5,\"strBuzz\":0,\"riz\":\"off\",\"rizRate\":11,\"fmAlgo\":\"1\",\"fmFeedback\":0,\"fmBright\":0.5,\"fmVelMod\":0.5,\"fmTone\":1,\"op1Ratio\":1,\"op1Level\":1,\"op1A\":0.002,\"op1D\":0.8,\"op1S\":0.4,\"op1R\":0.4,\"op2Ratio\":1,\"op2Level\":0.5,\"op2A\":0.002,\"op2D\":0.8,\"op2S\":0.4,\"op2R\":0.4,\"op3Ratio\":1,\"op3Level\":0.35,\"op3A\":0.002,\"op3D\":0.8,\"op3S\":0.4,\"op3R\":0.4,\"op4Ratio\":1,\"op4Level\":0.25,\"op4A\":0.002,\"op4D\":0.8,\"op4S\":0.4,\"op4R\":0.4,\"eucRate\":6,\"euc1Steps\":16,\"euc1Pulses\":5,\"euc1Rot\":0,\"euc1Oct\":0,\"euc1On\":\"on\",\"euc2Steps\":12,\"euc2Pulses\":4,\"euc2Rot\":0,\"euc2Oct\":0,\"euc2On\":\"on\",\"euc3Steps\":7,\"euc3Pulses\":3,\"euc3Rot\":0,\"euc3Oct\":1,\"euc3On\":\"on\",\"kickTune\":0,\"kickDecay\":1,\"kickTone\":0.5,\"kickLevel\":0.8,\"snareTune\":0,\"snareDecay\":1,\"snareTone\":0.5,\"snareLevel\":0.8,\"clapTune\":0,\"clapDecay\":1,\"clapTone\":0.5,\"clapLevel\":0.8,\"chTune\":0,\"chDecay\":1,\"chTone\":0.5,\"chLevel\":0.8,\"ohTune\":0,\"ohDecay\":1,\"ohTone\":0.5,\"ohLevel\":0.8,\"tomTune\":0,\"tomDecay\":1,\"tomTone\":0.5,\"tomLevel\":0.8,\"rimTune\":0,\"rimDecay\":1,\"rimTone\":0.5,\"rimLevel\":0.8,\"bellTune\":0,\"bellDecay\":1,\"bellTone\":0.5,\"bellLevel\":0.8,\"kickPan\":0,\"kickColor\":0,\"kickDrive\":0,\"kickSend\":0.2,\"snarePan\":0,\"snareColor\":0,\"snareDrive\":0,\"snareSend\":1,\"clapPan\":0,\"clapColor\":0,\"clapDrive\":0,\"clapSend\":1,\"chPan\":0,\"chColor\":0,\"chDrive\":0,\"chSend\":1,\"ohPan\":0,\"ohColor\":0,\"ohDrive\":0,\"ohSend\":1,\"tomPan\":0,\"tomColor\":0,\"tomDrive\":0,\"tomSend\":1,\"rimPan\":0,\"rimColor\":0,\"rimDrive\":0,\"rimSend\":1,\"bellPan\":0,\"bellColor\":0,\"bellDrive\":0,\"bellSend\":1,\"kitModel\":\"\",\"kickModel\":\"\",\"snareModel\":\"\",\"clapModel\":\"\",\"chModel\":\"\",\"ohModel\":\"\",\"tomModel\":\"\",\"rimModel\":\"\",\"bellModel\":\"\",\"drumGlue\":0.35,\"drumSwing\":0,\"drumAccent\":0.5,\"vecX\":0.5,\"vecY\":0.5,\"orbitMode\":\"circle\",\"orbitRate\":0.35,\"orbitSync\":\"off\",\"orbitSize\":0.55,\"orbitRec\":\"off\",\"vecAPw\":0.35,\"vecALevel\":0.85,\"vecBRatio\":3.5,\"vecBIndex\":0.45,\"vecBLevel\":0.85,\"vecCPos\":0.4,\"vecCLevel\":0.85,\"vecDVowel\":0.3,\"vecDLevel\":0.85}",
+        "source": "{\"osc1Wave\":\"sawtooth\",\"osc1Oct\":-1,\"osc2Wave\":\"sawtooth\",\"osc2Oct\":-1,\"osc2Detune\":7,\"oscMix\":0.5,\"sub\":0,\"noise\":0,\"unison\":1,\"uniDetune\":20,\"uniWidth\":0.5,\"filterType\":\"lp24\",\"cutoff\":380,\"res\":5,\"envAmt\":0.55,\"fA\":0.002,\"fD\":0.3,\"fS\":0.25,\"fR\":0.35,\"aA\":0.002,\"aD\":0.5,\"aS\":0.85,\"aR\":0.08,\"velSens\":0.5,\"lfoRate\":5,\"lfoDepth\":0,\"lfoTarget\":\"pitch\",\"bendRange\":2,\"drive\":0,\"eqLow\":0,\"eqMid\":0,\"eqHigh\":0,\"delayTime\":0.32,\"delayFb\":0.35,\"delayMix\":0,\"revSize\":2.2,\"revMix\":0.03,\"volume\":0.7,\"osc3Wave\":\"sawtooth\",\"osc3Oct\":-2,\"osc3Detune\":-4,\"osc3Level\":0.6,\"keyTrack\":0.33,\"filterDrive\":0.45,\"drift\":0.25,\"polyMode\":\"mono\",\"glide\":0.04,\"legato\":\"on\",\"hold\":\"off\",\"lfoShape\":\"sine\",\"lfoSync\":0,\"chorusMix\":0,\"chorusRate\":0.6,\"chorusDepth\":0.5,\"arpOn\":\"off\",\"arpMode\":\"up\",\"arpRate\":6,\"arpOct\":1,\"arpGate\":0.6,\"arpSwing\":0,\"oriental\":\"off\",\"tuning\":\"shur\",\"tuneRoot\":0,\"microTone\":\"24tet\",\"scaleAlt\":0,\"scoop\":0,\"scoopTime\":0.08,\"vibDelay\":0.3,\"vibDepth\":0,\"vibRate\":5.5,\"tahrir\":0,\"tahrirSpeed\":12,\"strModel\":\"santur\",\"strHard\":0.55,\"strPos\":0.18,\"strDecay\":3.5,\"strDamp\":0.3,\"strBright\":0.65,\"strStiff\":0.25,\"strCourses\":2,\"strDetune\":4,\"strBody\":0.45,\"strTone\":0.5,\"strBuzz\":0,\"riz\":\"off\",\"rizRate\":11,\"fmAlgo\":\"1\",\"fmFeedback\":0,\"fmBright\":0.5,\"fmVelMod\":0.5,\"fmTone\":1,\"op1Ratio\":1,\"op1Level\":1,\"op1A\":0.002,\"op1D\":0.8,\"op1S\":0.4,\"op1R\":0.4,\"op2Ratio\":1,\"op2Level\":0.5,\"op2A\":0.002,\"op2D\":0.8,\"op2S\":0.4,\"op2R\":0.4,\"op3Ratio\":1,\"op3Level\":0.35,\"op3A\":0.002,\"op3D\":0.8,\"op3S\":0.4,\"op3R\":0.4,\"op4Ratio\":1,\"op4Level\":0.25,\"op4A\":0.002,\"op4D\":0.8,\"op4S\":0.4,\"op4R\":0.4,\"eucRate\":6,\"euc1Steps\":16,\"euc1Pulses\":5,\"euc1Rot\":0,\"euc1Oct\":0,\"euc1On\":\"on\",\"euc2Steps\":12,\"euc2Pulses\":4,\"euc2Rot\":0,\"euc2Oct\":0,\"euc2On\":\"on\",\"euc3Steps\":7,\"euc3Pulses\":3,\"euc3Rot\":0,\"euc3Oct\":1,\"euc3On\":\"on\",\"kickTune\":0,\"kickDecay\":1,\"kickTone\":0.5,\"kickLevel\":0.8,\"snareTune\":0,\"snareDecay\":1,\"snareTone\":0.5,\"snareLevel\":0.8,\"clapTune\":0,\"clapDecay\":1,\"clapTone\":0.5,\"clapLevel\":0.8,\"chTune\":0,\"chDecay\":1,\"chTone\":0.5,\"chLevel\":0.8,\"ohTune\":0,\"ohDecay\":1,\"ohTone\":0.5,\"ohLevel\":0.8,\"tomTune\":0,\"tomDecay\":1,\"tomTone\":0.5,\"tomLevel\":0.8,\"rimTune\":0,\"rimDecay\":1,\"rimTone\":0.5,\"rimLevel\":0.8,\"bellTune\":0,\"bellDecay\":1,\"bellTone\":0.5,\"bellLevel\":0.8,\"kickPan\":0,\"kickColor\":0,\"kickDrive\":0,\"kickSend\":0.2,\"snarePan\":0,\"snareColor\":0,\"snareDrive\":0,\"snareSend\":1,\"clapPan\":0,\"clapColor\":0,\"clapDrive\":0,\"clapSend\":1,\"chPan\":0,\"chColor\":0,\"chDrive\":0,\"chSend\":1,\"ohPan\":0,\"ohColor\":0,\"ohDrive\":0,\"ohSend\":1,\"tomPan\":0,\"tomColor\":0,\"tomDrive\":0,\"tomSend\":1,\"rimPan\":0,\"rimColor\":0,\"rimDrive\":0,\"rimSend\":1,\"bellPan\":0,\"bellColor\":0,\"bellDrive\":0,\"bellSend\":1,\"kitModel\":\"\",\"kickModel\":\"\",\"snareModel\":\"\",\"clapModel\":\"\",\"chModel\":\"\",\"ohModel\":\"\",\"tomModel\":\"\",\"rimModel\":\"\",\"bellModel\":\"\",\"drumGlue\":0.35,\"drumSwing\":0,\"drumAccent\":0.5,\"vecX\":0.5,\"vecY\":0.5,\"orbitMode\":\"circle\",\"orbitRate\":0.35,\"orbitSync\":\"off\",\"orbitSize\":0.55,\"orbitRec\":\"off\",\"vecAPw\":0.35,\"vecALevel\":0.85,\"vecBRatio\":3.5,\"vecBIndex\":0.45,\"vecBLevel\":0.85,\"vecCPos\":0.4,\"vecCLevel\":0.85,\"vecDVowel\":0.3,\"vecDLevel\":0.85}"
+      }
+    },
+    {
+      "name": "Record → Stop → Studio → Piano Roll",
+      "pass": true
+    },
+    {
+      "name": "Overdub preserves the preceding performance",
+      "pass": true
+    },
+    {
+      "name": "Simulated Web MIDI input preserves velocity, sustain and bend",
+      "pass": true,
+      "detail": {
+        "notes": [
+          {
+            "midi": 48,
+            "startTick": 134,
+            "endTick": 150,
+            "velocity": 1
+          },
+          {
+            "midi": 60,
+            "startTick": 78,
+            "endTick": 228,
+            "velocity": 0.7795275590551181
+          },
+          {
+            "midi": 48,
+            "startTick": 565,
+            "endTick": 593,
+            "velocity": 1
+          }
+        ],
+        "sustain": true,
+        "bend": true
+      }
+    },
+    {
+      "name": "Mixed synth/drum performances stay in separate tracks",
+      "pass": true,
+      "detail": [
+        {
+          "machine": "tabriz",
+          "count": 3
+        },
+        {
+          "machine": "yazd",
+          "count": 1
+        },
+        {
+          "machine": "baku",
+          "count": 1
+        },
+        {
+          "machine": "kerman",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "One shared live AudioContext",
+      "pass": true,
+      "detail": 1
+    },
+    {
+      "name": "Audio-clock clicks, downbeat accent and click resource cleanup",
+      "pass": true,
+      "detail": {
+        "peaks": [
+          0.17113080620765686,
+          0.11227801442146301,
+          0.11227800697088242,
+          0.11227801442146301,
+          0.17113080620765686
+        ],
+        "quiet": 0,
+        "voices": 0,
+        "exportDifference": 0,
+        "bits": 24,
+        "midi": "MThd"
+      }
+    },
+    {
+      "name": "Metronome excluded from WAV; MIDI and 24-bit export",
+      "pass": true,
+      "detail": {
+        "peaks": [
+          0.17113080620765686,
+          0.11227801442146301,
+          0.11227800697088242,
+          0.11227801442146301,
+          0.17113080620765686
+        ],
+        "quiet": 0,
+        "voices": 0,
+        "exportDifference": 0,
+        "bits": 24,
+        "midi": "MThd"
+      }
+    },
+    {
+      "name": "Save completed",
+      "pass": true
+    },
+    {
+      "name": "Save → Refresh → Restore mixed identity",
+      "pass": true,
+      "detail": [
+        "tabriz",
+        "yazd",
+        "baku",
+        "kerman"
+      ]
+    },
+    {
+      "name": "Recording preferences survive refresh",
+      "pass": true
+    },
+    {
+      "name": "Recorded notes, controllers and patches survive refresh exactly",
+      "pass": true
+    },
+    {
+      "name": "1440x900 compact transport fits",
+      "pass": true,
+      "detail": {
+        "overflow": false,
+        "clipped": []
+      }
+    },
+    {
+      "name": "1440x900 click-volume options accessible",
+      "pass": true
+    },
+    {
+      "name": "1440x900 More panel fits",
+      "pass": true,
+      "detail": {
+        "x": 1182.15625,
+        "y": 42.5,
+        "right": 1378.15625,
+        "bottom": 378.140625,
+        "width": 1440,
+        "height": 900
+      }
+    },
+    {
+      "name": "1280x800 compact transport fits",
+      "pass": true,
+      "detail": {
+        "overflow": false,
+        "clipped": []
+      }
+    },
+    {
+      "name": "1280x800 click-volume options accessible",
+      "pass": true
+    },
+    {
+      "name": "1280x800 More panel fits",
+      "pass": true,
+      "detail": {
+        "x": 1028.34375,
+        "y": 42.5,
+        "right": 1224.34375,
+        "bottom": 378.140625,
+        "width": 1280,
+        "height": 800
+      }
+    },
+    {
+      "name": "1024x768 compact transport fits",
+      "pass": true,
+      "detail": {
+        "overflow": false,
+        "clipped": []
+      }
+    },
+    {
+      "name": "1024x768 click-volume options accessible",
+      "pass": true
+    },
+    {
+      "name": "1024x768 More panel fits",
+      "pass": true,
+      "detail": {
+        "x": 768.34375,
+        "y": 45,
+        "right": 964.34375,
+        "bottom": 380.640625,
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "name": "768x1024 compact transport fits",
+      "pass": true,
+      "detail": {
+        "overflow": false,
+        "clipped": []
+      }
+    },
+    {
+      "name": "768x1024 click-volume options accessible",
+      "pass": true
+    },
+    {
+      "name": "768x1024 More panel fits",
+      "pass": true,
+      "detail": {
+        "x": 516.734375,
+        "y": 44,
+        "right": 712.734375,
+        "bottom": 379.640625,
+        "width": 768,
+        "height": 1024
+      }
+    },
+    {
+      "name": "390x844 compact transport fits",
+      "pass": true,
+      "detail": {
+        "overflow": false,
+        "clipped": []
+      }
+    },
+    {
+      "name": "390x844 click-volume options accessible",
+      "pass": true
+    },
+    {
+      "name": "390x844 More panel fits",
+      "pass": true,
+      "detail": {
+        "x": 138.734375,
+        "y": 83,
+        "right": 334.734375,
+        "bottom": 418.640625,
+        "width": 390,
+        "height": 844
+      }
+    },
+    {
+      "name": "Save failure is visible and keeps the performance in memory",
+      "pass": true
+    },
+    {
+      "name": "No uncaught browser errors",
+      "pass": true,
+      "detail": []
+    }
+  ],
+  "errors": []
+}

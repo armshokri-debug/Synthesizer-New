@@ -105,6 +105,7 @@ export interface StudioProjectData {
   loopStartBar: number;
   loopEndBar: number;
   focusedTrackId: string;
+  recordingSettings?: { metronome: boolean; countIn: boolean; clickVolume: number };
   tracks: StudioProjectTrackData[];
 }
 
