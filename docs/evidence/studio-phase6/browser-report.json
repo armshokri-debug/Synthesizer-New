@@ -1,0 +1,158 @@
+{
+  "environment": "Linux Chromium viewport and touch emulation",
+  "cases": [
+    {
+      "name": "Unedited migrated region and legacy project render byte-identical audio",
+      "pass": true,
+      "details": {
+        "bytes": 628406,
+        "differences": 0,
+        "matchingLength": true
+      }
+    },
+    {
+      "name": "Desktop duplicate shortcut creates a second region",
+      "pass": true
+    },
+    {
+      "name": "Pointer move updates musical time on the snap grid",
+      "pass": true,
+      "details": 3600
+    },
+    {
+      "name": "Right-edge trim preserves hidden source MIDI",
+      "pass": true,
+      "details": 1440
+    },
+    {
+      "name": "Undo restores the trim boundary",
+      "pass": true
+    },
+    {
+      "name": "Loop handle extends source repetitions",
+      "pass": true
+    },
+    {
+      "name": "Desktop double-click opens the selected Piano Roll",
+      "pass": true
+    },
+    {
+      "name": "Context action menu offers copy, loop, split and history",
+      "pass": true
+    },
+    {
+      "name": "Mixed Tabriz/Yazd/Baku/Kerman renders non-silent 24-bit Mix and four Stems",
+      "pass": true,
+      "details": {
+        "stems": [
+          {
+            "bits": 24,
+            "frames": 418909,
+            "signal": true
+          },
+          {
+            "bits": 24,
+            "frames": 418909,
+            "signal": true
+          },
+          {
+            "bits": 24,
+            "frames": 418909,
+            "signal": true
+          },
+          {
+            "bits": 24,
+            "frames": 418909,
+            "signal": true
+          }
+        ],
+        "mix": {
+          "bits": 24,
+          "frames": 418909,
+          "signal": true
+        },
+        "midi": "MThd"
+      }
+    },
+    {
+      "name": "Mixed regional arrangement exports Standard MIDI",
+      "pass": true
+    },
+    {
+      "name": "Save → Refresh → Restore preserves IDs, trims, loops and event sources",
+      "pass": true
+    },
+    {
+      "name": "iPad landscape touch long-press opens a viewport-contained context menu",
+      "pass": true
+    },
+    {
+      "name": "Kerman region opens its Drum Grid from a touch action",
+      "pass": true
+    },
+    {
+      "name": "Touch drag handle resizes drum region",
+      "pass": true,
+      "details": {
+        "old": 1920,
+        "newLength": 2880,
+        "handle": {
+          "x": 516.71875,
+          "y": 405.765625
+        },
+        "trace": [
+          [
+            "pointerdown",
+            516.71875,
+            405.765625,
+            "st-region-edge is-right"
+          ],
+          [
+            "pointermove",
+            534.71875,
+            405.765625,
+            "st-region-edge is-right"
+          ],
+          [
+            "pointermove",
+            551.71875,
+            405.765625,
+            ""
+          ],
+          [
+            "pointerup",
+            551.71875,
+            405.765625,
+            ""
+          ]
+        ]
+      }
+    },
+    {
+      "name": "1440×900 arrangement viewport",
+      "pass": true
+    },
+    {
+      "name": "1280×800 arrangement viewport",
+      "pass": true
+    },
+    {
+      "name": "1024×768 arrangement viewport",
+      "pass": true
+    },
+    {
+      "name": "768×1024 arrangement viewport",
+      "pass": true
+    },
+    {
+      "name": "390×844 arrangement viewport",
+      "pass": true
+    },
+    {
+      "name": "No uncaught browser errors",
+      "pass": true,
+      "details": []
+    }
+  ],
+  "errors": []
+}

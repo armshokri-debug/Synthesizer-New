@@ -1,3 +1,4 @@
+import { showStudioPianoRoll } from "./studio-panel";
 import { allNotesOff, getMachine, getSynthPatch, getSynthPresetId, getPitchBend, getModWheel, getSustainPedal, onMachineChange, onParamChange, onPresetChange } from "../engine/synth";
 import { getMidiChannel } from "../engine/cc-map";
 import { onPerformanceMidi } from "../engine/daw";
@@ -85,7 +86,15 @@ export function initSynthRecording(engine: SY1StudioEngine, options: { ready: Pr
         busy = false; options.autosave(); refresh();
       } else if (id === "sr-stop") await finish();
       else if (id === "sr-play") { await options.ready; engine.setBpm(engine.getBpm()); await engine.play(); refresh(); }
-      else if (id === "sr-edit") { await options.ready; options.openStudio(); }
+      else if (id === "sr-edit") {
+        await options.ready;
+        if (captureTrackId) await finish();
+        const track = engine.getFocusedTrack();
+        const region = track.latestRecordedRegion(engine.getTotalTicks());
+        if (region) engine.regions.select(region.id);
+        options.openStudio();
+        showStudioPianoRoll();
+      }
       else if (id === "sr-click") engine.setRecordingSettings({metronome:!engine.getRecordingSettings().metronome});
       else if (id === "sr-count-in") engine.setRecordingSettings({countIn:!engine.getRecordingSettings().countIn});
       options.autosave();

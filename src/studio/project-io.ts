@@ -21,6 +21,8 @@ import {
   StudioSavedProjectMeta
 } from "./types";
 
+import { flattenRegions, MAX_REGIONS_PER_TRACK, type MidiRegion } from "./midi-regions";
+
 export const STUDIO_MAX_EVENTS_PER_TRACK = 100_000;
 export const STUDIO_MAX_IMPORT_BYTES = 16 * 1024 * 1024; // 16 MB safety limit
 
@@ -195,6 +197,7 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
 
   const warnings: string[] = [];
   const seenIds = new Set<string>();
+  const seenRegions = new Set<string>();
   const tracks: StudioProjectTrackData[] = [];
 
   for (let i = 0; i < raw.tracks.length; i++) {
@@ -270,6 +273,47 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
       events.push(ev);
     }
 
+    let regions: MidiRegion[] | undefined;
+    if (rt.regions !== undefined) {
+      if (!Array.isArray(rt.regions) || rt.regions.length > MAX_REGIONS_PER_TRACK)
+        return { ok: false, error: `${label} has an invalid region list.` };
+      regions = [];
+      let sourceEventCount = 0;
+      for (const region of rt.regions) {
+        if (!isPlainObject(region) || typeof region.id !== "string" || !region.id.trim() || region.id.length > 128 ||
+            seenRegions.has(region.id) || region.trackId !== id || typeof region.loop !== "boolean" ||
+            !Array.isArray(region.events))
+          return { ok: false, error: `${label} has an invalid region or duplicate id.` };
+        const coordinates = [region.startTick, region.length, region.sourceLength, region.offset];
+        if (coordinates.some(n => typeof n !== "number" || !Number.isSafeInteger(n) || n < 0 || n > 1_000_001_920) ||
+            region.length === 0 || region.sourceLength === 0)
+          return { ok: false, error: `${label} has invalid region timing.` };
+        seenRegions.add(region.id);
+        sourceEventCount += region.events.length;
+        if (sourceEventCount > STUDIO_MAX_EVENTS_PER_TRACK)
+          return { ok: false, error: `${label} exceeds maximum source event count.` };
+        const source: StudioMidiEvent[] = [];
+        for (let j = 0; j < region.events.length; j++) {
+          const event = validateMidiEvent(region.events[j], j, label);
+          if (typeof event === "string") return { ok: false, error: event };
+          if (event.tick > Number(region.sourceLength))
+            return { ok: false, error: `${label} has an event outside its region source.` };
+          source.push(event);
+        }
+        regions.push({ id: region.id, trackId: id, startTick: Number(region.startTick),
+          length: Number(region.length), sourceLength: Number(region.sourceLength),
+          offset: Number(region.offset), loop: region.loop, events: source });
+      }
+      try {
+        const playback = flattenRegions(regions);
+        if (playback.some(event => event.tick > 1e9)) throw new Error("Event exceeds the tick limit.");
+        events.length = 0;
+        for (const event of playback) events.push(event);
+      } catch {
+        return { ok: false, error: `${label} exceeds region playback limits.` };
+      }
+    }
+
     tracks.push({
       id,
       name,
@@ -283,7 +327,8 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
       solo: Boolean(rt.solo),
       armed: Boolean(rt.armed),
       midiChannel,
-      events
+      events,
+      ...(regions ? { regions } : {})
     });
   }
 

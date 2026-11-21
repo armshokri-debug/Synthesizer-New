@@ -31,6 +31,8 @@ const BLACK_KEY_PC = new Set([1, 3, 6, 8, 10]);
 /** Top-to-bottom drum voice ordering in the Drum Grid (high percussion top, kick bottom). */
 const DRUM_GRID_ORDER: readonly DrumVoice[] = ["bell", "oh", "tom", "ch", "clap", "snare", "rim", "kick"];
 
+const editorNotes = (trackId: string) => studioEngine.regions.editorNotes(trackId);
+
 export const PR_ROW_HEIGHT = 20;
 const PR_DRUM_ROW_HEIGHT = 26;
 const BASE_BAR_PX = 160;
@@ -184,15 +186,17 @@ export function renderPianoRollHtml(): string {
   const track = studioEngine.getFocusedTrack();
   const mDef = getStudioMachineDef(track.machineId);
   const isDrum = track.isDrumTrack();
-  if (track.id !== lastTrackId || isDrum !== lastWasDrum) {
-    lastTrackId = track.id;
+  const region = studioEngine.regions.current(track.id);
+  const editorId = region?.id ?? track.id;
+  if (editorId !== lastTrackId || isDrum !== lastWasDrum) {
+    lastTrackId = editorId;
     lastWasDrum = isDrum;
     state.selectedIndices.clear();
     state.hasInitialScroll = false;
   }
 
-  const totalTicks = tr.totalTicks;
-  const spans = track.getNoteSpans(totalTicks);
+  const totalTicks = studioEngine.regions.editorLength(track.id);
+  const spans = editorNotes(track.id);
   state.selectedIndices.forEach((idx) => {
     if (idx < 0 || idx >= spans.length) state.selectedIndices.delete(idx);
   });
@@ -200,9 +204,9 @@ export function renderPianoRollHtml(): string {
   const { rowHeight, keyColWidth, rows, midiToRowIndex } = buildRowsForTrack(spans);
   const rowCount = rows.length;
   const gridHeight = rowCount * rowHeight;
-  const bpx = barWidthPx();
-  const gridWidth = Math.max(480, tr.bars * bpx);
-  const playheadPct = totalTicks > 0 ? Math.max(0, Math.min(100, (tr.currentTick / totalTicks) * 100)) : 0;
+  const gridWidth = Math.max(480, totalTicks / STUDIO_TICKS_PER_BAR * barWidthPx());
+  const bpx = gridWidth / totalTicks * STUDIO_TICKS_PER_BAR;
+  const playheadPct = Math.max(0, Math.min(100, (tr.currentTick - (region?.startTick ?? 0)) / totalTicks * 100));
 
   let selVelText = "—";
   if (state.selectedIndices.size > 0) {
@@ -221,19 +225,21 @@ export function renderPianoRollHtml(): string {
   let rulerMarks = "";
   let vLines = "";
   const subStepTicks = state.snapTicks > 0 ? Math.max(120, state.snapTicks) : STUDIO_PPQ;
-  for (let bar = 0; bar < tr.bars; bar++) {
+  for (let bar = 0; bar * STUDIO_TICKS_PER_BAR < totalTicks; bar++) {
     const x = bar * bpx;
     rulerMarks += `<span class="st-pr-bar-lbl" style="left:${x}px">${bar + 1}</span>`;
     vLines += `<span class="st-pr-vline is-bar" style="left:${x}px"></span>`;
     const beatsPerBar = STUDIO_TICKS_PER_BAR / STUDIO_PPQ;
     for (let beat = 1; beat < beatsPerBar; beat++) {
       const bx = x + (beat / beatsPerBar) * bpx;
+      if (bx >= gridWidth) break;
       vLines += `<span class="st-pr-vline is-beat" style="left:${bx.toFixed(1)}px"></span>`;
     }
     if (bpx >= 140 && subStepTicks < STUDIO_PPQ) {
       for (let t = subStepTicks; t < STUDIO_TICKS_PER_BAR; t += subStepTicks) {
         if (t % STUDIO_PPQ === 0) continue;
         const sx = x + (t / STUDIO_TICKS_PER_BAR) * bpx;
+        if (sx >= gridWidth) break;
         vLines += `<span class="st-pr-vline is-sub" style="left:${sx.toFixed(1)}px"></span>`;
       }
     }
@@ -288,10 +294,10 @@ export function renderPianoRollHtml(): string {
   const rowMidiAttr = rows.map((r) => r.midi).join(",");
 
   return `
-    <div class="st-pr${isDrum ? " is-drum-mode" : ""}" id="st-piano-roll" data-pr-mode="${isDrum ? "drums" : "synth"}" data-pr-rows="${rowMidiAttr}" data-pr-row-h="${rowHeight}" data-pr-width="${gridWidth}" data-pr-total-ticks="${totalTicks}">
+    <div class="st-pr${isDrum ? " is-drum-mode" : ""}" id="st-piano-roll" data-pr-mode="${isDrum ? "drums" : "synth"}" data-pr-rows="${rowMidiAttr}" data-pr-row-h="${rowHeight}" data-pr-width="${gridWidth}" data-pr-total-ticks="${totalTicks}"${region ? ` data-pr-origin="${region.startTick}"` : ""}>
       <div class="st-pr-toolbar">
         <div class="st-pr-tb-group">
-          <span class="st-pr-track-badge">${escapeHtml(track.name)} · ${escapeHtml(mDef.name)}</span>
+          <span class="st-pr-track-badge">${escapeHtml(mDef.name)}${region ? (region.loop ? " · Loop source" : " · Region") : ""}</span>
           <span class="st-pr-meta">${spans.length} ${isDrum ? (spans.length === 1 ? "hit" : "hits") : spans.length === 1 ? "note" : "notes"}${state.selectedIndices.size > 0 ? ` · ${state.selectedIndices.size} sel` : ""}</span>
         </div>
         <div class="st-pr-tb-group">
@@ -319,14 +325,14 @@ export function renderPianoRollHtml(): string {
             <div class="st-pr-ruler-row">
               <div class="st-pr-corner">${isDrum ? "Drums" : "Keys"}</div>
               <div class="st-pr-ruler" data-st-ruler="1" style="width:${gridWidth}px" title="Click to seek playhead">
-                ${tr.loopEnabled ? `<div class="st-pr-loop" style="left:${loopLeftPx}px;width:${loopWidthPx}px"></div>` : ""}
+                ${tr.loopEnabled && !region ? `<div class="st-pr-loop" style="left:${loopLeftPx}px;width:${loopWidthPx}px"></div>` : ""}
                 ${rulerMarks}
                 <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
               </div>
             </div>
             <div class="st-pr-grid-row">
               <div class="st-pr-keys" style="height:${gridHeight}px">${keysHtml}</div>
-              <div class="st-pr-grid" id="st-pr-grid" style="width:${gridWidth}px;height:${gridHeight}px">
+              <div class="st-pr-grid" id="st-pr-grid" tabindex="0" aria-label="MIDI note grid" style="width:${gridWidth}px;height:${gridHeight}px">
                 <div class="st-pr-rows">${rowsHtml}</div>
                 <div class="st-pr-vlines">${vLines}</div>
                 <div class="st-pr-notes" id="st-pr-notes">${notesHtml}</div>
@@ -369,7 +375,7 @@ export function syncPianoRollScroll(container: HTMLElement): void {
       const rows = parseRowMidis(prRoot);
       const rowH = Number(prRoot.dataset.prRowH || PR_ROW_HEIGHT);
       const track = studioEngine.getFocusedTrack();
-      const spans = track.getNoteSpans(studioEngine.getTotalTicks());
+      const spans = editorNotes(track.id);
       let targetMidi = 60; // Default C4
       if (spans.length > 0) {
         const sorted = spans.map((s) => s.midi).sort((a, b) => a - b);
@@ -398,7 +404,7 @@ function previewNote(midi: number, velocity = 0.82, durationMs = 220): void {
 }
 
 /** Attach Piano Roll delegated events once on the Studio root container. */
-export function bindPianoRollEvents(container: HTMLElement, requestRender: () => void): void {
+export function bindPianoRollEvents(container: HTMLElement, requestRender: () => void, onError: (message: string) => void): void {
   let heldAuditionKey: { midi: number; pointerId: number; el: HTMLElement } | null = null;
   let noteDrag: {
     mode: "move" | "resize";
@@ -426,14 +432,14 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
 
   const commitSpans = (spans: StudioNoteSpan[]) => {
     const track = studioEngine.getFocusedTrack();
-    studioEngine.replaceTrackNotes(track.id, spans);
+    try { studioEngine.replaceTrackNotes(track.id, spans); }
+    catch (error) { onError(error instanceof Error ? error.message : String(error)); requestRender(); }
   };
 
   const deleteSelectedNotes = () => {
     if (state.selectedIndices.size === 0) return;
     const track = studioEngine.getFocusedTrack();
-    const totalTicks = studioEngine.getTotalTicks();
-    const spans = track.getNoteSpans(totalTicks);
+    const spans = editorNotes(track.id);
     const remaining = spans.filter((_, idx) => !state.selectedIndices.has(idx));
     state.selectedIndices.clear();
     commitSpans(remaining);
@@ -482,7 +488,8 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
           const grid = state.snapTicks > 0 ? state.snapTicks : 120;
           const track = studioEngine.getFocusedTrack();
           const sel = state.selectedIndices.size > 0 ? Array.from(state.selectedIndices) : undefined;
-          studioEngine.quantizeTrackNotes(track.id, grid, sel);
+          try { studioEngine.quantizeTrackNotes(track.id, grid, sel); }
+          catch (error) { onError(error instanceof Error ? error.message : String(error)); requestRender(); }
           break;
         }
         case "delete-selected":
@@ -507,6 +514,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     // Clicking empty Piano Roll / Drum Grid creates a new snapped MIDI note
     const grid = target.closest<HTMLElement>("#st-pr-grid");
     if (grid && !target.closest(".st-pr-note")) {
+      grid.focus({ preventScroll: true });
       const prRoot = container.querySelector<HTMLElement>("#st-piano-roll");
       if (!prRoot) return;
       const rect = grid.getBoundingClientRect();
@@ -521,13 +529,13 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const y = Math.max(0, Math.min(rect.height - 1, e.clientY - rect.top));
 
       const rawTick = (x / rect.width) * totalTicks;
-      const startTick = snapTickValue(rawTick, state.snapTicks, "floor");
+      const startTick = Math.min(totalTicks - 1, snapTickValue(rawTick, state.snapTicks, "floor"));
       const dur = state.snapTicks > 0 ? Math.max(120, state.snapTicks) : STUDIO_PPQ;
       const rowIdx = Math.max(0, Math.min(rowMidis.length - 1, Math.floor(y / rowHeight)));
       const midi = rowMidis[rowIdx];
 
       const track = studioEngine.getFocusedTrack();
-      const spans = track.getNoteSpans(totalTicks);
+      const spans = editorNotes(track.id);
       const endTick = Math.min(totalTicks, Math.max(startTick + 30, startTick + dur));
       spans.push({ midi, startTick, endTick, velocity: 0.85 });
       spans.sort((a, b) => a.startTick - b.startTick || a.midi - b.midi);
@@ -549,7 +557,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     const idx = Number(noteEl.getAttribute("data-pr-note-idx"));
     if (!Number.isFinite(idx)) return;
     const track = studioEngine.getFocusedTrack();
-    const spans = track.getNoteSpans(studioEngine.getTotalTicks());
+    const spans = editorNotes(track.id);
     if (idx < 0 || idx >= spans.length) return;
     spans.splice(idx, 1);
     state.selectedIndices.clear();
@@ -565,7 +573,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     const idx = Number(noteEl.getAttribute("data-pr-note-idx"));
     if (!Number.isFinite(idx)) return;
     const track = studioEngine.getFocusedTrack();
-    const spans = track.getNoteSpans(studioEngine.getTotalTicks());
+    const spans = editorNotes(track.id);
     if (idx < 0 || idx >= spans.length) return;
     spans.splice(idx, 1);
     state.selectedIndices.clear();
@@ -591,6 +599,8 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       return;
     }
 
+    if (target.closest(".st-pr-note, [data-pr-vel-idx]"))
+      container.querySelector<HTMLElement>("#st-pr-grid")?.focus({ preventScroll: true });
     const velStem = target.closest<HTMLElement>("[data-pr-vel-idx]");
     if (velStem) {
       e.preventDefault();
@@ -598,7 +608,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const laneEl = container.querySelector<HTMLElement>("#st-pr-vel-lane");
       if (!laneEl || !Number.isFinite(idx)) return;
       const track = studioEngine.getFocusedTrack();
-      const origSpans = track.getNoteSpans(studioEngine.getTotalTicks());
+      const origSpans = editorNotes(track.id);
       if (idx < 0 || idx >= origSpans.length) return;
       state.selectedIndices.clear();
       state.selectedIndices.add(idx);
@@ -620,7 +630,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const totalTicks = Number(prRoot.dataset.prTotalTicks || studioEngine.getTotalTicks());
       const rowMidis = parseRowMidis(prRoot);
       const rowHeight = Number(prRoot.dataset.prRowH || PR_ROW_HEIGHT);
-      const origSpans = track.getNoteSpans(totalTicks);
+      const origSpans = editorNotes(track.id);
       if (idx < 0 || idx >= origSpans.length || rowMidis.length === 0) return;
 
       if (e.shiftKey) {
