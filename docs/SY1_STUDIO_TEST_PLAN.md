@@ -1,3 +1,5 @@
+> **2026-11-21 recovery update:** Fresh main `23cd2f2` audit and repair evidence: [Studio recovery report](SY1_STUDIO_RECOVERY_2026-11-21.md). The historical sections below are retained; their test counts and seven-machine scope are superseded by that report.
+
 # SY-1 Studio (Web) — Master Acceptance Test Plan
 
 **Baseline SHA:** `c3f7c3e883b8185c543144cfa1b46c18883a6e5d` (`main`)  

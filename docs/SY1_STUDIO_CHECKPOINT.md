@@ -1,3 +1,5 @@
+> **2026-11-21 recovery update:** Fresh main `23cd2f2` audit and repair evidence: [Studio recovery report](SY1_STUDIO_RECOVERY_2026-11-21.md). The historical sections below are retained; their test counts and seven-machine scope are superseded by that report.
+
 # SY-1 Studio (Web) — Phase 0 Protected Checkpoint & Architecture
 
 **Date:** 2026-11-20  
