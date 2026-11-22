@@ -231,4 +231,77 @@ describe("Phase 6 MIDI regions", () => {
     expect(parseStudioProjectJson(JSON.stringify(project)).ok).toBe(false);
     engine.dispose();
   });
+
+  test("Phase 6.1: clearTrackClip uses undoable region history without destroying unrelated edits or selections", async () => {
+    const { engine, track, editor, legacy } = setup();
+    const track2 = engine.getTracks()[1];
+
+    // Step 1: perform an unrelated edit on Track 2 and keep Track 2's region selected
+    editor.copy();
+    editor.paste(track2.id, bar);
+    const track2Region = editor.regions(track2.id)[0];
+    expect(track2Region).toBeDefined();
+    expect(editor.selection()).toEqual([track2Region.id]);
+
+    // Step 2: clear Track 1 via clearTrackClip()
+    engine.clearTrackClip(track.id);
+    expect(editor.regions(track.id).length).toBe(0);
+    expect(track.events.length).toBe(0);
+    // Unrelated Track 2 regions and selection stay intact
+    expect(editor.regions(track2.id).length).toBe(1);
+    expect(editor.selection()).toEqual([track2Region.id]);
+
+    // Step 3: calling clearTrackClip() on an already-empty track is a no-op (does not push empty history)
+    engine.clearTrackClip(track.id);
+
+    // Step 4: First undo restores Track 1 cleanly
+    expect(editor.canUndo()).toBe(true);
+    editor.undo();
+    expect(editor.regions(track.id).length).toBe(1);
+    expect(editor.regions(track.id)[0].id).toBe(legacy.id);
+    expect(track.events).toEqual(phrase);
+    expect(editor.regions(track2.id).length).toBe(1);
+
+    // Step 5: Second undo still reaches the earlier unrelated Track 2 paste!
+    expect(editor.canUndo()).toBe(true);
+    editor.undo();
+    expect(editor.regions(track2.id).length).toBe(0);
+    expect(editor.regions(track.id).length).toBe(1);
+
+    // Step 6: Redo twice replays paste then clearTrackClip
+    expect(editor.canRedo()).toBe(true);
+    editor.redo();
+    expect(editor.regions(track2.id).length).toBe(1);
+    editor.redo();
+    expect(editor.regions(track.id).length).toBe(0);
+    expect(editor.regions(track2.id).length).toBe(1);
+
+    // Step 7: Clearing a populated track while recording is rejected without mutating state
+    await engine.record({ midiOnly: true });
+    let blocked = false;
+    try { engine.clearTrackClip(track2.id); } catch { blocked = true; }
+    expect(blocked).toBe(true);
+    expect(editor.regions(track2.id).length).toBe(1);
+    await engine.stop();
+    engine.dispose();
+  });
+
+  test("Phase 6.1: deleting or clearing the last remaining region keeps Undo available to restore", () => {
+    const { engine, track, editor, legacy } = setup();
+    editor.select(legacy.id);
+    editor.remove();
+    expect(editor.regions(track.id).length).toBe(0);
+    expect(editor.canUndo()).toBe(true);
+    expect(editor.canRedo()).toBe(false);
+
+    editor.undo();
+    expect(editor.regions(track.id).length).toBe(1);
+    expect(track.events).toEqual(phrase);
+    expect(editor.canRedo()).toBe(true);
+
+    editor.redo();
+    expect(editor.regions(track.id).length).toBe(0);
+    engine.dispose();
+  });
 });
+

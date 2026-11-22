@@ -188,11 +188,127 @@ try {
   await sleep(350);
   const newLength=(await regions())[3][0].length;
   assert("Touch drag handle resizes drum region",newLength>old,{old,newLength,handle,trace:await evaluate("window.__touchTrace")});
+  // Phase 6.1: Verify Clear Track uses accessible in-app confirmation dialog (never window.confirm)
+  // and preserves unrelated Undo/Redo history, plus touch-only Undo/Redo when all regions are cleared.
+  await evaluate(`(()=>{
+    window.__confirmCalls = 0;
+    window.confirm = () => { window.__confirmCalls++; throw new Error('window.confirm must not be called'); };
+  })()`);
+
+  // Record a prior edit on Track 4 (resize already pushed history), then test Clear Track on Track 2
+  const track2ClearBtn = `button[data-st-action="clear-track"][data-track-id="track-2"]`;
+  await viewport(1440, 900);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+  await sleep(80);
+  const track2BeforeClear = (await regions())[1].length;
+  const track4BeforeClear = (await regions())[3][0].length;
+  await click(track2ClearBtn);
+  await wait("!!document.querySelector('#st-clear-dialog')");
+  const dialogCheck = await evaluate(`(()=>{
+    const d = document.querySelector('#st-clear-dialog');
+    return {
+      role: d?.getAttribute('role'),
+      modal: d?.getAttribute('aria-modal'),
+      focusedId: document.activeElement?.id,
+      confirmCalls: window.__confirmCalls
+    };
+  })()`);
+  assert("Clear Track opens accessible alertdialog without calling window.confirm",
+    dialogCheck.role === "alertdialog" && dialogCheck.modal === "true" && dialogCheck.focusedId === "st-clear-cancel-btn" && dialogCheck.confirmCalls === 0,
+    dialogCheck);
+
+  // Escape dismisses without clearing and returns focus to Clear button
+  await shortcut("Escape", "Escape", 0);
+  await wait("!document.querySelector('#st-clear-dialog')");
+  const afterEscape = await evaluate(`({
+    track2Regions: window.SY1_STUDIO.engine.regions.regions('track-2').length,
+    focusedAction: document.activeElement?.getAttribute('data-st-action')
+  })`);
+  assert("Escape cancels Clear Track dialog without clearing and restores focus",
+    afterEscape.track2Regions === track2BeforeClear && afterEscape.focusedAction === "clear-track",
+    afterEscape);
+
+  // Re-open and click Cancel button
+  await click(track2ClearBtn);
+  await wait("!!document.querySelector('#st-clear-dialog')");
+  await click("#st-clear-cancel-btn");
+  await wait("!document.querySelector('#st-clear-dialog')");
+  assert("Cancel button preserves Track 2 regions", (await regions())[1].length === track2BeforeClear);
+
+  // Re-open and confirm Clear Track -> Track 2 clears, Undo restores Track 2, second Undo restores Track 4's earlier resize!
+  await click(track2ClearBtn);
+  await wait("!!document.querySelector('#st-clear-dialog')");
+  await screenshot("desktop-clear-dialog");
+  await click("#st-clear-confirm-btn");
+  await wait("!document.querySelector('#st-clear-dialog') && window.SY1_STUDIO.engine.regions.regions('track-2').length === 0");
+  assert("Confirming Clear Track clears Track 2 and keeps Undo enabled without calling window.confirm",
+    await evaluate("window.__confirmCalls === 0 && !document.querySelector('#st-undo-btn').disabled"));
+
+  // Undo #1 via toolbar button restores Track 2
+  await click("#st-undo-btn");
+  await wait("window.SY1_STUDIO.engine.regions.regions('track-2').length > 0");
+  assert("Toolbar Undo restores cleared Track 2", (await regions())[1].length === track2BeforeClear);
+
+  // Undo #2 via keyboard Cmd/Ctrl+Z reaches prior unrelated Track 4 resize (history NOT destroyed!)
+  await shortcut("z", "KeyZ", 2);
+  await sleep(100);
+  const track4AfterPriorUndo = (await regions())[3][0].length;
+  assert("Prior unrelated Undo history survives Clear Track and keyboard Cmd/Ctrl+Z still works",
+    track4AfterPriorUndo === old && track4AfterPriorUndo < track4BeforeClear,
+    { old, track4BeforeClear, track4AfterPriorUndo });
+
+  // Redo via toolbar button restores Track 4 resize
+  await click("#st-redo-btn");
+  await sleep(100);
+  assert("Toolbar Redo re-applies prior edit", (await regions())[3][0].length === track4BeforeClear);
+
+  // Touch-only Undo/Redo when ALL regions on every track are removed (0 regions left on canvas)
+  await viewport(1024, 768);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+  await sleep(80);
+  await evaluate(`(()=>{
+    const e = window.SY1_STUDIO.engine;
+    for (const t of e.getTracks()) e.clearTrackClip(t.id);
+  })()`);
+  await wait("document.querySelectorAll('.st-midi-region').length === 0");
+  assert("Toolbar Undo stays visible and enabled when all regions have been deleted",
+    await evaluate(`(()=>{
+      const u = document.querySelector('#st-undo-btn');
+      const r = u?.getBoundingClientRect();
+      return !!u && !u.disabled && r.width > 0 && r.height > 0 && r.right <= innerWidth;
+    })()`));
+  const undoTouchPt = await point("#st-undo-btn");
+  await touch("touchStart", undoTouchPt); await touch("touchEnd");
+  await wait("document.querySelectorAll('.st-midi-region').length > 0");
+  const restoredByTouchCount = await evaluate("document.querySelectorAll('.st-midi-region').length");
+  assert("Touch-only tap on Undo restores regions when canvas had zero regions", restoredByTouchCount > 0, restoredByTouchCount);
+
+  const redoTouchPt = await point("#st-redo-btn");
+  await touch("touchStart", redoTouchPt); await touch("touchEnd");
+  await wait("document.querySelectorAll('.st-midi-region').length === 0");
+  assert("Touch-only tap on Redo re-applies clear", true);
+
+  // Restore all 4 tracks via 4 touch taps on Undo so subsequent viewport assertions see regions
+  for (let i = 0; i < 4; i++) {
+    const pt = await point("#st-undo-btn");
+    await touch("touchStart", pt); await touch("touchEnd");
+    await sleep(80);
+  }
+  await wait("document.querySelectorAll('.st-midi-region').length >= 4");
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+
   await viewport(768,1024);
   await screenshot("ipad-portrait");
   for (const [w,h] of [[1440,900],[1280,800],[1024,768],[768,1024],[390,844]]) {
     await viewport(w,h); await sleep(80);
-    assert(`${w}×${h} arrangement viewport`,await evaluate("document.documentElement.scrollWidth<=innerWidth&&!!document.querySelector('.st-midi-region')"));
+    assert(`${w}×${h} arrangement viewport`,await evaluate(`(()=>{
+      const u = document.querySelector('#st-undo-btn');
+      const r = document.querySelector('#st-redo-btn');
+      const ur = u?.getBoundingClientRect(), rr = r?.getBoundingClientRect();
+      return document.documentElement.scrollWidth<=innerWidth
+        && !!document.querySelector('.st-midi-region')
+        && !!ur && !!rr && ur.left>=0 && rr.right<=innerWidth;
+    })()`));
   }
   assert("No uncaught browser errors",errors.length===0,errors);
 } finally {

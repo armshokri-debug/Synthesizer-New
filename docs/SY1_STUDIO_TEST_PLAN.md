@@ -1,12 +1,15 @@
-> **Phase 5 — 2026-11-21:** Synth-view MIDI recording and shared audio-clock metronome implemented on `feat/synth-recording-workflow`; fresh results and limitations: [Phase 5 report](SY1_STUDIO_PHASE5.md). Review only; no merge/deploy.
-
-> **2026-11-21 recovery update:** Fresh main `23cd2f2` audit and repair evidence: [Studio recovery report](SY1_STUDIO_RECOVERY_2026-11-21.md). The historical sections below are retained; their test counts and seven-machine scope are superseded by that report.
+> **Phase 6.1 — 2026-11-22 (Local Unpushed, Pending Approval):** Added unit & Headless Chromium regression coverage in `tests/studio-phase6.test.ts` and `scripts/studio-phase6-verify.mjs` for the in-app Clear Track confirmation dialog (zero `window.confirm()` calls), always-accessible touch & desktop Undo/Redo controls (including zero-region recovery), and `clearTrackClip()` history preservation.
+>
+> **Phase 6 — 2026-11-21 (Merged `9bad2de323`):** Non-destructive MIDI region editing verification: [Phase 6 report](SY1_STUDIO_PHASE6.md).
+>
+> **Phase 5 — 2026-11-21 (Merged `0ba71fc54b`):** Synth-view MIDI recording and shared audio-clock metronome verification: [Phase 5 report](SY1_STUDIO_PHASE5.md).
+>
+> **Phase 4 Recovery — 2026-11-21 (Merged `82e8b700b2`):** Studio recovery & 8-instrument verification: [Studio recovery report](SY1_STUDIO_RECOVERY_2026-11-21.md). The historical Phase 0–3 suite tables below are retained; their test counts and seven-machine scope are superseded by the reports above.
 
 # SY-1 Studio (Web) — Master Acceptance Test Plan
 
-**Baseline SHA:** `c3f7c3e883b8185c543144cfa1b46c18883a6e5d` (`main`)  
-**Target Branch:** `feature/sy1-studio-web`  
-**Status Reporting Policy:** Every test case must be marked `PASS`, `FAIL`, or `NOT RUN`. Unexecuted tests are **never** inferred from another platform (e.g., macOS Chrome `PASS` never implies iPadOS Safari `PASS`).
+**Verified `main` Baseline:** `9bad2de323` (`Merge pull request #3 from armshokri-debug/feat/midi-region-editing`)  
+**Status Reporting Policy:** Every test case must be marked `PASS`, `FAIL`, or `NOT RUN`. Unexecuted tests are **never** inferred from another platform (e.g., Linux Headless Chromium `PASS` never implies physical macOS Chrome or iPadOS Safari `PASS`).
 
 ---
 

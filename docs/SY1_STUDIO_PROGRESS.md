@@ -1,13 +1,16 @@
-> **Phase 5 — 2026-11-21:** Synth-view MIDI recording and shared audio-clock metronome implemented on `feat/synth-recording-workflow`; fresh results and limitations: [Phase 5 report](SY1_STUDIO_PHASE5.md). Review only; no merge/deploy.
-
-> **2026-11-21 recovery update:** Fresh main `23cd2f2` audit and repair evidence: [Studio recovery report](SY1_STUDIO_RECOVERY_2026-11-21.md). The historical sections below are retained; their test counts and seven-machine scope are superseded by that report.
+> **Phase 6.1 — 2026-11-22 (Local Unpushed, Pending Approval):** Safety & UX fixes on top of `main` (`9bad2de323`): replaced native `window.confirm()` Clear Track prompt with accessible in-app `#st-clear-dialog` (`alertdialog`, Escape/Cancel/Tab trap), added compact always-accessible Undo/Redo controls (including touch-only operation when 0 regions remain), and fixed `clearTrackClip()` to delegate to undoable `RegionEditor.clearTrack()` without wiping unrelated Undo/Redo history.
+>
+> **Phase 6 — 2026-11-21 (Merged to `main` `9bad2de323`):** Non-destructive MIDI region editing (move, trim, split, merge, copy/cut/paste, duplicate, loop, repeat, undo/redo, region-scoped Piano Roll & Drum Grid, touch long-press menu); see [Phase 6 report](SY1_STUDIO_PHASE6.md).
+>
+> **Phase 5 — 2026-11-21 (Merged to `main` `0ba71fc54b`):** Synth-view MIDI recording and shared audio-clock metronome; see [Phase 5 report](SY1_STUDIO_PHASE5.md).
+>
+> **Phase 4 Stabilization — 2026-11-21 (Merged to `main` `82e8b700b2`):** Studio recovery & independent 8-instrument architecture (SY-1 + 7 city synths including Kerman Drum Machine); see [Studio recovery report](SY1_STUDIO_RECOVERY_2026-11-21.md). Historical sections below are retained for audit history.
 
 # SY-1 Studio (Web) — Engineering Progress Log
 
 **Repository:** `https://github.com/armshokri-debug/Synthesizer-New`  
-**Protected Baseline (`main`):** `c3f7c3e883b8185c543144cfa1b46c18883a6e5d`  
-**Untouched Native VST3 Branch:** `fix/realtime-state-publication` (`af4d2d6b8174aff8c0747549693910512abbb075`)  
-**Active Studio Branch:** `feature/sy1-studio-web`
+**Verified `main` Baseline:** `9bad2de323` (`Merge pull request #3 from armshokri-debug/feat/midi-region-editing`)  
+**Protected Native/VST3 Scope:** `native/**`, `plugin/**`, `src/dsp/**`, `src/machines/**`, `src/ui/panel.ts`, `src/index.css`, `src/ui/skins.css` (unchanged)
 
 ---
 
@@ -15,11 +18,14 @@
 
 | Phase | Scope | Status | Gate |
 |---|---|---|---|
-| **Phase 0** | Protected Checkpoint, Baseline Audit, Branch Setup, Architecture Blueprint, Test Plan | **COMPLETE** (Committed `2415939`) | Signed off |
-| **Phase 1** | Multi-Track SY-1 Audio Engine (2 isolated tracks expandable to 4), Shared `AudioContext` + Transport (`Play`/`Stop`/`Rec`/`Loop`, BPM, `8/12/64/128/custom` bars), MIDI Rec + SMF-1 Export, 24-bit WAV Live & Bounce Export, Studio UI, Automated Bun + Chromium Verification | **COMPLETE** (Verified GitHub Commit `079b29f2392d7381c21f997601239fbe2bb9b61a`) | Signed off |
-| **Phase 2** | Project Save / Open (`IndexedDB`), Autosave & Refresh Recovery, Versioned `.sy1studio` Export / Import with Validation, Separate 24-bit Stereo WAV Stems (`bounceTrackStemsWav`), Preserved Mix WAV + SMF-1 MIDI, Recording RAM Safety Guardrails (30-min cap preserved), Minimal Project UI | **COMPLETE** (Verified GitHub `main` Commit `20340c00c5de9c857a5c52debdd68f9edbd782b1`) | Signed off & synced |
-| **Phase 3** | Audio Stability & Performance for 4 Simultaneous Tracks (Zero-Leak Bus/Master/Track Disposal, `O(log N + K)` Scheduler + Stall Guard, iPadOS Safari Interrupt/Background Recovery, Idle `rAF` Elimination & Non-Destructive Slider Drag, 4-Track Automated Stress & Regression Suites) | **COMPLETE** (Verified GitHub `main` Commit `26242cf02cf9960638f8bf6dc1016d305aa71725`) | Signed off & synced |
-| **Phase 4** | Professional DAW UI/UX Redesign (Full-Width Arrangement Timeline, Integrated Resizable MIDI Piano Roll, Collapsible Iranian City Synth Browser, Mixer with Live Meters, Unchanged Original Synth Instrument View, Desktop/iPad Landscape/iPad Portrait Responsiveness) | **COMPLETE — Local Unpushed, Ready for Approval** | Stopped after Phase 4 per instruction |
+| **Phase 0** | Protected Checkpoint, Baseline Audit, Branch Setup, Architecture Blueprint, Test Plan | **COMPLETE** (`2415939`) | Signed off |
+| **Phase 1** | Multi-Track SY-1 Audio Engine (2 isolated tracks expandable to 4), Shared `AudioContext` + Transport (`Play`/`Stop`/`Rec`/`Loop`, BPM, `8/12/64/128/custom` bars), MIDI Rec + SMF-1 Export, 24-bit WAV Live & Bounce Export, Studio UI, Automated Bun + Chromium Verification | **COMPLETE** (`079b29f2392d7381c21f997601239fbe2bb9b61a`) | Signed off & merged |
+| **Phase 2** | Project Save / Open (`IndexedDB`), Autosave & Refresh Recovery, Versioned `.sy1studio` Export / Import with Validation, Separate 24-bit Stereo WAV Stems (`bounceTrackStemsWav`), Preserved Mix WAV + SMF-1 MIDI, Recording RAM Safety Guardrails (30-min cap preserved), Minimal Project UI | **COMPLETE** (`20340c00c5de9c857a5c52debdd68f9edbd782b1`) | Signed off & merged |
+| **Phase 3** | Audio Stability & Performance for 4 Simultaneous Tracks (Zero-Leak Bus/Master/Track Disposal, `O(log N + K)` Scheduler + Stall Guard, iPadOS Safari Interrupt/Background Recovery, Idle `rAF` Elimination & Non-Destructive Slider Drag, 4-Track Automated Stress & Regression Suites) | **COMPLETE** (`26242cf02cf9960638f8bf6dc1016d305aa71725`) | Signed off & merged |
+| **Phase 4** | Professional DAW UI/UX + Recovery Stabilization (Full-Width Arrangement Timeline, Integrated Resizable MIDI Piano Roll & Kerman Drum Grid, Collapsible 8-Instrument Browser, Independent Per-Track Engines, Mixer with Live Meters, Unchanged Original Synth Instrument View, 5-Viewport Responsive Layout) | **COMPLETE** (`82e8b700b2`) | Merged to `main` ([Recovery Report](SY1_STUDIO_RECOVERY_2026-11-21.md)) |
+| **Phase 5** | Record Directly from Standalone Synth View into Studio + Shared Audio-Clock Metronome & 1-Bar Count-In | **COMPLETE** (`0ba71fc54b`) | Merged to `main` ([Phase 5 Report](SY1_STUDIO_PHASE5.md)) |
+| **Phase 6** | Non-Destructive MIDI Region Editing (Select, Move, Trim Left/Right, Loop, Repeat, Split, Merge, Copy/Cut/Paste, Duplicate, Undo/Redo, Region-Scoped Piano Roll/Drum Grid, Touch Context Menu, Legacy Project Compatibility) | **COMPLETE** (`9bad2de323`) | Merged to `main` ([Phase 6 Report](SY1_STUDIO_PHASE6.md)) |
+| **Phase 6.1** | Safety & UX Fixes (In-App Accessible Clear Track Confirmation Dialog replacing `window.confirm()`, Always-Accessible Touch & Desktop Undo/Redo Controls including Zero-Region State, `clearTrackClip()` History Preservation via `RegionEditor.clearTrack()`) | **COMPLETE — Local Unpushed, Pending Approval** | Stopped before push/merge/deploy |
 
 ---
 

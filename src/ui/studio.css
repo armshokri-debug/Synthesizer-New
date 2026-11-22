@@ -2406,4 +2406,118 @@ html.is-studio .sy1-shell::after {
   .st-region-edge.is-loop { height: 25px; width: min(32px, 33%); }
   .st-region-more { height: 34px; min-width: 36px; }
   .st-region-menu button, .st-region-menu label { min-height: 42px; }
+  .st-hist-btn { min-height: 40px; padding: 0 11px; }
+  .st-dialog-actions .st-btn { min-height: 42px; padding: 0 14px; }
 }
+
+/* ---------------------------------------------------------- Phase 6.1: Undo/Redo & Confirmation Dialog */
+.st-history-seg {
+  display: inline-flex;
+  align-items: center;
+}
+
+.st-dock-history {
+  display: none;
+  align-items: center;
+}
+
+.st-daw.is-dock-expanded .st-dock-history {
+  display: inline-flex;
+}
+
+.st-hist-btn {
+  white-space: nowrap;
+}
+
+.st-hist-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.st-btn.is-danger {
+  color: #fff2ee;
+  border-color: rgba(235, 92, 74, 0.72);
+  background: linear-gradient(180deg, #b83b2e 0%, #8e281e 100%);
+}
+
+.st-btn.is-danger:hover:not(:disabled) {
+  border-color: rgba(248, 122, 106, 0.9);
+  background: linear-gradient(180deg, #cb4537 0%, #9d2f24 100%);
+}
+
+.st-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.st-dialog-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 10, 14, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.st-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(380px, calc(100vw - 32px));
+  padding: 18px 20px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--st-border-hi);
+  background: linear-gradient(180deg, #262930 0%, #1b1d22 100%);
+  color: var(--st-ink);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.78), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.st-dialog-title {
+  margin: 0 0 8px;
+  font-size: 0.96rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #f4f6f9;
+}
+
+.st-dialog-desc {
+  margin: 0 0 16px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--st-ink-dim);
+}
+
+.st-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.st-dialog .st-btn:focus-visible,
+.st-hist-btn:focus-visible {
+  outline: 2px solid #fdd48e;
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .st-arr-toolbar {
+    flex: 0 0 auto;
+    min-height: 32px;
+    flex-wrap: wrap;
+    padding: 4px 8px;
+    row-gap: 4px;
+  }
+
+  .st-arr-tb-left,
+  .st-arr-tb-right {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .st-arr-zoom-lbl {
+    display: none;
+  }
+}
+

@@ -208,7 +208,14 @@ export class RegionEditor {
     this.edit(tracks, []);
   }
 
-  clearTrack(trackId: string): void { this.edit(new Map([[trackId, []]]), []); }
+  clearTrack(trackId: string): void {
+    const existing = this.regions(trackId);
+    const track = this.track(trackId);
+    if (existing.length === 0 && track.events.length === 0) return;
+    const clearedIds = new Set(existing.map(region => region.id));
+    const nextSelection = this.selection().filter(id => !clearedIds.has(id));
+    this.edit(new Map([[trackId, []]]), nextSelection);
+  }
 
   cut(): void { this.assertEditable(); this.copy(); this.remove(); }
 

@@ -651,11 +651,8 @@ export class SY1StudioEngine {
   }
 
   clearTrackClip(id: string): void {
-    const t = this.getTrack(id);
-    if (!t) return;
-    t.clearEvents();
-    this.regions.reset();
-    this.notify();
+    if (!this.getTrack(id)) return;
+    this.regions.clearTrack(id);
   }
 
   // ------------------------------------------------------------- transport ----

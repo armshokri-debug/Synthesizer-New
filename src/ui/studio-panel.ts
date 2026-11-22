@@ -67,6 +67,7 @@ let arrScrollLeft = 0;
 let arrScrollTop = 0;
 let instPageFilter = "all";
 let exportMenuOpen = false;
+let pendingClearTrackId: string | null = null;
 let keysVisible = false;
 
 let rafId = 0;
@@ -185,6 +186,7 @@ export async function importStudioProjectJson(text: string): Promise<{ ok: boole
   try {
     suppressNextAutosave = true;
     await studioEngine.loadProject(parsed.project);
+    pendingClearTrackId = null;
     await studioStorage.saveAutosave(studioEngine.exportProject());
     openDrawerVisible = false;
     exportMenuOpen = false;
@@ -610,6 +612,33 @@ function renderStudioHtml(): string {
     }
   }
 
+  const canUndo = studioEngine.regions.canUndo() && !tr.recording;
+  const canRedo = studioEngine.regions.canRedo() && !tr.recording;
+  const pendingClearTrack = pendingClearTrackId ? studioEngine.getTrack(pendingClearTrackId) : null;
+  if (pendingClearTrackId && !pendingClearTrack) pendingClearTrackId = null;
+  const clearDialogHtml = pendingClearTrack
+    ? (() => {
+        const clearMachine = getStudioMachineDef(pendingClearTrack.machineId);
+        const clearRegions = studioEngine.regions.regions(pendingClearTrack.id).length;
+        const clearNotes = pendingClearTrack.getNoteCount();
+        const regionLabel = clearRegions === 1 ? "1 MIDI region" : `${clearRegions} MIDI regions`;
+        const noteUnit = pendingClearTrack.isDrumTrack()
+          ? clearNotes === 1 ? "hit" : "hits"
+          : clearNotes === 1 ? "note" : "notes";
+        return `<div class="st-dialog-backdrop">
+          <div class="st-dialog-scrim" data-st-action="cancel-clear-track" aria-hidden="true"></div>
+          <div class="st-dialog" id="st-clear-dialog" role="alertdialog" aria-modal="true" aria-labelledby="st-clear-dialog-title" aria-describedby="st-clear-dialog-desc">
+            <h2 class="st-dialog-title" id="st-clear-dialog-title">Clear ${escapeHtml(pendingClearTrack.name)}?</h2>
+            <p class="st-dialog-desc" id="st-clear-dialog-desc">Remove ${regionLabel} (${clearNotes} ${noteUnit}) from ${escapeHtml(clearMachine.name)}. You can restore this track immediately with Undo.</p>
+            <div class="st-dialog-actions">
+              <button type="button" class="st-btn" id="st-clear-cancel-btn" data-st-action="cancel-clear-track">Cancel</button>
+              <button type="button" class="st-btn is-danger" id="st-clear-confirm-btn" data-st-action="confirm-clear-track" data-track-id="${escapeHtml(pendingClearTrack.id)}">Clear Track</button>
+            </div>
+          </div>
+        </div>`;
+      })()
+    : "";
+
   return `
     <div class="st-daw${dockExpanded ? " is-dock-expanded" : ""}${dockCollapsed ? " is-dock-collapsed" : ""}" dir="ltr" style="--st-dock-h:${dockHeightPx}px">
       <header class="st-topbar">
@@ -728,6 +757,10 @@ function renderStudioHtml(): string {
                     ? `<button type="button" class="st-btn st-tiny-btn" id="st-add-track-btn" data-st-action="add-track">+ Track</button>`
                     : ""
                 }
+                <div class="st-seg st-history-seg" role="group" aria-label="Edit history">
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶ Undo</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷ Redo</button>
+                </div>
                 <span class="st-arr-loop-info${tr.loopEnabled ? " is-on" : ""}">Loop Bar ${tr.loopStartBar}–${tr.loopEndBar}</span>
               </div>
               <div class="st-arr-tb-right">
@@ -777,6 +810,10 @@ function renderStudioHtml(): string {
                 <span class="st-dock-track-sub">${escapeHtml(focused.presetName)}</span>
               </div>
               <div class="st-dock-actions">
+                <div class="st-seg st-dock-history" role="group" aria-label="Edit history">
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶ Undo</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷ Redo</button>
+                </div>
                 <button type="button" class="st-btn st-tiny-btn${dockExpanded ? " is-active" : ""}" id="st-dock-expand" data-st-action="dock-expand" aria-pressed="${dockExpanded}" title="Toggle full-height focused view">${dockExpanded ? "Split" : "Expand"}</button>
                 <button type="button" class="st-btn st-tiny-btn" id="st-dock-collapse" data-st-action="dock-collapse" aria-pressed="${dockCollapsed}" title="Collapse or expand bottom panel">${dockCollapsed ? "Show" : "Hide"}</button>
               </div>
@@ -787,6 +824,7 @@ function renderStudioHtml(): string {
           </section>
         </div>
       </div>
+      ${clearDialogHtml}
     </div>`;
 }
 
@@ -971,6 +1009,41 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
 
   const container = document.getElementById("sy1-studio");
   if (!container) return;
+
+  // Trap modal focus & intercept Escape/background shortcuts before region key handlers
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (!pendingClearTrackId || container.hidden) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const restoreId = pendingClearTrackId;
+        pendingClearTrackId = null;
+        renderStudioPanel();
+        container.querySelector<HTMLElement>(`button[data-st-action="clear-track"][data-track-id="${restoreId}"]`)?.focus();
+        return;
+      }
+      if (e.key === "Tab") {
+        const dialog = container.querySelector<HTMLElement>("#st-clear-dialog");
+        const focusables = dialog ? Array.from(dialog.querySelectorAll<HTMLElement>("button:not(:disabled)")) : [];
+        if (focusables.length > 0) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const idx = focusables.indexOf(document.activeElement as HTMLElement);
+          const next = idx < 0 ? 0 : (idx + (e.shiftKey ? -1 : 1) + focusables.length) % focusables.length;
+          focusables[next]?.focus();
+        }
+        return;
+      }
+      const inDialog = (e.target as HTMLElement | null)?.closest("#st-clear-dialog");
+      if (inDialog && (e.key === "Enter" || e.key === " ")) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    },
+    true
+  );
+
   bindRegionControls(container, {
     render: renderStudioPanel,
     openEditor: showStudioPianoRoll,
@@ -1175,11 +1248,67 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           if (t) studioEngine.setTrackSolo(trackId, !t.solo);
           break;
         }
-        case "clear-track":
-          if (trackId && window.confirm("Clear every MIDI region on this track? You can undo this.")) {
-            try { studioEngine.regions.clearTrack(trackId); }
-            catch (error) { setStatus(String(error), "error"); renderStudioPanel(); }
+        case "clear-track": {
+          if (!trackId) break;
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before editing regions.", "error");
+            renderStudioPanel();
+            break;
           }
+          const t = studioEngine.getTrack(trackId);
+          if (!t || (studioEngine.regions.regions(trackId).length === 0 && t.events.length === 0)) {
+            setStatus("Track is already empty.", "info");
+            renderStudioPanel();
+            break;
+          }
+          pendingClearTrackId = trackId;
+          exportMenuOpen = false;
+          renderStudioPanel();
+          container.querySelector<HTMLElement>("#st-clear-cancel-btn")?.focus();
+          break;
+        }
+        case "cancel-clear-track": {
+          const restoreId = pendingClearTrackId;
+          pendingClearTrackId = null;
+          renderStudioPanel();
+          if (restoreId) {
+            container.querySelector<HTMLElement>(`button[data-st-action="clear-track"][data-track-id="${restoreId}"]`)?.focus();
+          }
+          break;
+        }
+        case "confirm-clear-track": {
+          const targetId = trackId || pendingClearTrackId || "";
+          pendingClearTrackId = null;
+          if (targetId) {
+            try {
+              studioEngine.clearTrackClip(targetId);
+              setStatus("Cleared MIDI regions — use Undo to restore.", "info");
+            } catch (error) {
+              setStatus(error instanceof Error ? error.message : String(error), "error");
+            }
+          }
+          renderStudioPanel();
+          const undoBtn = container.querySelector<HTMLButtonElement>("#st-undo-btn");
+          if (undoBtn && !undoBtn.disabled) undoBtn.focus();
+          break;
+        }
+        case "undo":
+          if (!studioEngine.regions.canUndo()) break;
+          try {
+            studioEngine.regions.undo();
+          } catch (error) {
+            setStatus(error instanceof Error ? error.message : String(error), "error");
+          }
+          renderStudioPanel();
+          break;
+        case "redo":
+          if (!studioEngine.regions.canRedo()) break;
+          try {
+            studioEngine.regions.redo();
+          } catch (error) {
+            setStatus(error instanceof Error ? error.message : String(error), "error");
+          }
+          renderStudioPanel();
           break;
         case "arr-zoom-in":
           arrZoom = Math.min(4, Math.round((arrZoom + 0.5) * 100) / 100);
@@ -1347,6 +1476,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
             try {
               suppressNextAutosave = true;
               await studioEngine.loadProject(res.data);
+              pendingClearTrackId = null;
               await studioStorage.saveAutosave(studioEngine.exportProject());
               openDrawerVisible = false;
               setStatus(`Opened "${res.data.name}"`, "ok");
@@ -1380,6 +1510,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
             try {
               suppressNextAutosave = true;
               await studioEngine.loadProject(res.data.project);
+              pendingClearTrackId = null;
               openDrawerVisible = false;
               setStatus(`Recovered "${res.data.project.name}"`, "ok");
             } catch (err) {
@@ -1945,6 +2076,7 @@ export function hideStudioPanel(): void {
   cachedClockEl = null;
   cachedMeterEls = [];
   exportMenuOpen = false;
+  pendingClearTrackId = null;
   document.documentElement.classList.remove("is-studio");
   const synthEl = document.getElementById("sy1-panel");
   const studioEl = document.getElementById("sy1-studio");
