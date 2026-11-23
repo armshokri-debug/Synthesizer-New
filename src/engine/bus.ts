@@ -53,6 +53,14 @@ export interface SynthFXBus {
   sendIn: GainNode;
   /** Cached last drive value to skip redundant 1024-sample WaveShaper curve allocations. */
   lastDriveApplied?: number;
+  /** Lazy FX branch activation flags (keeps zero-mix feedback loops/LFOs dormant until raised > 0, zero sound change). */
+  _delayActive?: boolean;
+  _chorusActive?: boolean;
+  _reverbActive?: boolean;
+  _chorusIn?: GainNode;
+  _chorusDl?: DelayNode;
+  _chorusDr?: DelayNode;
+  _chorusMerge?: ChannelMergerNode;
   /** All internal AudioNodes owned by this bus so disposeSynthBus breaks every cyclic feedback loop cleanly. */
   _nodes?: AudioNode[];
 }
@@ -223,7 +231,11 @@ export function getSharedNoiseBuffer(ctx: BaseAudioContext): AudioBuffer {
   return synthNoiseBuffer;
 }
 
+const driveCurveCache = new Map<number, Float32Array>();
+
 export function makeDriveCurve(amount: number): Float32Array {
+  const cached = driveCurveCache.get(amount);
+  if (cached) return cached;
   const k = amount * 60;
   const n = 1024;
   const curve = new Float32Array(n);
@@ -231,6 +243,11 @@ export function makeDriveCurve(amount: number): Float32Array {
     const x = (i / (n - 1)) * 2 - 1;
     curve[i] = k === 0 ? x : ((1 + k) * x) / (1 + k * Math.abs(x));
   }
+  if (driveCurveCache.size >= 64) {
+    const oldest = driveCurveCache.keys().next().value;
+    if (oldest !== undefined) driveCurveCache.delete(oldest);
+  }
+  driveCurveCache.set(amount, curve);
   return curve;
 }
 
@@ -494,26 +511,29 @@ export function createSynthBus(
   delaySat.curve = makeTanhCurve() as any;
   delaySat.oversample = "2x";
   const delayWet = ctx.createGain();
-  delayWet.gain.value = p.delayMix * 0.7;
+  const initialDelayMix = Number(p.delayMix) || 0;
+  delayWet.gain.value = initialDelayMix * 0.7;
 
-  fxIn.connect(delay);
-  delay.connect(delayTone);
-  delayTone.connect(delayHP);
-  delayHP.connect(delayWet); // wet tap: filtered, not yet saturated by the feedback-loop drive
-  delayWet.connect(sum);
-  delayHP.connect(delaySat);
-  delaySat.connect(fb);
-  fb.connect(delay); // feedback loop
+  // Connect the cyclic tape-delay feedback loop only when delayMix > 0 (or lazily on first rise > 0).
+  // When delayMix === 0, delayWet gain is 0 so output is mathematically bit-identical (0.0).
+  const delayActive = initialDelayMix > 0;
+  if (delayActive) {
+    fxIn.connect(delay);
+    delay.connect(delayTone);
+    delayTone.connect(delayHP);
+    delayHP.connect(delayWet); // wet tap: filtered, not yet saturated by the feedback-loop drive
+    delayWet.connect(sum);
+    delayHP.connect(delaySat);
+    delaySat.connect(fb);
+    fb.connect(delay); // feedback loop
+  }
 
   // Stereo chorus: two short modulated delays, LFO in opposite phase on L and R
   const chorusIn = ctx.createGain();
-  fxIn.connect(chorusIn);
   const dl = ctx.createDelay(0.05);
   const dr = ctx.createDelay(0.05);
   dl.delayTime.value = 0.012;
   dr.delayTime.value = 0.012;
-  chorusIn.connect(dl);
-  chorusIn.connect(dr);
   const chorusLfo = ctx.createOscillator();
   chorusLfo.type = "triangle";
   chorusLfo.frequency.value = p.chorusRate ?? 0.6;
@@ -521,25 +541,45 @@ export function createSynthBus(
   const chorusDepthR = ctx.createGain();
   chorusDepthL.gain.value = 0.004 * (p.chorusDepth ?? 0.5);
   chorusDepthR.gain.value = -0.004 * (p.chorusDepth ?? 0.5);
-  chorusLfo.connect(chorusDepthL);
-  chorusLfo.connect(chorusDepthR);
-  chorusDepthL.connect(dl.delayTime);
-  chorusDepthR.connect(dr.delayTime);
-  chorusLfo.start();
   const chorusMerge = ctx.createChannelMerger(2);
-  dl.connect(chorusMerge, 0, 0);
-  dr.connect(chorusMerge, 0, 1);
   const chorusWet = ctx.createGain();
-  chorusWet.gain.value = (p.chorusMix ?? 0) * 0.9;
-  chorusMerge.connect(chorusWet);
+  const initialChorusMix = Number(p.chorusMix ?? 0) || 0;
+  chorusWet.gain.value = initialChorusMix * 0.9;
+
+  // Activate stereo chorus modulated delay graph only when chorusMix > 0 (or lazily on first rise > 0).
+  // chorusLfo is started once and cleanly stopped in disposeSynthBus to preserve bus oscillator lifecycle parity.
+  chorusLfo.start();
+  const chorusActive = initialChorusMix > 0;
+  if (chorusActive) {
+    fxIn.connect(chorusIn);
+    chorusIn.connect(dl);
+    chorusIn.connect(dr);
+    chorusLfo.connect(chorusDepthL);
+    chorusLfo.connect(chorusDepthR);
+    chorusDepthL.connect(dl.delayTime);
+    chorusDepthR.connect(dr.delayTime);
+    dl.connect(chorusMerge, 0, 0);
+    dr.connect(chorusMerge, 0, 1);
+    chorusMerge.connect(chorusWet);
+    chorusWet.connect(sum);
+  }
 
   const ownedNodes: AudioNode[] = [];
   const revWet = ctx.createGain();
-  revWet.gain.value = p.revMix * 0.9;
+  const initialRevMix = Number(p.revMix) || 0;
+  revWet.gain.value = initialRevMix * 0.9;
 
-  const { combs: reverbCombs, output: reverbOut, dampPeakGain } = buildReverb(ctx, fxIn, p.revSize, ownedNodes);
-  reverbOut.connect(revWet);
-  revWet.connect(sum);
+  // Build Freeverb 8-comb + 4-allpass graph only when revMix > 0 (or lazily on first rise > 0).
+  const reverbActive = initialRevMix > 0;
+  let reverbCombs: ReverbComb[] = [];
+  let dampPeakGain = 1.01;
+  if (reverbActive) {
+    const builtRev = buildReverb(ctx, fxIn, p.revSize, ownedNodes);
+    reverbCombs = builtRev.combs;
+    dampPeakGain = builtRev.dampPeakGain;
+    builtRev.output.connect(revWet);
+    revWet.connect(sum);
+  }
 
   const master = ctx.createGain();
   master.gain.value = p.volume;
@@ -553,7 +593,6 @@ export function createSynthBus(
   const analyser = ctx.createAnalyser();
   analyser.fftSize = connectToDest ? 2048 : 256;
 
-  chorusWet.connect(sum);
   sum.connect(master);
   master.connect(limiter);
   // Soft clipper: the limiter's 3 ms attack lets the sharpest transients (acoustic drums)
@@ -645,8 +684,58 @@ export function createSynthBus(
     clipIn,
     clip,
     lastDriveApplied: Number(p.drive),
+    _delayActive: delayActive,
+    _chorusActive: chorusActive,
+    _reverbActive: reverbActive,
+    _chorusIn: chorusIn,
+    _chorusDl: dl,
+    _chorusDr: dr,
+    _chorusMerge: chorusMerge,
     _nodes: ownedNodes
   };
+}
+
+function ensureDelayBranchActive(bus: SynthFXBus): void {
+  if (bus._delayActive) return;
+  bus._delayActive = true;
+  bus.fxIn.connect(bus.delay);
+  bus.delay.connect(bus.delayTone);
+  bus.delayTone.connect(bus.delayHP);
+  bus.delayHP.connect(bus.delayWet);
+  bus.delayWet.connect(bus.sum);
+  bus.delayHP.connect(bus.delaySat);
+  bus.delaySat.connect(bus.fb);
+  bus.fb.connect(bus.delay);
+}
+
+function ensureChorusBranchActive(bus: SynthFXBus): void {
+  if (bus._chorusActive || !bus._chorusIn || !bus._chorusDl || !bus._chorusDr || !bus._chorusMerge) return;
+  bus._chorusActive = true;
+  const dl = bus._chorusDl;
+  const dr = bus._chorusDr;
+  const chorusMerge = bus._chorusMerge;
+  bus.fxIn.connect(bus._chorusIn);
+  bus._chorusIn.connect(dl);
+  bus._chorusIn.connect(dr);
+  bus.chorusLfo.connect(bus.chorusDepthL);
+  bus.chorusLfo.connect(bus.chorusDepthR);
+  bus.chorusDepthL.connect(dl.delayTime);
+  bus.chorusDepthR.connect(dr.delayTime);
+  dl.connect(chorusMerge, 0, 0);
+  dr.connect(chorusMerge, 0, 1);
+  chorusMerge.connect(bus.chorusWet);
+  bus.chorusWet.connect(bus.sum);
+}
+
+function ensureReverbBranchActive(bus: SynthFXBus): void {
+  if (bus._reverbActive) return;
+  bus._reverbActive = true;
+  const owned = bus._nodes || [];
+  const builtRev = buildReverb(bus.ctx, bus.fxIn, bus.revSizeApplied, owned);
+  bus.reverbCombs = builtRev.combs;
+  bus.dampPeakGain = builtRev.dampPeakGain;
+  builtRev.output.connect(bus.revWet);
+  bus.revWet.connect(bus.sum);
 }
 
 /** Apply a single synth patch FX parameter to a SynthFXBus with the exact standalone curves and time constants. */
@@ -665,10 +754,16 @@ export function applyBusParam(bus: SynthFXBus, key: string, value: any): void {
   else if (key === "eqHigh") bus.eqHigh.gain.setTargetAtTime(v, now, 0.02);
   else if (key === "delayTime") bus.delay.delayTime.setTargetAtTime(v, now, 0.05);
   else if (key === "delayFb") bus.fb.gain.setTargetAtTime(Math.min(0.95, v), now, 0.02);
-  else if (key === "delayMix") bus.delayWet.gain.setTargetAtTime(v * 0.7, now, 0.02);
-  else if (key === "revMix") bus.revWet.gain.setTargetAtTime(v * 0.9, now, 0.02);
-  else if (key === "chorusMix") bus.chorusWet.gain.setTargetAtTime(v * 0.9, now, 0.03);
-  else if (key === "chorusRate") bus.chorusLfo.frequency.setTargetAtTime(v, now, 0.05);
+  else if (key === "delayMix") {
+    if (v > 0) ensureDelayBranchActive(bus);
+    bus.delayWet.gain.setTargetAtTime(v * 0.7, now, 0.02);
+  } else if (key === "revMix") {
+    if (v > 0) ensureReverbBranchActive(bus);
+    bus.revWet.gain.setTargetAtTime(v * 0.9, now, 0.02);
+  } else if (key === "chorusMix") {
+    if (v > 0) ensureChorusBranchActive(bus);
+    bus.chorusWet.gain.setTargetAtTime(v * 0.9, now, 0.03);
+  } else if (key === "chorusRate") bus.chorusLfo.frequency.setTargetAtTime(v, now, 0.05);
   else if (key === "chorusDepth") {
     bus.chorusDepthL.gain.setTargetAtTime(0.004 * v, now, 0.05);
     bus.chorusDepthR.gain.setTargetAtTime(-0.004 * v, now, 0.05);

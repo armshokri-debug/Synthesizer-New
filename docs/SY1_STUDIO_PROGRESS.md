@@ -1,4 +1,6 @@
-> **Phase 6.1 — 2026-11-22 (Local Unpushed, Pending Approval):** Safety & UX fixes on top of `main` (`9bad2de323`): replaced native `window.confirm()` Clear Track prompt with accessible in-app `#st-clear-dialog` (`alertdialog`, Escape/Cancel/Tab trap), added compact always-accessible Undo/Redo controls (including touch-only operation when 0 regions remain), and fixed `clearTrackClip()` to delegate to undoable `RegionEditor.clearTrack()` without wiping unrelated Undo/Redo history.
+> **Phase 7 — 2026-11-22 (Local Unpushed, Pending Approval):** GarageBand workflow, independent project safety (`My Projects` with New, Open, Rename, Duplicate/Save As, Delete with confirmation, Unsaved-Changes modal, Autosave Recovery, local-only notice, serialized IndexedDB writes, recording switch guards), GarageBand 4-track recording modes (Overdub, Separate Takes, undoable Replace, focus-arming), and measured zero-parity-change audio/CPU optimizations (lazy zero-mix FX branches, bounded drive curve cache, lightweight drum cancel, muted `noteOn` skip, zero-rebuild live recording UI); see [Phase 7 report](SY1_STUDIO_PHASE7.md).
+>
+> **Phase 6.1 — 2026-11-22 (Merged to `main` `7545e2d6e7`):** Safety & UX fixes: accessible in-app Clear Track confirmation dialog, always-accessible touch & desktop Undo/Redo controls, and undoable `clearTrackClip()`.
 >
 > **Phase 6 — 2026-11-21 (Merged to `main` `9bad2de323`):** Non-destructive MIDI region editing (move, trim, split, merge, copy/cut/paste, duplicate, loop, repeat, undo/redo, region-scoped Piano Roll & Drum Grid, touch long-press menu); see [Phase 6 report](SY1_STUDIO_PHASE6.md).
 >
@@ -9,7 +11,7 @@
 # SY-1 Studio (Web) — Engineering Progress Log
 
 **Repository:** `https://github.com/armshokri-debug/Synthesizer-New`  
-**Verified `main` Baseline:** `9bad2de323` (`Merge pull request #3 from armshokri-debug/feat/midi-region-editing`)  
+**Verified `main` Baseline:** `7545e2d6e7d5d2de9cf863ce31b8520f193afdfa` (Phase 6.1 merged)  
 **Protected Native/VST3 Scope:** `native/**`, `plugin/**`, `src/dsp/**`, `src/machines/**`, `src/ui/panel.ts`, `src/index.css`, `src/ui/skins.css` (unchanged)
 
 ---
@@ -25,7 +27,8 @@
 | **Phase 4** | Professional DAW UI/UX + Recovery Stabilization (Full-Width Arrangement Timeline, Integrated Resizable MIDI Piano Roll & Kerman Drum Grid, Collapsible 8-Instrument Browser, Independent Per-Track Engines, Mixer with Live Meters, Unchanged Original Synth Instrument View, 5-Viewport Responsive Layout) | **COMPLETE** (`82e8b700b2`) | Merged to `main` ([Recovery Report](SY1_STUDIO_RECOVERY_2026-11-21.md)) |
 | **Phase 5** | Record Directly from Standalone Synth View into Studio + Shared Audio-Clock Metronome & 1-Bar Count-In | **COMPLETE** (`0ba71fc54b`) | Merged to `main` ([Phase 5 Report](SY1_STUDIO_PHASE5.md)) |
 | **Phase 6** | Non-Destructive MIDI Region Editing (Select, Move, Trim Left/Right, Loop, Repeat, Split, Merge, Copy/Cut/Paste, Duplicate, Undo/Redo, Region-Scoped Piano Roll/Drum Grid, Touch Context Menu, Legacy Project Compatibility) | **COMPLETE** (`9bad2de323`) | Merged to `main` ([Phase 6 Report](SY1_STUDIO_PHASE6.md)) |
-| **Phase 6.1** | Safety & UX Fixes (In-App Accessible Clear Track Confirmation Dialog replacing `window.confirm()`, Always-Accessible Touch & Desktop Undo/Redo Controls including Zero-Region State, `clearTrackClip()` History Preservation via `RegionEditor.clearTrack()`) | **COMPLETE — Local Unpushed, Pending Approval** | Stopped before push/merge/deploy |
+| **Phase 6.1** | Safety & UX Fixes (In-App Accessible Clear Track Confirmation Dialog, Always-Accessible Touch & Desktop Undo/Redo Controls, Undoable `clearTrackClip()`) | **COMPLETE** (`7545e2d6e7`) | Merged to `main` |
+| **Phase 7** | GarageBand Workflow, Independent Project Safety (`My Projects`), Recording Modes (Overdub / Separate Takes / Replace), & Measured Audio/CPU Optimizations | **COMPLETE — Local Unpushed, Pending Approval** | Stopped before push/merge/deploy ([Phase 7 Report](SY1_STUDIO_PHASE7.md)) |
 
 ---
 

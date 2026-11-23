@@ -317,6 +317,8 @@ html.is-studio .sy1-shell::after {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: calc(100dvh - 80px);
+  overflow-y: auto;
 }
 
 .st-export-menu[hidden] {
@@ -381,11 +383,11 @@ html.is-studio .sy1-shell::after {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   padding: 10px 12px;
   background: #181a1f;
   border-bottom: 1px solid var(--st-border-hi);
-  max-height: 210px;
+  max-height: 290px;
   overflow-y: auto;
 }
 
@@ -393,11 +395,40 @@ html.is-studio .sy1-shell::after {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   font-size: 0.74rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--st-accent);
+}
+
+.st-drawer-head-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.st-drawer-local-note {
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.01em;
+  color: var(--st-ink-muted);
+}
+
+.st-drawer-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.st-drawer-rec-guard {
+  font-size: 0.7rem;
+  color: #ff948d;
+  margin-left: 4px;
 }
 
 .st-drawer-list {
@@ -410,11 +441,36 @@ html.is-studio .sy1-shell::after {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 6px 9px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
   border-radius: 5px;
   background: #202228;
   border: 1px solid var(--st-border);
+}
+
+.st-drawer-item.is-current {
+  border-color: rgba(240, 162, 51, 0.55);
+  background: #25231e;
+}
+
+.st-drawer-item.is-recovery {
+  border-color: rgba(75, 163, 217, 0.45);
+  background: #1c222a;
+}
+
+.st-current-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #16171a;
+  background: var(--st-accent);
+  vertical-align: middle;
 }
 
 .st-drawer-item-title {
@@ -431,6 +487,7 @@ html.is-studio .sy1-shell::after {
 .st-drawer-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
@@ -2501,6 +2558,97 @@ html.is-studio .sy1-shell::after {
   outline-offset: 2px;
 }
 
+.st-dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--st-border-hi);
+  background: #14161a;
+  color: #f4f6f9;
+  font-size: 0.86rem;
+  font-family: inherit;
+}
+
+.st-dialog-input:focus {
+  outline: 2px solid #fdd48e;
+  outline-offset: 1px;
+  border-color: var(--st-accent);
+}
+
+.st-save-state {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #8adbb0;
+  background: rgba(85, 184, 132, 0.12);
+  border: 1px solid rgba(85, 184, 132, 0.25);
+  white-space: nowrap;
+}
+
+.st-save-state.is-dirty {
+  color: #ffd38a;
+  background: rgba(240, 162, 51, 0.14);
+  border-color: rgba(240, 162, 51, 0.4);
+}
+
+.st-save-state.is-error {
+  color: #ff948d;
+  background: rgba(235, 92, 74, 0.14);
+  border-color: rgba(235, 92, 74, 0.45);
+}
+
+.st-btn.is-dirty {
+  border-color: rgba(240, 162, 51, 0.65);
+  color: #ffe2b3;
+}
+
+.st-clock.is-countin {
+  color: #ffd38a;
+  border-color: rgba(240, 162, 51, 0.6);
+}
+
+.st-menu-label {
+  padding: 4px 10px 2px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--st-ink-muted);
+}
+
+.st-menu-item.is-checked {
+  color: #ffd38a;
+}
+
+.st-rec-mode-tag {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(75, 163, 217, 0.16);
+  border: 1px solid rgba(75, 163, 217, 0.42);
+  color: #9dd4f7;
+  white-space: nowrap;
+}
+
+.st-rec-mode-tag.is-replace {
+  background: rgba(235, 92, 74, 0.18);
+  border-color: rgba(235, 92, 74, 0.55);
+  color: #ffaaa3;
+}
+
+@media (max-width: 1120px) {
+  .st-save-state {
+    display: none;
+  }
+}
+
 @media (max-width: 640px) {
   .st-arr-toolbar {
     flex: 0 0 auto;
@@ -2520,4 +2668,5 @@ html.is-studio .sy1-shell::after {
     display: none;
   }
 }
+
 

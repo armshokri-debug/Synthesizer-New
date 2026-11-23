@@ -1,4 +1,6 @@
-> **Phase 6.1 — 2026-11-22 (Local Unpushed, Pending Approval):** Added unit & Headless Chromium regression coverage in `tests/studio-phase6.test.ts` and `scripts/studio-phase6-verify.mjs` for the in-app Clear Track confirmation dialog (zero `window.confirm()` calls), always-accessible touch & desktop Undo/Redo controls (including zero-region recovery), and `clearTrackClip()` history preservation.
+> **Phase 7 — 2026-11-22 (Local Unpushed, Pending Approval):** Added unit & real Headless Chromium verification in `tests/studio-phase7.test.ts` (81/81 total Bun tests across all 8 suites) and `scripts/studio-phase7-verify.mjs` (21/21 checks + all 4 regression Chromium E2E suites) covering independent `My Projects` isolation, unsaved/delete/rename/duplicate modals, recording switch guards, 4-track Tabriz+Yazd+Baku+Kerman recording, Overdub/Takes/Replace + Undo, zero-rebuild live recording DOM, drum FX bus stability, before/after CPU benchmarks, and bit-exact sound parity (`chainMaxAbsDiff === 0`); see [Phase 7 report](SY1_STUDIO_PHASE7.md).
+>
+> **Phase 6.1 — 2026-11-22 (Merged `7545e2d6e7`):** Added unit & Headless Chromium regression coverage in `tests/studio-phase6.test.ts` and `scripts/studio-phase6-verify.mjs` for the in-app Clear Track confirmation dialog, always-accessible Undo/Redo controls, and `clearTrackClip()` history preservation.
 >
 > **Phase 6 — 2026-11-21 (Merged `9bad2de323`):** Non-destructive MIDI region editing verification: [Phase 6 report](SY1_STUDIO_PHASE6.md).
 >
@@ -8,7 +10,7 @@
 
 # SY-1 Studio (Web) — Master Acceptance Test Plan
 
-**Verified `main` Baseline:** `9bad2de323` (`Merge pull request #3 from armshokri-debug/feat/midi-region-editing`)  
+**Verified `main` Baseline:** `7545e2d6e7d5d2de9cf863ce31b8520f193afdfa` (Phase 6.1 merged)  
 **Status Reporting Policy:** Every test case must be marked `PASS`, `FAIL`, or `NOT RUN`. Unexecuted tests are **never** inferred from another platform (e.g., Linux Headless Chromium `PASS` never implies physical macOS Chrome or iPadOS Safari `PASS`).
 
 ---

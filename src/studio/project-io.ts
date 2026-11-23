@@ -18,6 +18,7 @@ import {
   StudioMidiEvent,
   StudioProjectData,
   StudioProjectTrackData,
+  StudioRecordingMode,
   StudioSavedProjectMeta
 } from "./types";
 
@@ -37,6 +38,18 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 export function sanitizeProjectName(name: unknown): string {
   const s = typeof name === "string" ? name.trim().replace(/[\r\n\t]+/g, " ") : "";
   return (s || "Untitled Project").slice(0, 80);
+}
+
+let projectIdSeq = 0;
+
+/** Generate a globally unique, stable local project ID (collision-free even within the same millisecond). */
+export function createProjectId(): string {
+  projectIdSeq = (projectIdSeq + 1) % 0x10000;
+  const rand =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  return `proj-${Date.now().toString(36)}-${projectIdSeq.toString(36)}-${rand}`;
 }
 
 export function slugifyFilename(name: string): string {
@@ -350,11 +363,15 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
   const id =
     typeof raw.id === "string" && raw.id.trim()
       ? raw.id.trim().slice(0, 64)
-      : `proj-${Date.now().toString(36)}`;
+      : createProjectId();
   const savedAt =
     Number.isFinite(Number(raw.savedAt)) && Number(raw.savedAt) > 0
       ? Number(raw.savedAt)
       : Date.now();
+
+  const rawMode = isPlainObject(raw.recordingSettings) ? raw.recordingSettings.mode : undefined;
+  const recordingMode: StudioRecordingMode =
+    rawMode === "takes" || rawMode === "replace" || rawMode === "overdub" ? rawMode : "overdub";
 
   return {
     ok: true,
@@ -374,7 +391,8 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
         metronome: isPlainObject(raw.recordingSettings) && raw.recordingSettings.metronome === true,
         countIn: isPlainObject(raw.recordingSettings) && raw.recordingSettings.countIn === true,
         clickVolume: isPlainObject(raw.recordingSettings) && typeof raw.recordingSettings.clickVolume === "number" && Number.isFinite(raw.recordingSettings.clickVolume)
-          ? Math.max(0, Math.min(1, raw.recordingSettings.clickVolume)) : 0.25
+          ? Math.max(0, Math.min(1, raw.recordingSettings.clickVolume)) : 0.25,
+        ...(recordingMode !== "overdub" ? { mode: recordingMode } : {})
       },
       tracks
     },

@@ -7,7 +7,7 @@
  * gracefully with zero unhandled rejections.
  */
 
-import { summarizeProjectMeta, validateStudioProject } from "./project-io";
+import { createProjectId, sanitizeProjectName, summarizeProjectMeta, validateStudioProject } from "./project-io";
 import type { StorageErrorKind, StudioProjectData, StudioSavedProjectMeta } from "./types";
 
 export const STUDIO_DB_NAME = "sy1-studio-db";
@@ -32,6 +32,8 @@ export interface StudioStorageAdapter {
   loadProject(id: string): Promise<StorageResult<StudioProjectData | null>>;
   listProjects(): Promise<StorageResult<StudioSavedProjectMeta[]>>;
   deleteProject(id: string): Promise<StorageResult<void>>;
+  renameProject(id: string, name: string): Promise<StorageResult<StudioSavedProjectMeta>>;
+  duplicateProject(sourceId: string, newName?: string): Promise<StorageResult<StudioSavedProjectMeta>>;
   saveAutosave(project: StudioProjectData): Promise<StorageResult<number>>;
   loadAutosave(): Promise<StorageResult<{ project: StudioProjectData; updatedAt: number } | null>>;
   clearAutosave(): Promise<StorageResult<void>>;
@@ -171,24 +173,34 @@ export function createStudioStorage(opts: {
     });
   };
 
+  // Serialize readwrite IndexedDB mutations per adapter to prevent overlapping saves/autosaves from interleaving
+  let writeChain: Promise<unknown> = Promise.resolve();
+  const enqueueWrite = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = writeChain.then(fn, fn);
+    writeChain = next.catch(() => {});
+    return next;
+  };
+
   return {
     isAvailable(): boolean {
       return getFactory() !== null;
     },
 
-    async saveProject(project: StudioProjectData): Promise<StorageResult<StudioSavedProjectMeta>> {
-      const check = validateStudioProject(project);
-      if (!check.ok) {
-        return { ok: false, kind: "corrupt", message: check.error };
-      }
-      const record: StudioProjectData = { ...check.project, savedAt: Date.now() };
-      try {
-        await runTx(STORE_PROJECTS, "readwrite", (store) => store.put(record));
-        return { ok: true, data: summarizeProjectMeta(record) };
-      } catch (err) {
-        const c = classifyStorageError(err);
-        return { ok: false, kind: c.kind, message: c.message };
-      }
+    saveProject(project: StudioProjectData): Promise<StorageResult<StudioSavedProjectMeta>> {
+      return enqueueWrite(async () => {
+        const check = validateStudioProject(project);
+        if (!check.ok) {
+          return { ok: false, kind: "corrupt", message: check.error };
+        }
+        const record: StudioProjectData = { ...check.project, savedAt: Date.now() };
+        try {
+          await runTx(STORE_PROJECTS, "readwrite", (store) => store.put(record));
+          return { ok: true, data: summarizeProjectMeta(record) };
+        } catch (err) {
+          const c = classifyStorageError(err);
+          return { ok: false, kind: c.kind, message: c.message };
+        }
+      });
     },
 
     async loadProject(id: string): Promise<StorageResult<StudioProjectData | null>> {
@@ -222,34 +234,88 @@ export function createStudioStorage(opts: {
       }
     },
 
-    async deleteProject(id: string): Promise<StorageResult<void>> {
-      try {
-        await runTx(STORE_PROJECTS, "readwrite", (store) => store.delete(id));
-        return { ok: true, data: undefined };
-      } catch (err) {
-        const c = classifyStorageError(err);
-        return { ok: false, kind: c.kind, message: c.message };
-      }
+    deleteProject(id: string): Promise<StorageResult<void>> {
+      return enqueueWrite(async () => {
+        try {
+          await runTx(STORE_PROJECTS, "readwrite", (store) => store.delete(id));
+          return { ok: true, data: undefined };
+        } catch (err) {
+          const c = classifyStorageError(err);
+          return { ok: false, kind: c.kind, message: c.message };
+        }
+      });
     },
 
-    async saveAutosave(project: StudioProjectData): Promise<StorageResult<number>> {
-      const check = validateStudioProject(project);
-      if (!check.ok) {
-        return { ok: false, kind: "corrupt", message: check.error };
-      }
-      const updatedAt = Date.now();
-      const rec: AutosaveRecord = {
-        slot: AUTOSAVE_SLOT,
-        updatedAt,
-        project: { ...check.project, savedAt: updatedAt }
-      };
-      try {
-        await runTx(STORE_AUTOSAVE, "readwrite", (store) => store.put(rec));
-        return { ok: true, data: updatedAt };
-      } catch (err) {
-        const c = classifyStorageError(err);
-        return { ok: false, kind: c.kind, message: c.message };
-      }
+    renameProject(id: string, name: string): Promise<StorageResult<StudioSavedProjectMeta>> {
+      return enqueueWrite(async () => {
+        try {
+          const raw = await runTx<unknown>(STORE_PROJECTS, "readonly", (store) => store.get(id));
+          if (!raw) return { ok: false, kind: "io", message: "Saved project not found." };
+          const check = validateStudioProject(raw);
+          if (!check.ok) {
+            return { ok: false, kind: "corrupt", message: `Saved project is corrupted: ${check.error}` };
+          }
+          const updated: StudioProjectData = {
+            ...check.project,
+            name: sanitizeProjectName(name),
+            savedAt: Date.now()
+          };
+          await runTx(STORE_PROJECTS, "readwrite", (store) => store.put(updated));
+          return { ok: true, data: summarizeProjectMeta(updated) };
+        } catch (err) {
+          const c = classifyStorageError(err);
+          return { ok: false, kind: c.kind, message: c.message };
+        }
+      });
+    },
+
+    duplicateProject(sourceId: string, newName?: string): Promise<StorageResult<StudioSavedProjectMeta>> {
+      return enqueueWrite(async () => {
+        try {
+          const raw = await runTx<unknown>(STORE_PROJECTS, "readonly", (store) => store.get(sourceId));
+          if (!raw) return { ok: false, kind: "io", message: "Source project not found." };
+          const check = validateStudioProject(raw);
+          if (!check.ok) {
+            return { ok: false, kind: "corrupt", message: `Saved project is corrupted: ${check.error}` };
+          }
+          let nextId = createProjectId();
+          while (nextId === check.project.id) nextId = createProjectId();
+          const copyName = sanitizeProjectName(newName || `${check.project.name} Copy`);
+          const copy: StudioProjectData = {
+            ...check.project,
+            id: nextId,
+            name: copyName,
+            savedAt: Date.now()
+          };
+          await runTx(STORE_PROJECTS, "readwrite", (store) => store.put(copy));
+          return { ok: true, data: summarizeProjectMeta(copy) };
+        } catch (err) {
+          const c = classifyStorageError(err);
+          return { ok: false, kind: c.kind, message: c.message };
+        }
+      });
+    },
+
+    saveAutosave(project: StudioProjectData): Promise<StorageResult<number>> {
+      return enqueueWrite(async () => {
+        const check = validateStudioProject(project);
+        if (!check.ok) {
+          return { ok: false, kind: "corrupt", message: check.error };
+        }
+        const updatedAt = Date.now();
+        const rec: AutosaveRecord = {
+          slot: AUTOSAVE_SLOT,
+          updatedAt,
+          project: { ...check.project, savedAt: updatedAt }
+        };
+        try {
+          await runTx(STORE_AUTOSAVE, "readwrite", (store) => store.put(rec));
+          return { ok: true, data: updatedAt };
+        } catch (err) {
+          const c = classifyStorageError(err);
+          return { ok: false, kind: c.kind, message: c.message };
+        }
+      });
     },
 
     async loadAutosave(): Promise<StorageResult<{ project: StudioProjectData; updatedAt: number } | null>> {
@@ -275,14 +341,16 @@ export function createStudioStorage(opts: {
       }
     },
 
-    async clearAutosave(): Promise<StorageResult<void>> {
-      try {
-        await runTx(STORE_AUTOSAVE, "readwrite", (store) => store.delete(AUTOSAVE_SLOT));
-        return { ok: true, data: undefined };
-      } catch (err) {
-        const c = classifyStorageError(err);
-        return { ok: false, kind: c.kind, message: c.message };
-      }
+    clearAutosave(): Promise<StorageResult<void>> {
+      return enqueueWrite(async () => {
+        try {
+          await runTx(STORE_AUTOSAVE, "readwrite", (store) => store.delete(AUTOSAVE_SLOT));
+          return { ok: true, data: undefined };
+        } catch (err) {
+          const c = classifyStorageError(err);
+          return { ok: false, kind: c.kind, message: c.message };
+        }
+      });
     }
   };
 }

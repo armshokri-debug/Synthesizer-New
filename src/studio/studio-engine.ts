@@ -16,7 +16,14 @@ import {
 import { encodeWav, ensureRecorderWorklet, RECORDER_MAX_SECONDS } from "../engine/daw";
 import { getTempo, onTempoChange, setTempo } from "../engine/tempo";
 import { encodeStudioMidi } from "./midi-io";
-import { createProjectBlob, sanitizeProjectName, serializeStudioProject, slugifyFilename, validateStudioProject } from "./project-io";
+import {
+  createProjectBlob,
+  createProjectId,
+  sanitizeProjectName,
+  serializeStudioProject,
+  slugifyFilename,
+  validateStudioProject
+} from "./project-io";
 import { getStudioMachineDef, SY1TrackEngine } from "./track-engine";
 import { RegionEditor } from "./region-editor";
 import { cloneRegion, flattenRegions, type MidiRegion } from "./midi-regions";
@@ -33,6 +40,7 @@ import {
   StudioMidiEvent,
   StudioNoteSpan,
   StudioProjectData,
+  StudioRecordingMode,
   StudioStemTake,
   StudioTake,
   StudioTrackSnapshot,
@@ -199,7 +207,7 @@ export class SY1StudioEngine {
 
   private tracks: SY1TrackEngine[] = [];
   private focusedTrackId: string;
-  private projectId = "sy1-default";
+  private projectId = createProjectId();
   private projectName = "Untitled Project";
   private hasRestoredBpmPending = false;
   private masterBus: StudioMasterBus | null = null;
@@ -217,6 +225,7 @@ export class SY1StudioEngine {
   private metronome = new StudioMetronome();
   private clickEnabled = false;
   private countInEnabled = false;
+  private recordingMode: StudioRecordingMode = "overdub";
   private loopEnabled = true;
   private bars = 8;
   private loopStartBar = 1;
@@ -334,11 +343,33 @@ export class SY1StudioEngine {
     return this.playing;
   }
 
-  getRecordingSettings() { return { metronome: this.clickEnabled, countIn: this.countInEnabled, clickVolume: this.metronome.volume }; }
-  setRecordingSettings(settings: { metronome?: boolean; countIn?: boolean; clickVolume?: number }) {
+  getRecordingMode(): StudioRecordingMode {
+    return this.recordingMode;
+  }
+
+  getRecordingSettings() {
+    const base: { metronome: boolean; countIn: boolean; clickVolume: number; mode?: StudioRecordingMode } = {
+      metronome: this.clickEnabled,
+      countIn: this.countInEnabled,
+      clickVolume: this.metronome.volume
+    };
+    if (this.recordingMode !== "overdub") {
+      base.mode = this.recordingMode;
+    }
+    return base;
+  }
+  setRecordingSettings(settings: {
+    metronome?: boolean;
+    countIn?: boolean;
+    clickVolume?: number;
+    mode?: StudioRecordingMode;
+  }) {
     if (settings.metronome !== undefined) { this.clickEnabled = settings.metronome; this.metronome.cancel(); }
     if (settings.countIn !== undefined) this.countInEnabled = settings.countIn;
     if (settings.clickVolume !== undefined) this.metronome.setVolume(settings.clickVolume);
+    if (settings.mode === "overdub" || settings.mode === "takes" || settings.mode === "replace") {
+      this.recordingMode = settings.mode;
+    }
     this.notify();
   }
   getCountInBeat(): number {
@@ -816,7 +847,10 @@ export class SY1StudioEngine {
       if (!this.tracks.some((t) => t.armed)) {
         this.getFocusedTrack().armed = true;
       }
-      for (const track of this.tracks) track.beginRegionTake(this.getTotalTicks());
+      const total = this.getTotalTicks();
+      for (const track of this.tracks) {
+        track.beginRegionTake(total, track.armed ? this.recordingMode : "overdub");
+      }
       this.recording = true;
       this.liveRecordedOpenNotes.clear();
 
@@ -970,12 +1004,17 @@ export class SY1StudioEngine {
   private scheduleSegment(startTick: number, endTick: number, segStartAudio: number, secPerTick: number): void {
     if (endTick <= startTick) return;
     const observer = this.dispatchObserver;
+    const replacingArmed = this.recording && this.recordingMode === "replace";
     for (let ti = 0; ti < this.tracks.length; ti++) {
       const track = this.tracks[ti];
       if (track.events.length === 0) continue;
+      // In explicit Replace recording mode, suppress playback of the armed track's old clip while hearing all other tracks.
+      if (replacingArmed && track.armed) continue;
 
       let openSet: Set<number> | undefined;
+      const skipMutedNoteOn = !track.audible && !observer;
       track.forEachEventInRange(startTick, endTick, (ev) => {
+        if (skipMutedNoteOn && ev.type === "noteOn") return;
         if (!openSet) {
           openSet = this.playbackOpenNotes.get(track.id);
           if (!openSet) {
@@ -983,6 +1022,7 @@ export class SY1StudioEngine {
             this.playbackOpenNotes.set(track.id, openSet);
           }
         }
+        if (skipMutedNoteOn && ev.type === "noteOff" && !openSet.has(ev.midi)) return;
         const at = segStartAudio + (ev.tick - startTick) * secPerTick;
         this.dispatchEventToTrack(track, ev, at, openSet);
         if (observer) {
@@ -1367,10 +1407,100 @@ export class SY1StudioEngine {
   }
 
   /**
+   * Create a fresh, independent project with a brand-new unique stable project ID.
+   * Never overwrites any previously saved project in storage. Blocked during recording.
+   */
+  async createNewProject(opts: {
+    name?: string;
+    bpm?: number;
+    bars?: number;
+    machineId?: string;
+    presetId?: string;
+  } = {}): Promise<StudioProjectData> {
+    if (this.recording || this.preparingRecord) {
+      throw new Error("Stop recording before creating a new project.");
+    }
+    await this.stop();
+    for (const old of this.tracks) {
+      old.dispose();
+    }
+    this.playbackOpenNotes.clear();
+    this.playbackSustainDown.clear();
+    this.liveHeldTracksByMidi.clear();
+    this.liveRecordedOpenNotes.clear();
+    this.lastLiveTake = null;
+    this.liveRecWarning = "";
+
+    let nextId = createProjectId();
+    while (nextId === this.projectId) nextId = createProjectId();
+    this.projectId = nextId;
+    this.projectName = sanitizeProjectName(opts.name ?? "Untitled Project");
+    const nextBpm = Math.max(40, Math.min(240, Math.round(opts.bpm ?? 110)));
+    const nextBars = Math.max(STUDIO_MIN_BARS, Math.min(STUDIO_MAX_BARS, Math.round(opts.bars ?? 8)));
+    this.bpm = nextBpm;
+    this.anchorBpm = nextBpm;
+    this.bars = nextBars;
+    this.loopEnabled = true;
+    this.loopStartBar = 1;
+    this.loopEndBar = nextBars;
+    this.playheadTick = 0;
+    this.anchorTick = 0;
+    this.cursorTick = 0;
+
+    if (!this.isolatedTempo) {
+      if (this.active) {
+        this.hasRestoredBpmPending = false;
+        setTempo(nextBpm);
+      } else {
+        this.hasRestoredBpmPending = true;
+      }
+    }
+
+    const t1 = this.createTrackInstance(1, opts.presetId || DEFAULT_TRACK_PRESETS[0], true);
+    if (opts.machineId && opts.machineId !== "sy1") {
+      t1.applyMachinePreset(opts.machineId, opts.presetId || "");
+    }
+    const t2 = this.createTrackInstance(2, DEFAULT_TRACK_PRESETS[1], false);
+    this.tracks = [t1, t2];
+    this.focusedTrackId = t1.id;
+    this.regions.reset();
+    this.recomputeAudibility();
+
+    const ctx = getAudioCtxIfAny();
+    if (ctx && this.masterBus && this.masterBus.ctx === ctx) {
+      await Promise.all(this.tracks.map((t) => t.attachAudio(ctx, this.masterBus!.sum)));
+    }
+
+    this.notify();
+    this.notifyKeys();
+    return this.exportProject();
+  }
+
+  /**
+   * Duplicate / Save As the current project under a brand-new unique project ID
+   * while preserving all tracks, instruments, patches, MIDI regions, and settings.
+   * Never alters or overwrites the original project ID in storage.
+   */
+  duplicateCurrentProject(newName?: string): StudioProjectData {
+    if (this.recording || this.preparingRecord) {
+      throw new Error("Stop recording before duplicating the project.");
+    }
+    let nextId = createProjectId();
+    while (nextId === this.projectId) nextId = createProjectId();
+    this.projectId = nextId;
+    this.projectName = sanitizeProjectName(newName || `${this.projectName} Copy`);
+    this.notify();
+    return this.exportProject();
+  }
+
+  /**
    * Atomically validate and restore a Studio project.
-   * Throws an Error without altering live engine state if validation fails.
+   * Throws an Error without altering live engine state if recording is active or validation fails.
    */
   async loadProject(raw: unknown): Promise<StudioProjectData> {
+    if (this.recording || this.preparingRecord) {
+      throw new Error("Stop recording before switching projects.");
+    }
     const check = validateStudioProject(raw);
     if (!check.ok) {
       throw new Error(check.error);
@@ -1385,6 +1515,8 @@ export class SY1StudioEngine {
     this.playbackSustainDown.clear();
     this.liveHeldTracksByMidi.clear();
     this.liveRecordedOpenNotes.clear();
+    this.lastLiveTake = null;
+    this.liveRecWarning = "";
 
     this.projectId = proj.id;
     this.projectName = proj.name;
@@ -1432,7 +1564,9 @@ export class SY1StudioEngine {
 
     this.tracks = rebuilt;
     this.regions.reset();
-    this.setRecordingSettings(proj.recordingSettings || {metronome:false,countIn:false,clickVolume:0.25});
+    this.setRecordingSettings(
+      proj.recordingSettings || { metronome: false, countIn: false, clickVolume: 0.25, mode: "overdub" }
+    );
     this.focusedTrackId = rebuilt.some((t) => t.id === proj.focusedTrackId)
       ? proj.focusedTrackId
       : rebuilt[0].id;
@@ -1769,7 +1903,8 @@ export class SY1StudioEngine {
       maxLiveBytes: this.maxLiveRamBytes,
       liveRecWarning: this.liveRecWarning,
       hasLiveTake: !!this.lastLiveTake,
-      liveTakeDurationSec: this.lastLiveTake ? this.lastLiveTake.durationSec : 0
+      liveTakeDurationSec: this.lastLiveTake ? this.lastLiveTake.durationSec : 0,
+      recordingMode: this.recordingMode
     };
   }
 

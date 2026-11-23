@@ -19,7 +19,7 @@ import { DRUM_NOTES, DrumVoice } from "../engine/drums";
 import { escapeHtml, SYNTH_PARAMS, synthDenorm, synthNorm } from "../engine/params";
 import { fmtBpm } from "../engine/tempo";
 import type { MachineDef } from "../machines/types";
-import { parseStudioProjectJson, projectFilename } from "../studio/project-io";
+import { createProjectId, parseStudioProjectJson, projectFilename, sanitizeProjectName } from "../studio/project-io";
 import { studioStorage } from "../studio/storage";
 import { studioEngine } from "../studio/studio-engine";
 import {
@@ -33,6 +33,7 @@ import {
   STUDIO_BAR_PRESETS,
   STUDIO_MAX_TRACKS,
   STUDIO_TICKS_PER_BAR,
+  StudioRecordingMode,
   StudioSavedProjectMeta
 } from "../studio/types";
 import { machineArt } from "./machine-browser";
@@ -68,7 +69,21 @@ let arrScrollTop = 0;
 let instPageFilter = "all";
 let exportMenuOpen = false;
 let pendingClearTrackId: string | null = null;
+let pendingDeleteProject: { id: string; name: string } | null = null;
+let pendingProjectNameModal: {
+  kind: "new" | "rename-current" | "rename-saved" | "duplicate-current" | "duplicate-saved";
+  projectId?: string;
+  initialName: string;
+} | null = null;
+let pendingUnsavedAction: {
+  label: string;
+  run: () => void | Promise<void>;
+} | null = null;
 let keysVisible = false;
+
+let projectDirty = false;
+let saveState: "saved" | "unsaved" | "saving" | "error" = "saved";
+let suppressDirtyTracking = false;
 
 let rafId = 0;
 let initialized = false;
@@ -78,7 +93,7 @@ let statusMessage = "";
 let statusTone: StatusTone = "info";
 let openDrawerVisible = false;
 let savedProjectsCache: StudioSavedProjectMeta[] = [];
-let autosaveMetaCache: { name: string; updatedAt: number; trackCount: number; bpm: number; bars: number } | null = null;
+let autosaveMetaCache: { id: string; name: string; updatedAt: number; trackCount: number; bpm: number; bars: number } | null = null;
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let suppressNextAutosave = false;
 let onCloseStudio: (() => void) | null = null;
@@ -156,27 +171,48 @@ function trackColor(idx: number): string {
   return TRACK_COLORS[idx % TRACK_COLORS.length];
 }
 
+function markProjectDirty(): void {
+  if (suppressDirtyTracking) return;
+  projectDirty = true;
+  if (saveState !== "saving") saveState = "unsaved";
+}
+
+function markProjectSaved(): void {
+  projectDirty = false;
+  saveState = "saved";
+}
+
 export async function saveStudioProjectNow(): Promise<boolean> {
+  saveState = "saving";
   const proj = studioEngine.exportProject();
   const res = await studioStorage.saveProject(proj);
   if (!res.ok) {
+    saveState = "error";
     setStatus(res.message, "error");
     renderStudioPanel();
     return false;
   }
   const autoRes = await studioStorage.saveAutosave(proj);
   if (!autoRes.ok) {
+    saveState = "error";
     setStatus(autoRes.message, "error");
     renderStudioPanel();
     return false;
   }
-  setStatus(`Saved "${proj.name}"`, "ok");
+  markProjectSaved();
+  setStatus(`Saved "${proj.name}" locally`, "ok");
   if (openDrawerVisible) await refreshOpenDrawerData();
   renderStudioPanel();
   return true;
 }
 
 export async function importStudioProjectJson(text: string): Promise<{ ok: boolean; error?: string }> {
+  if (studioEngine.getTransportSnapshot().recording) {
+    const msg = "Stop recording before importing a project.";
+    setStatus(msg, "error");
+    renderStudioPanel();
+    return { ok: false, error: msg };
+  }
   const parsed = parseStudioProjectJson(text);
   if (!parsed.ok) {
     setStatus(parsed.error, "error");
@@ -184,13 +220,23 @@ export async function importStudioProjectJson(text: string): Promise<{ ok: boole
     return { ok: false, error: parsed.error };
   }
   try {
+    // Prevent an imported .sy1studio file from colliding with & overwriting an existing saved project ID
+    const candidate = { ...parsed.project };
+    if (studioStorage.isAvailable()) {
+      const existing = await studioStorage.loadProject(candidate.id);
+      if (existing.ok && existing.data) {
+        candidate.id = createProjectId();
+      }
+    }
     suppressNextAutosave = true;
-    await studioEngine.loadProject(parsed.project);
+    suppressDirtyTracking = true;
+    await studioEngine.loadProject(candidate);
     pendingClearTrackId = null;
     await studioStorage.saveAutosave(studioEngine.exportProject());
+    markProjectSaved();
     openDrawerVisible = false;
     exportMenuOpen = false;
-    setStatus(`Imported "${parsed.project.name}"`, "ok");
+    setStatus(`Imported "${candidate.name}"`, "ok");
     renderStudioPanel();
     return { ok: true };
   } catch (err) {
@@ -200,6 +246,7 @@ export async function importStudioProjectJson(text: string): Promise<{ ok: boole
     return { ok: false, error: msg };
   } finally {
     suppressNextAutosave = false;
+    suppressDirtyTracking = false;
   }
 }
 
@@ -217,6 +264,7 @@ async function refreshOpenDrawerData(): Promise<void> {
   if (autoRes.ok && autoRes.data) {
     const p = autoRes.data.project;
     autosaveMetaCache = {
+      id: p.id,
       name: p.name,
       updatedAt: autoRes.data.updatedAt,
       trackCount: p.tracks.length,
@@ -239,7 +287,9 @@ export async function hydrateStudioFromStorage(): Promise<boolean> {
   if (!res.data) return false;
   try {
     suppressNextAutosave = true;
+    suppressDirtyTracking = true;
     await studioEngine.loadProject(res.data.project);
+    markProjectSaved();
     setStatus(`Restored "${res.data.project.name}"`, "ok");
     return true;
   } catch (err) {
@@ -247,6 +297,7 @@ export async function hydrateStudioFromStorage(): Promise<boolean> {
     return false;
   } finally {
     suppressNextAutosave = false;
+    suppressDirtyTracking = false;
   }
 }
 
@@ -262,9 +313,12 @@ export function scheduleAutosave(): void {
 async function flushAutosave(): Promise<void> {
   if (!studioStorage.isAvailable()) return;
   const res = await studioStorage.saveAutosave(studioEngine.exportProject());
-  if (!res.ok && res.kind === "quota") {
-    setStatus(res.message, "error");
-    renderStudioPanel();
+  if (!res.ok) {
+    if (res.kind === "quota") {
+      saveState = "error";
+      setStatus(res.message, "error");
+      renderStudioPanel();
+    }
   }
 }
 
@@ -614,30 +668,111 @@ function renderStudioHtml(): string {
 
   const canUndo = studioEngine.regions.canUndo() && !tr.recording;
   const canRedo = studioEngine.regions.canRedo() && !tr.recording;
+  const recSettings = studioEngine.getRecordingSettings();
+  const recMode = studioEngine.getRecordingMode();
+  const countInBeat = studioEngine.getCountInBeat();
+  const clockLabel = countInBeat
+    ? `IN : ${countInBeat}`
+    : `${String(tr.currentBar).padStart(2, "0")} : ${tr.currentBeat}`;
+  const saveStateLabel =
+    saveState === "saving"
+      ? "Saving…"
+      : saveState === "error"
+        ? "Save failed"
+        : saveState === "unsaved" || projectDirty
+          ? "Unsaved"
+          : "Saved";
+  const saveStateClass =
+    saveState === "error"
+      ? " is-error"
+      : saveState === "unsaved" || projectDirty
+        ? " is-dirty"
+        : " is-saved";
+
   const pendingClearTrack = pendingClearTrackId ? studioEngine.getTrack(pendingClearTrackId) : null;
   if (pendingClearTrackId && !pendingClearTrack) pendingClearTrackId = null;
-  const clearDialogHtml = pendingClearTrack
-    ? (() => {
-        const clearMachine = getStudioMachineDef(pendingClearTrack.machineId);
-        const clearRegions = studioEngine.regions.regions(pendingClearTrack.id).length;
-        const clearNotes = pendingClearTrack.getNoteCount();
-        const regionLabel = clearRegions === 1 ? "1 MIDI region" : `${clearRegions} MIDI regions`;
-        const noteUnit = pendingClearTrack.isDrumTrack()
-          ? clearNotes === 1 ? "hit" : "hits"
-          : clearNotes === 1 ? "note" : "notes";
-        return `<div class="st-dialog-backdrop">
-          <div class="st-dialog-scrim" data-st-action="cancel-clear-track" aria-hidden="true"></div>
-          <div class="st-dialog" id="st-clear-dialog" role="alertdialog" aria-modal="true" aria-labelledby="st-clear-dialog-title" aria-describedby="st-clear-dialog-desc">
-            <h2 class="st-dialog-title" id="st-clear-dialog-title">Clear ${escapeHtml(pendingClearTrack.name)}?</h2>
-            <p class="st-dialog-desc" id="st-clear-dialog-desc">Remove ${regionLabel} (${clearNotes} ${noteUnit}) from ${escapeHtml(clearMachine.name)}. You can restore this track immediately with Undo.</p>
-            <div class="st-dialog-actions">
-              <button type="button" class="st-btn" id="st-clear-cancel-btn" data-st-action="cancel-clear-track">Cancel</button>
-              <button type="button" class="st-btn is-danger" id="st-clear-confirm-btn" data-st-action="confirm-clear-track" data-track-id="${escapeHtml(pendingClearTrack.id)}">Clear Track</button>
-            </div>
-          </div>
-        </div>`;
-      })()
-    : "";
+
+  let activeDialogHtml = "";
+  if (pendingClearTrack) {
+    const clearMachine = getStudioMachineDef(pendingClearTrack.machineId);
+    const clearRegions = studioEngine.regions.regions(pendingClearTrack.id).length;
+    const clearNotes = pendingClearTrack.getNoteCount();
+    const regionLabel = clearRegions === 1 ? "1 MIDI region" : `${clearRegions} MIDI regions`;
+    const noteUnit = pendingClearTrack.isDrumTrack()
+      ? clearNotes === 1 ? "hit" : "hits"
+      : clearNotes === 1 ? "note" : "notes";
+    activeDialogHtml = `<div class="st-dialog-backdrop">
+      <div class="st-dialog-scrim" data-st-action="cancel-clear-track" aria-hidden="true"></div>
+      <div class="st-dialog" id="st-clear-dialog" role="alertdialog" aria-modal="true" aria-labelledby="st-clear-dialog-title" aria-describedby="st-clear-dialog-desc">
+        <h2 class="st-dialog-title" id="st-clear-dialog-title">Clear ${escapeHtml(pendingClearTrack.name)}?</h2>
+        <p class="st-dialog-desc" id="st-clear-dialog-desc">Remove ${regionLabel} (${clearNotes} ${noteUnit}) from ${escapeHtml(clearMachine.name)}. You can restore this track immediately with Undo.</p>
+        <div class="st-dialog-actions">
+          <button type="button" class="st-btn" id="st-clear-cancel-btn" data-st-action="cancel-clear-track">Cancel</button>
+          <button type="button" class="st-btn is-danger" id="st-clear-confirm-btn" data-st-action="confirm-clear-track" data-track-id="${escapeHtml(pendingClearTrack.id)}">Clear Track</button>
+        </div>
+      </div>
+    </div>`;
+  } else if (pendingUnsavedAction) {
+    activeDialogHtml = `<div class="st-dialog-backdrop">
+      <div class="st-dialog-scrim" data-st-action="cancel-unsaved-action" aria-hidden="true"></div>
+      <div class="st-dialog" id="st-unsaved-dialog" role="alertdialog" aria-modal="true" aria-labelledby="st-unsaved-dialog-title" aria-describedby="st-unsaved-dialog-desc">
+        <h2 class="st-dialog-title" id="st-unsaved-dialog-title">Save changes to "${escapeHtml(tr.projectName)}"?</h2>
+        <p class="st-dialog-desc" id="st-unsaved-dialog-desc">You have unsaved recordings or edits. Save locally to this browser before ${escapeHtml(pendingUnsavedAction.label)} so nothing is lost.</p>
+        <div class="st-dialog-actions">
+          <button type="button" class="st-btn" id="st-unsaved-cancel-btn" data-st-action="cancel-unsaved-action">Cancel</button>
+          <button type="button" class="st-btn is-danger" id="st-unsaved-discard-btn" data-st-action="discard-unsaved-action">Discard</button>
+          <button type="button" class="st-btn is-active" id="st-unsaved-save-btn" data-st-action="save-and-continue-action">Save &amp; Continue</button>
+        </div>
+      </div>
+    </div>`;
+  } else if (pendingDeleteProject) {
+    activeDialogHtml = `<div class="st-dialog-backdrop">
+      <div class="st-dialog-scrim" data-st-action="cancel-delete-project" aria-hidden="true"></div>
+      <div class="st-dialog" id="st-delete-project-dialog" role="alertdialog" aria-modal="true" aria-labelledby="st-delete-project-title" aria-describedby="st-delete-project-desc">
+        <h2 class="st-dialog-title" id="st-delete-project-title">Delete "${escapeHtml(pendingDeleteProject.name)}"?</h2>
+        <p class="st-dialog-desc" id="st-delete-project-desc">This permanently removes the saved project from this browser's local storage. Other projects are unaffected.</p>
+        <div class="st-dialog-actions">
+          <button type="button" class="st-btn" id="st-delete-project-cancel-btn" data-st-action="cancel-delete-project">Cancel</button>
+          <button type="button" class="st-btn is-danger" id="st-delete-project-confirm-btn" data-st-action="confirm-delete-project" data-project-id="${escapeHtml(pendingDeleteProject.id)}">Delete Project</button>
+        </div>
+      </div>
+    </div>`;
+  } else if (pendingProjectNameModal) {
+    const titleMap = {
+      new: "New Project",
+      "rename-current": "Rename Project",
+      "rename-saved": "Rename Saved Project",
+      "duplicate-current": "Save Project As (Duplicate)",
+      "duplicate-saved": "Duplicate Saved Project"
+    } as const;
+    const descMap = {
+      new: "Creates an independent local project with a unique ID. Existing projects remain untouched.",
+      "rename-current": "Update the display name of the active project.",
+      "rename-saved": "Update the display name of this saved local project.",
+      "duplicate-current": "Saves an independent copy with a new project ID. The original project will not be overwritten.",
+      "duplicate-saved": "Creates an independent copy in local browser storage with a new project ID."
+    } as const;
+    const confirmMap = {
+      new: "Create Project",
+      "rename-current": "Rename",
+      "rename-saved": "Rename",
+      "duplicate-current": "Save Copy",
+      "duplicate-saved": "Duplicate"
+    } as const;
+    const k = pendingProjectNameModal.kind;
+    activeDialogHtml = `<div class="st-dialog-backdrop">
+      <div class="st-dialog-scrim" data-st-action="cancel-project-name-modal" aria-hidden="true"></div>
+      <div class="st-dialog" id="st-project-name-dialog" role="dialog" aria-modal="true" aria-labelledby="st-project-name-title" aria-describedby="st-project-name-desc">
+        <h2 class="st-dialog-title" id="st-project-name-title">${titleMap[k]}</h2>
+        <p class="st-dialog-desc" id="st-project-name-desc">${descMap[k]}</p>
+        <input type="text" class="st-dialog-input" id="st-project-name-modal-input" value="${escapeHtml(pendingProjectNameModal.initialName)}" maxlength="80" aria-label="Project name" placeholder="Project name" />
+        <div class="st-dialog-actions">
+          <button type="button" class="st-btn" id="st-project-name-cancel-btn" data-st-action="cancel-project-name-modal">Cancel</button>
+          <button type="button" class="st-btn is-active" id="st-project-name-confirm-btn" data-st-action="confirm-project-name-modal">${confirmMap[k]}</button>
+        </div>
+      </div>
+    </div>`;
+  }
 
   return `
     <div class="st-daw${dockExpanded ? " is-dock-expanded" : ""}${dockCollapsed ? " is-dock-collapsed" : ""}" dir="ltr" style="--st-dock-h:${dockHeightPx}px">
@@ -656,7 +791,7 @@ function renderStudioHtml(): string {
             <button type="button" class="st-btn is-rec${tr.recording ? " is-active" : ""}" id="st-rec-btn" data-st-action="record" aria-pressed="${tr.recording}">● Rec</button>
             <button type="button" class="st-btn${tr.loopEnabled ? " is-active" : ""}" id="st-loop-btn" data-st-action="toggle-loop" aria-pressed="${tr.loopEnabled}">Loop</button>
           </div>
-          <div class="st-clock" id="st-clock" aria-label="Transport position">${String(tr.currentBar).padStart(2, "0")} : ${tr.currentBeat}</div>
+          <div class="st-clock${countInBeat ? " is-countin" : ""}" id="st-clock" aria-label="Transport position">${clockLabel}</div>
           <div class="st-seg" role="group" aria-label="Tempo">
             <button type="button" class="st-btn st-step-btn" data-st-action="bpm-down" aria-label="Decrease BPM">−</button>
             <button type="button" class="st-btn st-bpm-val" id="st-bpm-val" data-st-action="bpm-tap" title="Tap tempo">${fmtBpm(tr.bpm)} BPM</button>
@@ -669,8 +804,9 @@ function renderStudioHtml(): string {
         </div>
 
         <div class="st-tb-right">
-          <button type="button" class="st-btn" id="st-save-btn" data-st-action="save-project">Save</button>
-          <button type="button" class="st-btn${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer">Open</button>
+          <span class="st-save-state${saveStateClass}" id="st-save-state" title="Stored locally in this browser (no cloud sync)">${saveStateLabel}</span>
+          <button type="button" class="st-btn${projectDirty ? " is-dirty" : ""}" id="st-save-btn" data-st-action="save-project" title="Save project locally in this browser">Save</button>
+          <button type="button" class="st-btn${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer" title="My Projects: New, Open, Rename, Duplicate, Delete, Recovery">Projects</button>
           <div class="st-export-wrap">
             <button type="button" class="st-btn${exportMenuOpen ? " is-active" : ""}" id="st-export-menu-btn" data-st-action="toggle-export-menu" aria-haspopup="menu" aria-expanded="${exportMenuOpen}">${exporting ? "Rendering…" : exportingStems ? "Stems…" : "More ▾"}</button>
             <div class="st-export-menu" id="st-export-menu" role="menu"${exportMenuOpen ? "" : " hidden"}>
@@ -680,11 +816,16 @@ function renderStudioHtml(): string {
               ${tr.hasLiveTake ? `<button type="button" class="st-menu-item" role="menuitem" id="st-export-live" data-st-action="export-live">Live Take WAV (${tr.liveTakeDurationSec.toFixed(1)}s)</button>` : ""}
               <div class="st-menu-sep"></div>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-project" data-st-action="export-project">Export .sy1studio</button>
-              <button type="button" class="st-menu-item" role="menuitem" id="st-import-project-btn" data-st-action="trigger-import-project">Import .sy1studio</button>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-import-project-btn" data-st-action="trigger-import-project"${tr.recording ? " disabled" : ""}>Import .sy1studio</button>
               <div class="st-menu-sep"></div>
-              <button type="button" class="st-menu-item" role="menuitem" data-st-action="metronome" aria-pressed="${studioEngine.getRecordingSettings().metronome}">Metronome: ${studioEngine.getRecordingSettings().metronome ? "On" : "Off"}</button>
-              <button type="button" class="st-menu-item" role="menuitem" data-st-action="count-in" aria-pressed="${studioEngine.getRecordingSettings().countIn}">1-bar Count-in: ${studioEngine.getRecordingSettings().countIn ? "On" : "Off"}</button>
-              <label class="st-click-level">Click volume <input id="st-click-volume" type="range" min="0" max="1" step="0.01" value="${studioEngine.getRecordingSettings().clickVolume}" aria-label="Metronome volume"></label>
+              <button type="button" class="st-menu-item" role="menuitem" data-st-action="metronome" aria-pressed="${recSettings.metronome}">Metronome: ${recSettings.metronome ? "On" : "Off"}</button>
+              <button type="button" class="st-menu-item" role="menuitem" data-st-action="count-in" aria-pressed="${recSettings.countIn}">1-bar Count-in: ${recSettings.countIn ? "On" : "Off"}</button>
+              <label class="st-click-level">Click volume <input id="st-click-volume" type="range" min="0" max="1" step="0.01" value="${recSettings.clickVolume}" aria-label="Metronome volume"></label>
+              <div class="st-menu-sep"></div>
+              <div class="st-menu-label">Recording Mode</div>
+              <button type="button" class="st-menu-item${recMode === "overdub" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "overdub"}" data-st-action="set-rec-mode" data-rec-mode="overdub">${recMode === "overdub" ? "✓ " : ""}Overdub (Merge)</button>
+              <button type="button" class="st-menu-item${recMode === "takes" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "takes"}" data-st-action="set-rec-mode" data-rec-mode="takes">${recMode === "takes" ? "✓ " : ""}Separate Takes</button>
+              <button type="button" class="st-menu-item${recMode === "replace" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "replace"}" data-st-action="set-rec-mode" data-rec-mode="replace">${recMode === "replace" ? "✓ " : ""}Replace Armed Track</button>
             </div>
             <input type="file" id="st-import-file" accept=".sy1studio,.json,application/json" hidden />
           </div>
@@ -703,20 +844,30 @@ function renderStudioHtml(): string {
 
       ${
         openDrawerVisible
-          ? `<div class="st-drawer" id="st-open-drawer" role="region" aria-label="Saved Projects">
+          ? `<div class="st-drawer" id="st-open-drawer" role="region" aria-label="My Projects">
               <div class="st-drawer-head">
-                <span>Saved Projects &amp; Recovery</span>
+                <div class="st-drawer-head-title">
+                  <span>My Projects</span>
+                  <span class="st-drawer-local-note">Saved locally in this browser · No cloud sync</span>
+                </div>
                 <button type="button" class="st-btn st-tiny-btn" data-st-action="toggle-open-drawer">Close</button>
+              </div>
+              <div class="st-drawer-toolbar">
+                <button type="button" class="st-btn st-tiny-btn is-active" id="st-new-project-btn" data-st-action="new-project"${tr.recording ? " disabled" : ""}>+ New Project</button>
+                <button type="button" class="st-btn st-tiny-btn" id="st-duplicate-project-btn" data-st-action="duplicate-current-project"${tr.recording ? " disabled" : ""}>Save As / Duplicate</button>
+                <button type="button" class="st-btn st-tiny-btn" id="st-rename-project-btn" data-st-action="rename-current-project"${tr.recording ? " disabled" : ""}>Rename Current</button>
+                <button type="button" class="st-btn st-tiny-btn" data-st-action="trigger-import-project"${tr.recording ? " disabled" : ""}>Import .sy1studio</button>
+                ${tr.recording ? `<span class="st-drawer-rec-guard">Stop recording to switch or create projects</span>` : ""}
               </div>
               <div class="st-drawer-list">
                 ${
                   autosaveMetaCache
-                    ? `<div class="st-drawer-item">
+                    ? `<div class="st-drawer-item is-recovery">
                         <div>
                           <div class="st-drawer-item-title">Autosave Recovery · ${escapeHtml(autosaveMetaCache.name)}</div>
                           <div class="st-drawer-item-meta">${autosaveMetaCache.trackCount} tracks · ${autosaveMetaCache.bpm} BPM · ${autosaveMetaCache.bars} bars · ${escapeHtml(fmtSavedTime(autosaveMetaCache.updatedAt))}</div>
                         </div>
-                        <button type="button" class="st-btn st-tiny-btn" data-st-action="restore-autosave">Restore</button>
+                        <button type="button" class="st-btn st-tiny-btn" data-st-action="restore-autosave"${tr.recording ? " disabled" : ""}>Recover</button>
                       </div>`
                     : ""
                 }
@@ -724,19 +875,24 @@ function renderStudioHtml(): string {
                   savedProjectsCache.length > 0
                     ? savedProjectsCache
                         .map(
-                          (p) => `<div class="st-drawer-item" data-project-id="${escapeHtml(p.id)}">
-                            <div>
-                              <div class="st-drawer-item-title">${escapeHtml(p.name)}</div>
-                              <div class="st-drawer-item-meta">${p.trackCount} tracks · ${p.noteCount} notes · ${p.bpm} BPM · ${p.bars} bars · ${escapeHtml(fmtSavedTime(p.savedAt))}</div>
-                            </div>
-                            <div class="st-drawer-actions">
-                              <button type="button" class="st-btn st-tiny-btn" data-st-action="open-saved-project" data-project-id="${escapeHtml(p.id)}">Open</button>
-                              <button type="button" class="st-btn st-tiny-btn" data-st-action="delete-saved-project" data-project-id="${escapeHtml(p.id)}">Delete</button>
-                            </div>
-                          </div>`
+                          (p) => {
+                            const isCurrent = p.id === tr.projectId;
+                            return `<div class="st-drawer-item${isCurrent ? " is-current" : ""}" data-project-id="${escapeHtml(p.id)}">
+                              <div>
+                                <div class="st-drawer-item-title">${escapeHtml(p.name)}${isCurrent ? ` <span class="st-current-tag">Active</span>` : ""}</div>
+                                <div class="st-drawer-item-meta">${p.trackCount} tracks · ${p.noteCount} notes · ${p.bpm} BPM · ${p.bars} bars · ${escapeHtml(fmtSavedTime(p.savedAt))}</div>
+                              </div>
+                              <div class="st-drawer-actions">
+                                <button type="button" class="st-btn st-tiny-btn" data-st-action="open-saved-project" data-project-id="${escapeHtml(p.id)}"${tr.recording ? " disabled" : ""}>Open</button>
+                                <button type="button" class="st-btn st-tiny-btn" data-st-action="duplicate-saved-project" data-project-id="${escapeHtml(p.id)}"${tr.recording ? " disabled" : ""}>Duplicate</button>
+                                <button type="button" class="st-btn st-tiny-btn" data-st-action="rename-saved-project" data-project-id="${escapeHtml(p.id)}"${tr.recording ? " disabled" : ""}>Rename</button>
+                                <button type="button" class="st-btn st-tiny-btn" data-st-action="delete-saved-project" data-project-id="${escapeHtml(p.id)}"${tr.recording ? " disabled" : ""}>Delete</button>
+                              </div>
+                            </div>`;
+                          }
                         )
                         .join("")
-                    : `<div class="st-drawer-empty">No saved projects in browser storage yet. Click Save or Import .sy1studio.</div>`
+                    : `<div class="st-drawer-empty">No saved projects in local browser storage yet. Click Save or + New Project.</div>`
                 }
               </div>
             </div>`
@@ -761,6 +917,15 @@ function renderStudioHtml(): string {
                   <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶ Undo</button>
                   <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷ Redo</button>
                 </div>
+                <div class="st-seg st-rec-assist-seg" role="group" aria-label="Recording metronome and count-in">
+                  <button type="button" class="st-btn st-tiny-btn${recSettings.metronome ? " is-active" : ""}" id="st-click-btn" data-st-action="metronome" aria-pressed="${recSettings.metronome}" title="Monitor-only metronome click (never printed to export)">Click</button>
+                  <button type="button" class="st-btn st-tiny-btn${recSettings.countIn ? " is-active" : ""}" id="st-countin-btn" data-st-action="count-in" aria-pressed="${recSettings.countIn}" title="1-bar count-in before recording">1-Bar In</button>
+                </div>
+                ${
+                  recMode !== "overdub" || tr.recording
+                    ? `<span class="st-rec-mode-tag${recMode === "replace" ? " is-replace" : ""}" id="st-rec-mode-tag">${recMode === "replace" ? "Replace" : recMode === "takes" ? "New Take" : "Overdub"}</span>`
+                    : ""
+                }
                 <span class="st-arr-loop-info${tr.loopEnabled ? " is-on" : ""}">Loop Bar ${tr.loopStartBar}–${tr.loopEndBar}</span>
               </div>
               <div class="st-arr-tb-right">
@@ -824,7 +989,7 @@ function renderStudioHtml(): string {
           </section>
         </div>
       </div>
-      ${clearDialogHtml}
+      ${activeDialogHtml}
     </div>`;
 }
 
@@ -873,6 +1038,7 @@ function updatePlayheadOnly(): void {
   if (cachedClockEl && clockStr !== lastClockStr) {
     lastClockStr = clockStr;
     cachedClockEl.textContent = clockStr;
+    cachedClockEl.classList.toggle("is-countin", !!countInBeat);
   }
   updateMetersDOM(!studioEngine.isPlaying());
 }
@@ -1010,23 +1176,49 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   const container = document.getElementById("sy1-studio");
   if (!container) return;
 
-  // Trap modal focus & intercept Escape/background shortcuts before region key handlers
+  // Trap modal focus & intercept Escape/Enter/background shortcuts for all in-app Studio dialogs
+  const hasActiveModal = () =>
+    Boolean(pendingClearTrackId || pendingUnsavedAction || pendingDeleteProject || pendingProjectNameModal);
+
+  const dismissActiveModal = () => {
+    if (pendingClearTrackId) {
+      const restoreId = pendingClearTrackId;
+      pendingClearTrackId = null;
+      renderStudioPanel();
+      container.querySelector<HTMLElement>(`button[data-st-action="clear-track"][data-track-id="${restoreId}"]`)?.focus();
+      return;
+    }
+    if (pendingUnsavedAction) {
+      pendingUnsavedAction = null;
+      renderStudioPanel();
+      return;
+    }
+    if (pendingDeleteProject) {
+      pendingDeleteProject = null;
+      renderStudioPanel();
+      return;
+    }
+    if (pendingProjectNameModal) {
+      pendingProjectNameModal = null;
+      renderStudioPanel();
+    }
+  };
+
   document.addEventListener(
     "keydown",
     (e) => {
-      if (!pendingClearTrackId || container.hidden) return;
+      if (!hasActiveModal() || container.hidden) return;
+      const dialog = container.querySelector<HTMLElement>(".st-dialog");
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        const restoreId = pendingClearTrackId;
-        pendingClearTrackId = null;
-        renderStudioPanel();
-        container.querySelector<HTMLElement>(`button[data-st-action="clear-track"][data-track-id="${restoreId}"]`)?.focus();
+        dismissActiveModal();
         return;
       }
       if (e.key === "Tab") {
-        const dialog = container.querySelector<HTMLElement>("#st-clear-dialog");
-        const focusables = dialog ? Array.from(dialog.querySelectorAll<HTMLElement>("button:not(:disabled)")) : [];
+        const focusables = dialog
+          ? Array.from(dialog.querySelectorAll<HTMLElement>("input:not(:disabled), button:not(:disabled)"))
+          : [];
         if (focusables.length > 0) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -1036,7 +1228,19 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         }
         return;
       }
-      const inDialog = (e.target as HTMLElement | null)?.closest("#st-clear-dialog");
+      const targetEl = e.target as HTMLElement | null;
+      if (targetEl?.id === "st-project-name-modal-input") {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          container.querySelector<HTMLButtonElement>("#st-project-name-confirm-btn")?.click();
+          return;
+        }
+        // Allow normal text editing inside the project name input without triggering DAW shortcuts
+        e.stopPropagation();
+        return;
+      }
+      const inDialog = targetEl?.closest(".st-dialog");
       if (inDialog && (e.key === "Enter" || e.key === " ")) return;
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -1060,6 +1264,64 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   let draggingKnobParam: string | null = null;
   let draggingRange: { trackId: string; type: string } | null = null;
   let pendingAutosaveAfterDrag = false;
+  let wasRecordingUi = false;
+  let pendingAutosaveAfterRecord = false;
+  let lastSavedContentSig = "";
+
+  const computeProjectContentSig = (): string => {
+    const tr = studioEngine.getTransportSnapshot();
+    const rs = studioEngine.getRecordingSettings();
+    const tracks = studioEngine.getTracks();
+    const parts: string[] = [
+      tr.projectId,
+      tr.projectName,
+      String(tr.bpm),
+      String(tr.bars),
+      tr.loopEnabled ? "1" : "0",
+      String(tr.loopStartBar),
+      String(tr.loopEndBar),
+      rs.metronome ? "1" : "0",
+      rs.countIn ? "1" : "0",
+      rs.mode ?? "overdub"
+    ];
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i];
+      const regs = t.getRegions(tr.totalTicks);
+      parts.push(
+        `${t.id}:${t.name}:${t.machineId}:${t.presetId}:${t.volume.toFixed(3)}:${t.pan.toFixed(3)}:${t.mute ? 1 : 0}:${t.solo ? 1 : 0}:${t.midiChannel}:${t.events.length}:${regs.length}:${JSON.stringify(t.patch)}:${regs.map((r) => `${r.id}@${r.startTick}:${r.length}:${r.offset}:${r.loop ? 1 : 0}:${r.events.length}`).join(",")}`
+      );
+    }
+    return parts.join("|");
+  };
+  lastSavedContentSig = computeProjectContentSig();
+
+  const syncCleanContentBaseline = () => {
+    lastSavedContentSig = computeProjectContentSig();
+    markProjectSaved();
+  };
+
+  const updateRecordingStatsDOM = () => {
+    const tracks = studioEngine.getTracks();
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i];
+      const metaEl = container.querySelector<HTMLElement>(`[data-st-meta="${t.id}"]`);
+      if (metaEl) {
+        const noteCount = t.getNoteCount();
+        const noteUnit = t.isDrumTrack() ? (noteCount === 1 ? "hit" : "hits") : noteCount === 1 ? "note" : "notes";
+        const nextText = `${noteCount} ${noteUnit}`;
+        if (metaEl.textContent !== nextText) metaEl.textContent = nextText;
+      }
+    }
+    const saveEl = container.querySelector<HTMLElement>("#st-save-state");
+    if (saveEl && saveEl.textContent !== "Unsaved") {
+      saveEl.textContent = "Unsaved";
+      saveEl.className = "st-save-state is-dirty";
+    }
+    const saveBtn = container.querySelector<HTMLElement>("#st-save-btn");
+    if (saveBtn && !saveBtn.classList.contains("is-dirty")) {
+      saveBtn.classList.add("is-dirty");
+    }
+  };
 
   const requestRender = () => {
     if (container.hidden) return;
@@ -1098,21 +1360,60 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   };
 
   studioEngine.onChange(() => {
+    const isRec = studioEngine.getTransportSnapshot().recording;
+
+    if (studioEngine.isActive()) {
+      if (studioEngine.isPlaying()) startPlayheadLoop();
+      else stopPlayheadLoop();
+    }
+
+    // While live recording is already active, avoid full innerHTML rebuilds and IndexedDB churn on every incoming MIDI event
+    if (isRec && wasRecordingUi) {
+      markProjectDirty();
+      pendingAutosaveAfterRecord = true;
+      if (!container.hidden) updateRecordingStatsDOM();
+      return;
+    }
+
+    if (isRec && !wasRecordingUi) {
+      wasRecordingUi = true;
+      pendingAutosaveAfterRecord = true;
+      if (!container.hidden) requestRender();
+      return;
+    }
+
+    if (!isRec && wasRecordingUi) {
+      wasRecordingUi = false;
+      if (pendingAutosaveAfterRecord) {
+        pendingAutosaveAfterRecord = false;
+        scheduleAutosave();
+      }
+    }
+
+    if (!suppressDirtyTracking && !draggingKnobParam && !draggingRange) {
+      const sig = computeProjectContentSig();
+      if (sig !== lastSavedContentSig) {
+        markProjectDirty();
+      }
+    } else if (suppressDirtyTracking) {
+      lastSavedContentSig = computeProjectContentSig();
+    }
+
     if (studioEngine.isActive()) {
       if (draggingKnobParam || draggingRange) {
         pendingAutosaveAfterDrag = true;
       } else {
         scheduleAutosave();
       }
-      if (studioEngine.isPlaying()) startPlayheadLoop();
-      else stopPlayheadLoop();
     }
     if (container.hidden) return;
     if (draggingKnobParam) {
+      markProjectDirty();
       updateStudioInstrumentKnobDOM(container, studioEngine.getFocusedTrack(), draggingKnobParam);
       return;
     }
     if (draggingRange) {
+      markProjectDirty();
       updateTrackRangeLabelsDOM(draggingRange.trackId);
       return;
     }
@@ -1182,13 +1483,27 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           container.querySelector<HTMLElement>(exportMenuOpen ? "#st-export-menu [role='menuitem']:not(:disabled)" : "#st-export-menu-btn")?.focus();
           break;
         case "metronome":
-          studioEngine.setRecordingSettings({metronome:!studioEngine.getRecordingSettings().metronome});
-          container.querySelector<HTMLElement>("[data-st-action='metronome']")?.focus();
+          studioEngine.setRecordingSettings({ metronome: !studioEngine.getRecordingSettings().metronome });
           break;
         case "count-in":
-          studioEngine.setRecordingSettings({countIn:!studioEngine.getRecordingSettings().countIn});
-          container.querySelector<HTMLElement>("[data-st-action='count-in']")?.focus();
+          studioEngine.setRecordingSettings({ countIn: !studioEngine.getRecordingSettings().countIn });
           break;
+        case "set-rec-mode": {
+          const mode = btn.getAttribute("data-rec-mode") as StudioRecordingMode | null;
+          if (mode === "overdub" || mode === "takes" || mode === "replace") {
+            studioEngine.setRecordingSettings({ mode });
+            setStatus(
+              mode === "replace"
+                ? "Recording mode: Replace armed track (undoable)"
+                : mode === "takes"
+                  ? "Recording mode: Separate takes"
+                  : "Recording mode: Overdub (merge)",
+              "info"
+            );
+            renderStudioPanel();
+          }
+          break;
+        }
         case "play":
           if (studioEngine.getTransportSnapshot().playing) void studioEngine.stop();
           else void studioEngine.play();
@@ -1221,7 +1536,21 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           studioEngine.addTrack();
           break;
         case "focus-track":
-          if (trackId) studioEngine.setFocusedTrack(trackId);
+          if (trackId) {
+            studioEngine.setFocusedTrack(trackId);
+            // GarageBand workflow: selecting a track arms it cleanly when not recording (unless multi-channel MIDI routing is active)
+            if (!studioEngine.getTransportSnapshot().recording) {
+              const allTracks = studioEngine.getTracks();
+              const hasExplicitChannels = allTracks.some((t) => t.midiChannel > 0);
+              if (!hasExplicitChannels) {
+                for (const t of allTracks) {
+                  if (t.armed !== (t.id === trackId)) {
+                    studioEngine.setTrackArmed(t.id, t.id === trackId);
+                  }
+                }
+              }
+            }
+          }
           break;
         case "open-track-instrument":
           if (trackId) studioEngine.setFocusedTrack(trackId);
@@ -1447,7 +1776,9 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "save-project": {
-          void saveStudioProjectNow();
+          void saveStudioProjectNow().then((ok) => {
+            if (ok) syncCleanContentBaseline();
+          });
           break;
         }
         case "toggle-open-drawer": {
@@ -1459,10 +1790,226 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           }
           break;
         }
+        case "new-project": {
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before creating a new project.", "error");
+            renderStudioPanel();
+            break;
+          }
+          const openNewModal = () => {
+            pendingProjectNameModal = { kind: "new", initialName: `Session ${savedProjectsCache.length + 1}` };
+            renderStudioPanel();
+            const inp = container.querySelector<HTMLInputElement>("#st-project-name-modal-input");
+            inp?.focus();
+            inp?.select();
+          };
+          if (projectDirty) {
+            pendingUnsavedAction = { label: "creating a new project", run: openNewModal };
+            renderStudioPanel();
+            container.querySelector<HTMLElement>("#st-unsaved-save-btn")?.focus();
+          } else {
+            openNewModal();
+          }
+          break;
+        }
+        case "duplicate-current-project": {
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before duplicating the project.", "error");
+            renderStudioPanel();
+            break;
+          }
+          pendingProjectNameModal = {
+            kind: "duplicate-current",
+            initialName: `${studioEngine.getProjectName()} Copy`
+          };
+          renderStudioPanel();
+          const inp = container.querySelector<HTMLInputElement>("#st-project-name-modal-input");
+          inp?.focus();
+          inp?.select();
+          break;
+        }
+        case "rename-current-project": {
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before renaming the project.", "error");
+            renderStudioPanel();
+            break;
+          }
+          pendingProjectNameModal = {
+            kind: "rename-current",
+            initialName: studioEngine.getProjectName()
+          };
+          renderStudioPanel();
+          const inp = container.querySelector<HTMLInputElement>("#st-project-name-modal-input");
+          inp?.focus();
+          inp?.select();
+          break;
+        }
+        case "duplicate-saved-project": {
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before duplicating a project.", "error");
+            renderStudioPanel();
+            break;
+          }
+          const pid = btn.getAttribute("data-project-id") || "";
+          const meta = savedProjectsCache.find((p) => p.id === pid);
+          if (!pid || !meta) break;
+          pendingProjectNameModal = {
+            kind: "duplicate-saved",
+            projectId: pid,
+            initialName: `${meta.name} Copy`
+          };
+          renderStudioPanel();
+          const inp = container.querySelector<HTMLInputElement>("#st-project-name-modal-input");
+          inp?.focus();
+          inp?.select();
+          break;
+        }
+        case "rename-saved-project": {
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before renaming a project.", "error");
+            renderStudioPanel();
+            break;
+          }
+          const pid = btn.getAttribute("data-project-id") || "";
+          const meta = savedProjectsCache.find((p) => p.id === pid);
+          if (!pid || !meta) break;
+          pendingProjectNameModal = {
+            kind: "rename-saved",
+            projectId: pid,
+            initialName: meta.name
+          };
+          renderStudioPanel();
+          const inp = container.querySelector<HTMLInputElement>("#st-project-name-modal-input");
+          inp?.focus();
+          inp?.select();
+          break;
+        }
+        case "cancel-project-name-modal": {
+          pendingProjectNameModal = null;
+          renderStudioPanel();
+          break;
+        }
+        case "confirm-project-name-modal": {
+          const modal = pendingProjectNameModal;
+          if (!modal) break;
+          const inp = container.querySelector<HTMLInputElement>("#st-project-name-modal-input");
+          const nextName = sanitizeProjectName(inp ? inp.value : modal.initialName);
+          pendingProjectNameModal = null;
+          if (modal.kind === "new") {
+            void (async () => {
+              try {
+                suppressNextAutosave = true;
+                suppressDirtyTracking = true;
+                await studioEngine.createNewProject({ name: nextName });
+                pendingClearTrackId = null;
+                await studioStorage.saveAutosave(studioEngine.exportProject());
+                syncCleanContentBaseline();
+                openDrawerVisible = false;
+                setStatus(`Created "${nextName}"`, "ok");
+              } catch (err) {
+                setStatus(err instanceof Error ? err.message : "Failed to create project.", "error");
+              } finally {
+                suppressNextAutosave = false;
+                suppressDirtyTracking = false;
+                await refreshOpenDrawerData();
+                renderStudioPanel();
+              }
+            })();
+          } else if (modal.kind === "duplicate-current") {
+            void (async () => {
+              try {
+                suppressNextAutosave = true;
+                suppressDirtyTracking = true;
+                studioEngine.duplicateCurrentProject(nextName);
+                const saved = await saveStudioProjectNow();
+                if (saved) {
+                  syncCleanContentBaseline();
+                  setStatus(`Saved independent copy "${nextName}"`, "ok");
+                }
+              } catch (err) {
+                setStatus(err instanceof Error ? err.message : "Failed to duplicate project.", "error");
+              } finally {
+                suppressNextAutosave = false;
+                suppressDirtyTracking = false;
+                await refreshOpenDrawerData();
+                renderStudioPanel();
+              }
+            })();
+          } else if (modal.kind === "rename-current") {
+            void (async () => {
+              studioEngine.setProjectName(nextName);
+              const curId = studioEngine.getProjectId();
+              const existing = await studioStorage.loadProject(curId);
+              if (existing.ok && existing.data) {
+                await studioStorage.renameProject(curId, nextName);
+              }
+              await studioStorage.saveAutosave(studioEngine.exportProject());
+              if (!projectDirty) syncCleanContentBaseline();
+              setStatus(`Renamed to "${nextName}"`, "ok");
+              await refreshOpenDrawerData();
+              renderStudioPanel();
+            })();
+          } else if (modal.kind === "rename-saved" && modal.projectId) {
+            const targetId = modal.projectId;
+            void studioStorage.renameProject(targetId, nextName).then(async (res) => {
+              if (!res.ok) {
+                setStatus(res.message, "error");
+              } else {
+                if (studioEngine.getProjectId() === targetId) {
+                  suppressDirtyTracking = true;
+                  studioEngine.setProjectName(nextName);
+                  if (!projectDirty) syncCleanContentBaseline();
+                  suppressDirtyTracking = false;
+                }
+                setStatus(`Renamed project to "${nextName}"`, "ok");
+              }
+              await refreshOpenDrawerData();
+              renderStudioPanel();
+            });
+          } else if (modal.kind === "duplicate-saved" && modal.projectId) {
+            const targetId = modal.projectId;
+            void studioStorage.duplicateProject(targetId, nextName).then(async (res) => {
+              if (!res.ok) setStatus(res.message, "error");
+              else setStatus(`Duplicated as "${res.data.name}"`, "ok");
+              await refreshOpenDrawerData();
+              renderStudioPanel();
+            });
+          }
+          break;
+        }
+        case "cancel-unsaved-action": {
+          pendingUnsavedAction = null;
+          renderStudioPanel();
+          break;
+        }
+        case "discard-unsaved-action": {
+          const next = pendingUnsavedAction;
+          pendingUnsavedAction = null;
+          projectDirty = false;
+          renderStudioPanel();
+          if (next) void next.run();
+          break;
+        }
+        case "save-and-continue-action": {
+          const next = pendingUnsavedAction;
+          pendingUnsavedAction = null;
+          void saveStudioProjectNow().then(async (ok) => {
+            if (!ok) return;
+            syncCleanContentBaseline();
+            if (next) await next.run();
+          });
+          break;
+        }
         case "open-saved-project": {
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before opening another project.", "error");
+            renderStudioPanel();
+            break;
+          }
           const pid = btn.getAttribute("data-project-id") || "";
           if (!pid) break;
-          void studioStorage.loadProject(pid).then(async (res) => {
+          const performOpen = async () => {
+            const res = await studioStorage.loadProject(pid);
             if (!res.ok) {
               setStatus(res.message, "error");
               renderStudioPanel();
@@ -1475,33 +2022,74 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
             }
             try {
               suppressNextAutosave = true;
+              suppressDirtyTracking = true;
               await studioEngine.loadProject(res.data);
               pendingClearTrackId = null;
               await studioStorage.saveAutosave(studioEngine.exportProject());
+              syncCleanContentBaseline();
               openDrawerVisible = false;
               setStatus(`Opened "${res.data.name}"`, "ok");
             } catch (err) {
               setStatus(err instanceof Error ? err.message : "Failed to open project", "error");
             } finally {
               suppressNextAutosave = false;
+              suppressDirtyTracking = false;
               renderStudioPanel();
             }
-          });
+          };
+          if (projectDirty) {
+            pendingUnsavedAction = { label: "opening another project", run: performOpen };
+            renderStudioPanel();
+            container.querySelector<HTMLElement>("#st-unsaved-save-btn")?.focus();
+          } else {
+            void performOpen();
+          }
           break;
         }
         case "delete-saved-project": {
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before deleting a project.", "error");
+            renderStudioPanel();
+            break;
+          }
           const pid = btn.getAttribute("data-project-id") || "";
           if (!pid) break;
+          const meta = savedProjectsCache.find((p) => p.id === pid);
+          pendingDeleteProject = { id: pid, name: meta?.name || "this project" };
+          renderStudioPanel();
+          container.querySelector<HTMLElement>("#st-delete-project-cancel-btn")?.focus();
+          break;
+        }
+        case "cancel-delete-project": {
+          pendingDeleteProject = null;
+          renderStudioPanel();
+          break;
+        }
+        case "confirm-delete-project": {
+          const target = pendingDeleteProject;
+          const pid = btn.getAttribute("data-project-id") || target?.id || "";
+          const deletedName = target?.name || "project";
+          pendingDeleteProject = null;
+          if (!pid) {
+            renderStudioPanel();
+            break;
+          }
           void studioStorage.deleteProject(pid).then(async (res) => {
             if (!res.ok) setStatus(res.message, "error");
-            else setStatus("Deleted saved project", "info");
+            else setStatus(`Deleted "${deletedName}"`, "info");
             await refreshOpenDrawerData();
             renderStudioPanel();
           });
           break;
         }
         case "restore-autosave": {
-          void studioStorage.loadAutosave().then(async (res) => {
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before recovering autosave.", "error");
+            renderStudioPanel();
+            break;
+          }
+          const performRestore = async () => {
+            const res = await studioStorage.loadAutosave();
             if (!res.ok || !res.data) {
               setStatus(res.ok ? "No autosave available" : res.message, "error");
               renderStudioPanel();
@@ -1509,17 +2097,27 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
             }
             try {
               suppressNextAutosave = true;
+              suppressDirtyTracking = true;
               await studioEngine.loadProject(res.data.project);
               pendingClearTrackId = null;
+              syncCleanContentBaseline();
               openDrawerVisible = false;
               setStatus(`Recovered "${res.data.project.name}"`, "ok");
             } catch (err) {
               setStatus(err instanceof Error ? err.message : "Recovery failed", "error");
             } finally {
               suppressNextAutosave = false;
+              suppressDirtyTracking = false;
               renderStudioPanel();
             }
-          });
+          };
+          if (projectDirty) {
+            pendingUnsavedAction = { label: "recovering autosave", run: performRestore };
+            renderStudioPanel();
+            container.querySelector<HTMLElement>("#st-unsaved-save-btn")?.focus();
+          } else {
+            void performRestore();
+          }
           break;
         }
         case "export-project": {
@@ -1532,12 +2130,26 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         }
         case "trigger-import-project": {
           exportMenuOpen = false;
-          const inp = document.getElementById("st-import-file") as HTMLInputElement | null;
-          if (inp) {
-            inp.value = "";
-            inp.click();
+          if (studioEngine.getTransportSnapshot().recording) {
+            setStatus("Stop recording before importing a project.", "error");
+            renderStudioPanel();
+            break;
           }
-          renderStudioPanel();
+          const openPicker = () => {
+            const inp = document.getElementById("st-import-file") as HTMLInputElement | null;
+            if (inp) {
+              inp.value = "";
+              inp.click();
+            }
+            renderStudioPanel();
+          };
+          if (projectDirty) {
+            pendingUnsavedAction = { label: "importing a .sy1studio project", run: openPicker };
+            renderStudioPanel();
+            container.querySelector<HTMLElement>("#st-unsaved-save-btn")?.focus();
+          } else {
+            openPicker();
+          }
           break;
         }
         case "export-midi": {
@@ -2077,6 +2689,9 @@ export function hideStudioPanel(): void {
   cachedMeterEls = [];
   exportMenuOpen = false;
   pendingClearTrackId = null;
+  pendingDeleteProject = null;
+  pendingProjectNameModal = null;
+  pendingUnsavedAction = null;
   document.documentElement.classList.remove("is-studio");
   const synthEl = document.getElementById("sy1-panel");
   const studioEl = document.getElementById("sy1-studio");

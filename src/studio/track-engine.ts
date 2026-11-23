@@ -31,7 +31,7 @@ import { MACHINES } from "../machines";
 import { SY1 } from "../machines/sy1";
 import type { MachineDef } from "../machines/types";
 import { extractNoteSpans } from "./midi-io";
-import { StudioMidiEvent, StudioNoteSpan, StudioTrackSnapshot, TrackAudioState } from "./types";
+import { StudioMidiEvent, StudioNoteSpan, StudioRecordingMode, StudioTrackSnapshot, TrackAudioState } from "./types";
 
 import { flattenRegions, regionFromEvents, regionId, type MidiRegion } from "./midi-regions";
 
@@ -158,7 +158,7 @@ export class SY1TrackEngine {
   events: StudioMidiEvent[] = [];
   private regions: MidiRegion[] | null = null;
   private lastRecordedRegionId: string | null = null;
-  private take: { regions: MidiRegion[]; events: StudioMidiEvent[]; id: string } | null = null;
+  private take: { regions: MidiRegion[]; events: StudioMidiEvent[]; id: string; mode: StudioRecordingMode } | null = null;
 
   private ctx: BaseAudioContext | null = null;
   private bus: SynthFXBus | null = null;
@@ -877,13 +877,16 @@ export class SY1TrackEngine {
   }
 
   // ------------------------------------------------------------------ clip ----
-  cancelRegionPlayback(destination?: AudioNode): void {
+  cancelRegionPlayback(_destination?: AudioNode): void {
     this.allNotesOff();
-    // Disconnect both the dry and FX paths of drum hits queued by the old lookahead.
-    if (this.isDrumTrack() && this.ctx && destination) {
-      const ctx = this.ctx;
-      this.detachAudio();
-      void this.attachAudio(ctx, destination);
+    // Disconnect only the lightweight TrackDrumBus & timers (avoids tearing down the full SynthFXBus).
+    if (this.isDrumTrack() && this.ctx && this.bus) {
+      this.drumTimers.forEach((tid) => clearTimeout(tid));
+      this.drumTimers.clear();
+      this.drumOpenHat.node = null;
+      disposeTrackDrumBus(this.drumBus);
+      const glue = typeof this.patch.drumGlue === "number" ? this.patch.drumGlue : 0.35;
+      this.drumBus = createTrackDrumBus(this.ctx, this.bus.input, glue);
     }
   }
 
@@ -897,15 +900,21 @@ export class SY1TrackEngine {
     this.regions = regions;
   }
 
-  beginRegionTake(total: number): void {
-    this.take = { regions: this.getRegions(total), events: [], id: regionId() };
+  beginRegionTake(total: number, mode: StudioRecordingMode = "overdub"): void {
+    this.take = { regions: this.getRegions(total), events: [], id: regionId(), mode };
   }
 
   private regionsWithTake(total: number): MidiRegion[] {
     const take = this.take;
     if (!take || !take.events.length) return take?.regions ?? this.regions ?? [];
     const recorded = regionFromEvents(this.id, take.id, take.events, total);
-    // Preserve source boundaries of edited, split and looped regions during overdubs.
+    if (take.mode === "replace") {
+      return [recorded];
+    }
+    if (take.mode === "takes") {
+      return [...take.regions, recorded];
+    }
+    // Overdub: preserve source boundaries of edited, split and looped regions during overdubs.
     const target = take.regions.find(region => !region.loop && region.offset === 0 &&
       region.length === region.sourceLength && recorded.startTick >= region.startTick &&
       recorded.startTick + recorded.length <= region.startTick + region.length);
@@ -918,14 +927,19 @@ export class SY1TrackEngine {
 
   finishRegionTake(total: number): MidiRegion[] | undefined {
     if (!this.take) return;
+    const mode = this.take.mode;
     const regions = this.regionsWithTake(total);
     const hasEvents = this.take.events.length > 0;
     const previous = this.take.regions;
     this.take = null;
     if (!hasEvents) return;
     const changed = regions.find(region => !previous.includes(region));
-    // The original tick stream is already playable throughout recording.
-    this.setRegions(regions, this.events);
+    // Replace rebuilds playback events cleanly from the replacement take; overdub/takes keep the live tick stream.
+    if (mode === "replace") {
+      this.setRegions(regions);
+    } else {
+      this.setRegions(regions, this.events);
+    }
     this.lastRecordedRegionId = changed?.id ?? null;
     return previous;
   }

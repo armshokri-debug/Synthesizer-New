@@ -40,7 +40,8 @@ export function initSynthRecording(engine: SY1StudioEngine, options: { ready: Pr
     if (document.activeElement !== $("sr-bpm")) ($<HTMLInputElement>("sr-bpm")).value = String(state.bpm);
     if (document.activeElement !== $("sr-click-volume")) ($<HTMLInputElement>("sr-click-volume")).value = String(settings.clickVolume);
     $("sr-position").textContent = count ? `IN : ${count}` : `${String(state.currentBar).padStart(2,"0")} : ${state.currentBeat}`;
-    const status = error || (busy ? "Preparing…" : count ? "Count-in" : state.recording ? "Recording · MIDI overdub" : state.playing ? "Playing project" : "Ready · MIDI overdub");
+    const modeLabel = settings.mode === "takes" ? "New Take" : settings.mode === "replace" ? "Replace" : "MIDI overdub";
+    const status = error || (busy ? "Preparing…" : count ? "Count-in" : state.recording ? `Recording · ${modeLabel}` : state.playing ? `Playing · ${state.projectName}` : `Ready · ${state.projectName} · ${modeLabel}`);
     if ($("sr-status").textContent !== status) $("sr-status").textContent = status;
     root.dataset.state = count ? "count-in" : state.recording ? "recording" : state.playing ? "playing" : "idle";
     if (!root.hidden && state.playing) frame = requestAnimationFrame(update);

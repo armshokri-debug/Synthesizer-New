@@ -96,6 +96,8 @@ export interface StudioProjectTrackData {
   regions?: MidiRegion[];
 }
 
+export type StudioRecordingMode = "overdub" | "takes" | "replace";
+
 export interface StudioProjectData {
   format: typeof STUDIO_PROJECT_FORMAT;
   version: typeof STUDIO_PROJECT_VERSION;
@@ -108,7 +110,12 @@ export interface StudioProjectData {
   loopStartBar: number;
   loopEndBar: number;
   focusedTrackId: string;
-  recordingSettings?: { metronome: boolean; countIn: boolean; clickVolume: number };
+  recordingSettings?: {
+    metronome: boolean;
+    countIn: boolean;
+    clickVolume: number;
+    mode?: StudioRecordingMode;
+  };
   tracks: StudioProjectTrackData[];
 }
 
@@ -146,6 +153,7 @@ export interface StudioTransportSnapshot {
   liveRecWarning: string;
   hasLiveTake: boolean;
   liveTakeDurationSec: number;
+  recordingMode: StudioRecordingMode;
 }
 
 export interface ParsedMidiTrack {

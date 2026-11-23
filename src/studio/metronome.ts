@@ -47,7 +47,11 @@ export class StudioMetronome {
     if (this.output) this.output.gain.value = this.volume;
   }
   cancel() {
-    for (const v of this.voices) { try { v.stop(); } catch {} }
+    for (const v of this.voices) {
+      try { v.stop(); } catch {}
+      try { v.disconnect(); } catch {}
+    }
+    this.voices.clear();
     this.last = -Infinity;
   }
   dispose() { this.cancel(); this.output?.disconnect(); this.output = null; this.ctx = null; }
