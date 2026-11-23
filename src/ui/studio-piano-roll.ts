@@ -10,11 +10,13 @@
  * - Note creation (click on grid), selection (click / Shift+click), drag-move
  *   (pitch/lane + snapped tick), drag-resize (right handle), delete
  *   (Delete/Backspace, right-click, double-click, or toolbar button)
+ * - Logic Pro iPad-style Velocity Editing Mode (vertical drag directly on notes
+ *   or touch-friendly Velocity Lane, full 1–127 MIDI range, precise numeric input,
+ *   relative multi-note velocity preservation)
  * - Snap selector (Off, 1/4, 1/8, 1/16, 1/32), Quantize button, Horizontal zoom
- * - Synchronized Velocity Lane with draggable vertical bars & playhead
  */
 
-import { DRUM_NOTES, DRUM_VOICES, DrumVoice, drumVoiceForNote } from "../engine/drums";
+import { DRUM_NOTES, DrumVoice, drumVoiceForNote } from "../engine/drums";
 import { escapeHtml } from "../engine/params";
 import { studioEngine } from "../studio/studio-engine";
 import { getDrumLabelsForTrack, getStudioMachineDef } from "../studio/track-engine";
@@ -39,11 +41,130 @@ const BASE_BAR_PX = 160;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 
+export const MIN_MIDI_VELOCITY = 1;
+export const MAX_MIDI_VELOCITY = 127;
+const DEFAULT_MIDI_VELOCITY = 108; // ~0.85
+
+export function clampMidiVelocity(midiVel: number): number {
+  const n = Number.isFinite(midiVel) ? Math.round(midiVel) : DEFAULT_MIDI_VELOCITY;
+  return Math.max(MIN_MIDI_VELOCITY, Math.min(MAX_MIDI_VELOCITY, n));
+}
+
+export function velocityToMidi(velocity: number): number {
+  const v = Number.isFinite(velocity) ? velocity : DEFAULT_MIDI_VELOCITY / MAX_MIDI_VELOCITY;
+  return clampMidiVelocity(v * MAX_MIDI_VELOCITY);
+}
+
+export function midiToVelocity(midiVel: number): number {
+  return clampMidiVelocity(midiVel) / MAX_MIDI_VELOCITY;
+}
+
+/**
+ * Apply a signed MIDI velocity delta to selected notes using each note's captured
+ * original MIDI velocity, preserving exact relative differences even if a continuous
+ * drag temporarily hits 1 or 127 and moves back. Never modifies pitch or timing.
+ */
+export function applyRelativeVelocityDelta(
+  spans: readonly StudioNoteSpan[],
+  selectedIndices: ReadonlySet<number>,
+  origMidis: ReadonlyMap<number, number>,
+  deltaMidi: number
+): StudioNoteSpan[] {
+  const delta = Number.isFinite(deltaMidi) ? Math.round(deltaMidi) : 0;
+  return spans.map((span, idx) => {
+    if (!selectedIndices.has(idx)) return { ...span };
+    const baseMidi = origMidis.get(idx) ?? velocityToMidi(span.velocity);
+    return {
+      ...span,
+      velocity: midiToVelocity(baseMidi + delta)
+    };
+  });
+}
+
+/**
+ * Apply a numeric target velocity (1–127) to selected notes:
+ * - Single note (or equal-velocity selection): sets exact target velocity.
+ * - Multi-note selection with mixed velocities: shifts every selected note by
+ *   `(targetMidi - meanSelectedMidi)`, preserving relative velocity differences.
+ */
+export function applyNumericVelocity(
+  spans: readonly StudioNoteSpan[],
+  selectedIndices: ReadonlySet<number>,
+  targetMidi: number
+): StudioNoteSpan[] {
+  const clampedTarget = clampMidiVelocity(targetMidi);
+  const origMidis = new Map<number, number>();
+  let sum = 0;
+  let minV = MAX_MIDI_VELOCITY;
+  let maxV = MIN_MIDI_VELOCITY;
+  selectedIndices.forEach((idx) => {
+    const s = spans[idx];
+    if (!s) return;
+    const m = velocityToMidi(s.velocity);
+    origMidis.set(idx, m);
+    sum += m;
+    if (m < minV) minV = m;
+    if (m > maxV) maxV = m;
+  });
+  if (origMidis.size === 0) return spans.map((s) => ({ ...s }));
+  if (origMidis.size === 1 || minV === maxV) {
+    return spans.map((span, idx) =>
+      origMidis.has(idx) ? { ...span, velocity: midiToVelocity(clampedTarget) } : { ...span }
+    );
+  }
+  const anchor = Math.round(sum / origMidis.size);
+  const delta = clampedTarget - anchor;
+  return applyRelativeVelocityDelta(spans, selectedIndices, origMidis, delta);
+}
+
+function velocitySummary(
+  spans: readonly StudioNoteSpan[],
+  selectedIndices: ReadonlySet<number>
+): { count: number; avg: number; min: number; max: number; text: string } {
+  let sum = 0;
+  let count = 0;
+  let minV = MAX_MIDI_VELOCITY;
+  let maxV = MIN_MIDI_VELOCITY;
+  selectedIndices.forEach((idx) => {
+    const s = spans[idx];
+    if (!s) return;
+    const m = velocityToMidi(s.velocity);
+    sum += m;
+    count++;
+    if (m < minV) minV = m;
+    if (m > maxV) maxV = m;
+  });
+  if (count === 0) {
+    return { count: 0, avg: state.defaultVelocityMidi, min: state.defaultVelocityMidi, max: state.defaultVelocityMidi, text: "—" };
+  }
+  const avg = clampMidiVelocity(sum / count);
+  const text = minV === maxV ? String(avg) : `${minV}–${maxV}`;
+  return { count, avg, min: minV, max: maxV, text };
+}
+
+function velMidiToLanePct(midiVel: number): number {
+  return (clampMidiVelocity(midiVel) / MAX_MIDI_VELOCITY) * 100;
+}
+
+function velMidiToOpacity(midiVel: number): string {
+  const norm = clampMidiVelocity(midiVel) / MAX_MIDI_VELOCITY;
+  return (0.28 + 0.72 * norm).toFixed(3);
+}
+
+function clientYToMidiVelocity(clientY: number, rect: DOMRect): number {
+  const pad = 2;
+  const usable = Math.max(1, rect.height - pad * 2);
+  const norm = Math.max(0, Math.min(1, 1 - (clientY - (rect.top + pad)) / usable));
+  return clampMidiVelocity(MIN_MIDI_VELOCITY + norm * (MAX_MIDI_VELOCITY - MIN_MIDI_VELOCITY));
+}
+
 export interface PianoRollState {
   snapTicks: number;
   zoom: number;
   selectedIndices: Set<number>;
   audition: boolean;
+  velMode: boolean;
+  defaultVelocityMidi: number;
   scrollLeft: number;
   scrollTop: number;
   hasInitialScroll: boolean;
@@ -54,6 +175,8 @@ const state: PianoRollState = {
   zoom: 1,
   selectedIndices: new Set<number>(),
   audition: true,
+  velMode: false,
+  defaultVelocityMidi: DEFAULT_MIDI_VELOCITY,
   scrollLeft: 0,
   scrollTop: 0,
   hasInitialScroll: false
@@ -72,6 +195,10 @@ export function setPianoRollSnap(snapTicks: number): void {
 
 export function setPianoRollZoom(zoom: number): void {
   state.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(zoom * 100) / 100));
+}
+
+export function setPianoRollVelocityMode(enabled: boolean): void {
+  state.velMode = !!enabled;
 }
 
 export function clearPianoRollSelection(): void {
@@ -181,6 +308,14 @@ function buildRowsForTrack(spans: StudioNoteSpan[]): {
   return { isDrum: false, rowHeight: PR_ROW_HEIGHT, keyColWidth: 56, rows, midiToRowIndex };
 }
 
+function formatNoteDisplayLabel(noteName: string, velMidi: number, widthPx: number, velMode: boolean): string {
+  if (velMode) {
+    if (widthPx >= 48) return `${noteName} · ${velMidi}`;
+    return String(velMidi);
+  }
+  return widthPx >= 28 ? noteName : "";
+}
+
 export function renderPianoRollHtml(): string {
   const tr = studioEngine.getTransportSnapshot();
   const track = studioEngine.getFocusedTrack();
@@ -204,22 +339,17 @@ export function renderPianoRollHtml(): string {
   const { rowHeight, keyColWidth, rows, midiToRowIndex } = buildRowsForTrack(spans);
   const rowCount = rows.length;
   const gridHeight = rowCount * rowHeight;
-  const gridWidth = Math.max(480, totalTicks / STUDIO_TICKS_PER_BAR * barWidthPx());
-  const bpx = gridWidth / totalTicks * STUDIO_TICKS_PER_BAR;
-  const playheadPct = Math.max(0, Math.min(100, (tr.currentTick - (region?.startTick ?? 0)) / totalTicks * 100));
+  const gridWidth = Math.max(480, (totalTicks / STUDIO_TICKS_PER_BAR) * barWidthPx());
+  const bpx = (gridWidth / totalTicks) * STUDIO_TICKS_PER_BAR;
+  const playheadPct = Math.max(0, Math.min(100, ((tr.currentTick - (region?.startTick ?? 0)) / totalTicks) * 100));
 
-  let selVelText = "—";
-  if (state.selectedIndices.size > 0) {
-    let sum = 0;
-    let count = 0;
-    state.selectedIndices.forEach((idx) => {
-      if (spans[idx]) {
-        sum += spans[idx].velocity;
-        count++;
-      }
-    });
-    if (count > 0) selVelText = String(Math.round((sum / count) * 127));
-  }
+  const velSum = velocitySummary(spans, state.selectedIndices);
+  const velInputTitle =
+    velSum.count > 1 && velSum.min !== velSum.max
+      ? `Selected velocity range ${velSum.min}–${velSum.max} (average ${velSum.avg}; editing shifts notes relatively)`
+      : velSum.count > 0
+        ? `Selected note velocity (1–127)`
+        : `New note velocity (1–127)`;
 
   // Ruler bar labels
   let rulerMarks = "";
@@ -268,22 +398,26 @@ export function renderPianoRollHtml(): string {
     const widthPx = Math.max(10, ((s.endTick - s.startTick) / totalTicks) * gridWidth);
     const topPx = rowIdx * rowHeight + 2;
     const sel = state.selectedIndices.has(i);
-    const velPct = Math.round(Math.max(0.05, Math.min(1, s.velocity)) * 100);
-    const velOpacity = (0.45 + 0.55 * s.velocity).toFixed(2);
+    const velMidi = velocityToMidi(s.velocity);
+    const velPct = velMidiToLanePct(velMidi).toFixed(2);
+    const velOpacity = velMidiToOpacity(velMidi);
     const noteName = isDrum
       ? (() => {
           const dv = drumVoiceForNote(s.midi);
           return dv && drumLabels ? drumLabels[dv] : midiNoteLabel(s.midi);
         })()
       : midiNoteLabel(s.midi);
-    const lbl = widthPx >= 28 ? noteName : "";
+    const lbl = formatNoteDisplayLabel(noteName, velMidi, widthPx, state.velMode);
+    const noteTitle = state.velMode
+      ? `${noteName} · Vel ${velMidi} (drag up/down to adjust velocity)`
+      : `${noteName} · Vel ${velMidi} (drag to move, right edge to resize, dbl-click or Del to remove)`;
 
-    notesHtml += `<div class="st-pr-note${sel ? " is-selected" : ""}${isDrum ? " is-drum" : ""}" data-pr-note-idx="${i}" data-pr-midi="${s.midi}" data-pr-row="${rowIdx}" style="left:${leftPx.toFixed(1)}px;width:${widthPx.toFixed(1)}px;top:${topPx}px;height:${rowHeight - 4}px;--vel-op:${velOpacity}" title="${escapeHtml(noteName)} · Vel ${Math.round(s.velocity * 127)} (drag to move, right edge to resize, dbl-click or Del to remove)">
+    notesHtml += `<div class="st-pr-note${sel ? " is-selected" : ""}${isDrum ? " is-drum" : ""}" data-pr-note-idx="${i}" data-pr-midi="${s.midi}" data-pr-name="${escapeHtml(noteName)}" data-pr-vel-midi="${velMidi}" data-pr-row="${rowIdx}" style="left:${leftPx.toFixed(1)}px;width:${widthPx.toFixed(1)}px;top:${topPx}px;height:${rowHeight - 4}px;--vel-op:${velOpacity};--vel-pct:${velPct}%" title="${escapeHtml(noteTitle)}">
       <span class="st-pr-note-lbl">${escapeHtml(lbl)}</span>
       <span class="st-pr-note-resize" data-pr-resize="${i}" title="Resize note duration"></span>
     </div>`;
 
-    velBarsHtml += `<div class="st-pr-vel-stem${sel ? " is-selected" : ""}" data-pr-vel-idx="${i}" style="left:${leftPx.toFixed(1)}px;height:${velPct}%" title="Velocity ${Math.round(s.velocity * 127)} (drag up/down)">
+    velBarsHtml += `<div class="st-pr-vel-stem${sel ? " is-selected" : ""}" data-pr-vel-idx="${i}" data-pr-vel-midi="${velMidi}" style="left:${leftPx.toFixed(1)}px;height:${velPct}%" title="Velocity ${velMidi} (drag up/down)">
       <span class="st-pr-vel-head"></span>
     </div>`;
   }
@@ -294,13 +428,21 @@ export function renderPianoRollHtml(): string {
   const rowMidiAttr = rows.map((r) => r.midi).join(",");
 
   return `
-    <div class="st-pr${isDrum ? " is-drum-mode" : ""}" id="st-piano-roll" data-pr-mode="${isDrum ? "drums" : "synth"}" data-pr-rows="${rowMidiAttr}" data-pr-row-h="${rowHeight}" data-pr-width="${gridWidth}" data-pr-total-ticks="${totalTicks}"${region ? ` data-pr-origin="${region.startTick}"` : ""}>
+    <div class="st-pr${isDrum ? " is-drum-mode" : ""}${state.velMode ? " is-vel-mode" : ""}" id="st-piano-roll" data-pr-mode="${isDrum ? "drums" : "synth"}" data-pr-vel-mode="${state.velMode ? "1" : "0"}" data-pr-rows="${rowMidiAttr}" data-pr-row-h="${rowHeight}" data-pr-width="${gridWidth}" data-pr-total-ticks="${totalTicks}"${region ? ` data-pr-origin="${region.startTick}"` : ""}>
       <div class="st-pr-toolbar">
         <div class="st-pr-tb-group">
           <span class="st-pr-track-badge">${escapeHtml(mDef.name)}${region ? (region.loop ? " · Loop source" : " · Region") : ""}</span>
           <span class="st-pr-meta">${spans.length} ${isDrum ? (spans.length === 1 ? "hit" : "hits") : spans.length === 1 ? "note" : "notes"}${state.selectedIndices.size > 0 ? ` · ${state.selectedIndices.size} sel` : ""}</span>
         </div>
         <div class="st-pr-tb-group">
+          <button type="button" class="st-btn st-pr-btn st-pr-vel-mode-btn${state.velMode ? " is-active" : ""}" id="st-pr-vel-mode" data-pr-action="toggle-vel-mode" aria-pressed="${state.velMode}" title="Velocity mode — drag up/down directly on notes to adjust velocity (1–127) without changing pitch or timing">Velocity</button>
+          <div class="st-pr-vel-ctrl" role="group" aria-label="Note velocity">
+            <label class="st-pr-vel-tag" for="st-pr-vel-input">Vel</label>
+            <button type="button" class="st-btn st-pr-btn st-pr-vel-step" id="st-pr-vel-dec" data-pr-action="vel-dec" aria-label="Decrease velocity" title="Decrease velocity (−1, Shift −5)">−</button>
+            <input type="number" class="st-pr-vel-input" id="st-pr-vel-input" min="${MIN_MIDI_VELOCITY}" max="${MAX_MIDI_VELOCITY}" step="1" inputmode="numeric" value="${velSum.avg}" aria-label="Note velocity (1 to 127)" title="${escapeHtml(velInputTitle)}" />
+            <button type="button" class="st-btn st-pr-btn st-pr-vel-step" id="st-pr-vel-inc" data-pr-action="vel-inc" aria-label="Increase velocity" title="Increase velocity (+1, Shift +5)">+</button>
+            <span class="st-pr-meta st-pr-vel-readout" id="st-pr-vel-readout">${velSum.count > 0 ? escapeHtml(velSum.text) : "—"}</span>
+          </div>
           <label class="st-pr-field">
             <span>Snap</span>
             <select class="st-select st-pr-select" id="st-pr-snap" aria-label="Piano roll snap grid">
@@ -312,7 +454,6 @@ export function renderPianoRollHtml(): string {
           <button type="button" class="st-btn st-pr-btn${state.audition ? " is-active" : ""}" id="st-pr-audition" data-pr-action="toggle-audition" aria-pressed="${state.audition}" title="Audition notes while editing">Audition</button>
         </div>
         <div class="st-pr-tb-group">
-          <span class="st-pr-meta" id="st-pr-vel-readout">Vel ${selVelText}</span>
           <button type="button" class="st-btn st-pr-btn" data-pr-action="zoom-out" aria-label="Zoom out piano roll">−</button>
           <span class="st-pr-zoom-lbl">${Math.round(state.zoom * 100)}%</span>
           <button type="button" class="st-btn st-pr-btn" data-pr-action="zoom-in" aria-label="Zoom in piano roll">+</button>
@@ -342,10 +483,10 @@ export function renderPianoRollHtml(): string {
           </div>
         </div>
 
-        <div class="st-pr-vel-bar">
-          <div class="st-pr-vel-lbl">VEL</div>
+        <div class="st-pr-vel-bar${state.velMode ? " is-vel-mode" : ""}">
+          <div class="st-pr-vel-lbl">VEL<span class="st-pr-vel-scale">127<br>1</span></div>
           <div class="st-pr-vel-scroll" id="st-pr-vel-scroll">
-            <div class="st-pr-vel-lane" id="st-pr-vel-lane" style="width:${gridWidth}px">
+            <div class="st-pr-vel-lane" id="st-pr-vel-lane" style="width:${gridWidth}px" aria-label="Velocity lane (1 to 127)">
               <div class="st-pr-vel-midline"></div>
               ${velBarsHtml}
             </div>
@@ -407,13 +548,16 @@ function previewNote(midi: number, velocity = 0.82, durationMs = 220): void {
 export function bindPianoRollEvents(container: HTMLElement, requestRender: () => void, onError: (message: string) => void): void {
   let heldAuditionKey: { midi: number; pointerId: number; el: HTMLElement } | null = null;
   let noteDrag: {
-    mode: "move" | "resize";
+    mode: "move" | "resize" | "velocity";
     index: number;
     pointerId: number;
     startClientX: number;
     startClientY: number;
     origSpans: StudioNoteSpan[];
+    workingSpans: StudioNoteSpan[];
     selectedList: number[];
+    selectedSet: Set<number>;
+    origMidis: Map<number, number>;
     gridWidth: number;
     totalTicks: number;
     rowMidis: number[];
@@ -421,6 +565,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     origRowIndices: Map<number, number>;
     moved: boolean;
     lastAuditionMidi: number;
+    lastDeltaMidi: number;
     el: HTMLElement;
   } | null = null;
   let velDrag: {
@@ -428,12 +573,21 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     pointerId: number;
     laneEl: HTMLElement;
     origSpans: StudioNoteSpan[];
+    workingSpans: StudioNoteSpan[];
+    selectedSet: Set<number>;
+    origMidis: Map<number, number>;
+    anchorOrigMidi: number;
+    changed: boolean;
   } | null = null;
 
   const commitSpans = (spans: StudioNoteSpan[]) => {
     const track = studioEngine.getFocusedTrack();
-    try { studioEngine.replaceTrackNotes(track.id, spans); }
-    catch (error) { onError(error instanceof Error ? error.message : String(error)); requestRender(); }
+    try {
+      studioEngine.replaceTrackNotes(track.id, spans);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+      requestRender();
+    }
   };
 
   const deleteSelectedNotes = () => {
@@ -443,6 +597,120 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     const remaining = spans.filter((_, idx) => !state.selectedIndices.has(idx));
     state.selectedIndices.clear();
     commitSpans(remaining);
+  };
+
+  const syncVelocityDOM = (spans: readonly StudioNoteSpan[], selectedSet: ReadonlySet<number>) => {
+    const laneEl = container.querySelector<HTMLElement>("#st-pr-vel-lane");
+    const notesRoot = container.querySelector<HTMLElement>("#st-pr-notes");
+    selectedSet.forEach((i) => {
+      const span = spans[i];
+      if (!span) return;
+      const velMidi = velocityToMidi(span.velocity);
+      const pct = `${velMidiToLanePct(velMidi).toFixed(2)}%`;
+      const op = velMidiToOpacity(velMidi);
+      if (laneEl) {
+        const stem = laneEl.querySelector<HTMLElement>(`[data-pr-vel-idx="${i}"]`);
+        if (stem) {
+          stem.style.height = pct;
+          stem.dataset.prVelMidi = String(velMidi);
+          stem.title = `Velocity ${velMidi} (drag up/down)`;
+        }
+      }
+      if (notesRoot) {
+        const noteEl = notesRoot.querySelector<HTMLElement>(`[data-pr-note-idx="${i}"]`);
+        if (noteEl) {
+          noteEl.style.setProperty("--vel-op", op);
+          noteEl.style.setProperty("--vel-pct", pct);
+          noteEl.dataset.prVelMidi = String(velMidi);
+          const name = noteEl.dataset.prName || midiNoteLabel(span.midi);
+          noteEl.title = state.velMode
+            ? `${name} · Vel ${velMidi} (drag up/down to adjust velocity)`
+            : `${name} · Vel ${velMidi} (drag to move, right edge to resize, dbl-click or Del to remove)`;
+          if (state.velMode) {
+            const lblEl = noteEl.querySelector<HTMLElement>(".st-pr-note-lbl");
+            if (lblEl) {
+              const w = noteEl.offsetWidth || parseFloat(noteEl.style.width) || 0;
+              lblEl.textContent = formatNoteDisplayLabel(name, velMidi, w, true);
+            }
+          }
+        }
+      }
+    });
+    const summary = velocitySummary(spans, selectedSet);
+    const inputEl = container.querySelector<HTMLInputElement>("#st-pr-vel-input");
+    if (inputEl && document.activeElement !== inputEl) {
+      inputEl.value = String(summary.avg);
+    }
+    const readout = container.querySelector<HTMLElement>("#st-pr-vel-readout");
+    if (readout) {
+      readout.textContent = summary.count > 0 ? summary.text : "—";
+    }
+  };
+
+  const commitNumericVelocityInput = (rawValue: string) => {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+      requestRender();
+      return;
+    }
+    const clamped = clampMidiVelocity(parsed);
+    const track = studioEngine.getFocusedTrack();
+    const spans = editorNotes(track.id);
+    if (state.selectedIndices.size === 0) {
+      state.defaultVelocityMidi = clamped;
+      requestRender();
+      return;
+    }
+    const next = applyNumericVelocity(spans, state.selectedIndices, clamped);
+    const firstSel = Array.from(state.selectedIndices)[0];
+    if (firstSel !== undefined && next[firstSel]) {
+      previewNote(next[firstSel].midi, next[firstSel].velocity, 160);
+    }
+    commitSpans(next);
+  };
+
+  const nudgeSelectedVelocity = (deltaMidi: number) => {
+    const track = studioEngine.getFocusedTrack();
+    const spans = editorNotes(track.id);
+    if (state.selectedIndices.size === 0) {
+      state.defaultVelocityMidi = clampMidiVelocity(state.defaultVelocityMidi + deltaMidi);
+      requestRender();
+      return;
+    }
+    const origMidis = new Map<number, number>();
+    state.selectedIndices.forEach((idx) => {
+      if (spans[idx]) origMidis.set(idx, velocityToMidi(spans[idx].velocity));
+    });
+    if (origMidis.size === 0) return;
+    const next = applyRelativeVelocityDelta(spans, state.selectedIndices, origMidis, deltaMidi);
+    const firstSel = Array.from(state.selectedIndices)[0];
+    if (firstSel !== undefined && next[firstSel]) {
+      previewNote(next[firstSel].midi, next[firstSel].velocity, 160);
+    }
+    commitSpans(next);
+  };
+
+  const findNearestVelocityStemIndex = (laneEl: HTMLElement, clientX: number, maxDistPx = 24): number => {
+    const stems = laneEl.querySelectorAll<HTMLElement>("[data-pr-vel-idx]");
+    let bestIdx = -1;
+    let bestDist = maxDistPx;
+    let bestSelected = false;
+    stems.forEach((stem) => {
+      const idx = Number(stem.getAttribute("data-pr-vel-idx"));
+      if (!Number.isFinite(idx)) return;
+      const r = stem.getBoundingClientRect();
+      const cx = r.left + r.width * 0.5;
+      const dist = Math.abs(clientX - cx);
+      const isSel = state.selectedIndices.has(idx);
+      if (dist <= bestDist) {
+        if (dist < bestDist - 1.5 || (Math.abs(dist - bestDist) <= 1.5 && isSel && !bestSelected)) {
+          bestDist = dist;
+          bestIdx = idx;
+          bestSelected = isSel;
+        }
+      }
+    });
+    return bestIdx;
   };
 
   // Sync horizontal scroll between Piano Roll grid and Velocity lane
@@ -470,10 +738,31 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
   );
 
   container.addEventListener("change", (e) => {
-    const el = e.target as HTMLSelectElement | null;
-    if (!el || el.id !== "st-pr-snap") return;
-    setPianoRollSnap(Number(el.value));
-    requestRender();
+    const el = e.target as HTMLInputElement | HTMLSelectElement | null;
+    if (!el) return;
+    if (el.id === "st-pr-snap") {
+      setPianoRollSnap(Number(el.value));
+      requestRender();
+      return;
+    }
+    if (el.id === "st-pr-vel-input") {
+      commitNumericVelocityInput(el.value);
+    }
+  });
+
+  container.addEventListener("keydown", (e) => {
+    const target = e.target as HTMLInputElement | null;
+    if (!target || target.id !== "st-pr-vel-input") return;
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitNumericVelocityInput(target.value);
+      target.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      target.blur();
+      requestRender();
+    }
   });
 
   container.addEventListener("click", (e) => {
@@ -484,12 +773,26 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     if (btn) {
       const action = btn.getAttribute("data-pr-action");
       switch (action) {
+        case "toggle-vel-mode":
+          state.velMode = !state.velMode;
+          requestRender();
+          break;
+        case "vel-dec":
+          nudgeSelectedVelocity(e.shiftKey ? -5 : -1);
+          break;
+        case "vel-inc":
+          nudgeSelectedVelocity(e.shiftKey ? 5 : 1);
+          break;
         case "quantize": {
           const grid = state.snapTicks > 0 ? state.snapTicks : 120;
           const track = studioEngine.getFocusedTrack();
           const sel = state.selectedIndices.size > 0 ? Array.from(state.selectedIndices) : undefined;
-          try { studioEngine.quantizeTrackNotes(track.id, grid, sel); }
-          catch (error) { onError(error instanceof Error ? error.message : String(error)); requestRender(); }
+          try {
+            studioEngine.quantizeTrackNotes(track.id, grid, sel);
+          } catch (error) {
+            onError(error instanceof Error ? error.message : String(error));
+            requestRender();
+          }
           break;
         }
         case "delete-selected":
@@ -511,10 +814,17 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       return;
     }
 
-    // Clicking empty Piano Roll / Drum Grid creates a new snapped MIDI note
+    // Clicking empty Piano Roll / Drum Grid creates a new snapped MIDI note (in Velocity Mode, clears selection instead)
     const grid = target.closest<HTMLElement>("#st-pr-grid");
     if (grid && !target.closest(".st-pr-note")) {
       grid.focus({ preventScroll: true });
+      if (state.velMode) {
+        if (state.selectedIndices.size > 0) {
+          state.selectedIndices.clear();
+          requestRender();
+        }
+        return;
+      }
       const prRoot = container.querySelector<HTMLElement>("#st-piano-roll");
       if (!prRoot) return;
       const rect = grid.getBoundingClientRect();
@@ -537,19 +847,21 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const track = studioEngine.getFocusedTrack();
       const spans = editorNotes(track.id);
       const endTick = Math.min(totalTicks, Math.max(startTick + 30, startTick + dur));
-      spans.push({ midi, startTick, endTick, velocity: 0.85 });
+      const vel = midiToVelocity(state.defaultVelocityMidi);
+      spans.push({ midi, startTick, endTick, velocity: vel });
       spans.sort((a, b) => a.startTick - b.startTick || a.midi - b.midi);
       const newIdx = spans.findIndex((s) => s.midi === midi && s.startTick === startTick && s.endTick === endTick);
       state.selectedIndices.clear();
       if (newIdx >= 0) state.selectedIndices.add(newIdx);
 
-      previewNote(midi, 0.85, 220);
+      previewNote(midi, vel, 220);
       commitSpans(spans);
     }
   });
 
-  // Double-click a note to delete it quickly
+  // Double-click a note to delete it quickly (disabled in Velocity Mode so touch taps never delete notes)
   container.addEventListener("dblclick", (e) => {
+    if (state.velMode) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
     const noteEl = target.closest<HTMLElement>(".st-pr-note");
@@ -580,7 +892,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     commitSpans(spans);
   });
 
-  // Pointerdown: piano/drum key audition, note move/resize, velocity bar drag
+  // Pointerdown: piano/drum key audition, velocity lane drag, note move/resize/velocity drag
   container.addEventListener("pointerdown", (e) => {
     if (e.button === 2) return;
     const target = e.target as HTMLElement | null;
@@ -599,26 +911,56 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       return;
     }
 
-    if (target.closest(".st-pr-note, [data-pr-vel-idx]"))
+    if (target.closest(".st-pr-note, [data-pr-vel-idx], #st-pr-vel-lane")) {
       container.querySelector<HTMLElement>("#st-pr-grid")?.focus({ preventScroll: true });
+    }
+
     const velStem = target.closest<HTMLElement>("[data-pr-vel-idx]");
-    if (velStem) {
+    const velLaneHit = velStem ? container.querySelector<HTMLElement>("#st-pr-vel-lane") : target.closest<HTMLElement>("#st-pr-vel-lane");
+    if (velLaneHit) {
+      const idx = velStem
+        ? Number(velStem.getAttribute("data-pr-vel-idx"))
+        : findNearestVelocityStemIndex(velLaneHit, e.clientX, 24);
+      if (!Number.isFinite(idx) || idx < 0) return;
       e.preventDefault();
-      const idx = Number(velStem.getAttribute("data-pr-vel-idx"));
-      const laneEl = container.querySelector<HTMLElement>("#st-pr-vel-lane");
-      if (!laneEl || !Number.isFinite(idx)) return;
       const track = studioEngine.getFocusedTrack();
       const origSpans = editorNotes(track.id);
-      if (idx < 0 || idx >= origSpans.length) return;
-      state.selectedIndices.clear();
-      state.selectedIndices.add(idx);
-      velDrag = { index: idx, pointerId: e.pointerId, laneEl, origSpans };
-      try { velStem.setPointerCapture(e.pointerId); } catch (err) {}
-      updateVelocityFromPointer(e.clientY);
+      if (idx >= origSpans.length) return;
+
+      if (e.shiftKey) {
+        if (state.selectedIndices.has(idx)) state.selectedIndices.delete(idx);
+        else state.selectedIndices.add(idx);
+      } else if (!state.selectedIndices.has(idx)) {
+        state.selectedIndices.clear();
+        state.selectedIndices.add(idx);
+      }
+
+      const selectedSet = new Set<number>(state.selectedIndices.size > 0 ? state.selectedIndices : [idx]);
+      selectedSet.add(idx);
+      const origMidis = new Map<number, number>();
+      selectedSet.forEach((si) => {
+        if (origSpans[si]) origMidis.set(si, velocityToMidi(origSpans[si].velocity));
+      });
+      const anchorOrigMidi = origMidis.get(idx) ?? velocityToMidi(origSpans[idx].velocity);
+
+      velDrag = {
+        index: idx,
+        pointerId: e.pointerId,
+        laneEl: velLaneHit,
+        origSpans,
+        workingSpans: origSpans.map((s) => ({ ...s })),
+        selectedSet,
+        origMidis,
+        anchorOrigMidi,
+        changed: false
+      };
+      const captureTarget = velStem || velLaneHit;
+      try { captureTarget.setPointerCapture(e.pointerId); } catch (err) {}
+      updateVelocityFromLanePointer(e.clientY);
       return;
     }
 
-    const resizeEl = target.closest<HTMLElement>("[data-pr-resize]");
+    const resizeEl = state.velMode ? null : target.closest<HTMLElement>("[data-pr-resize]");
     const noteEl = target.closest<HTMLElement>(".st-pr-note");
     if (noteEl) {
       e.preventDefault();
@@ -642,22 +984,28 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       }
 
       const selectedList = state.selectedIndices.size > 0 ? Array.from(state.selectedIndices) : [idx];
+      const selectedSet = new Set<number>(selectedList);
       const origRowIndices = new Map<number, number>();
+      const origMidis = new Map<number, number>();
       for (const si of selectedList) {
         const s = origSpans[si];
         if (!s) continue;
         const rIdx = rowMidis.indexOf(s.midi);
         if (rIdx >= 0) origRowIndices.set(si, rIdx);
+        origMidis.set(si, velocityToMidi(s.velocity));
       }
 
       noteDrag = {
-        mode: resizeEl ? "resize" : "move",
+        mode: state.velMode ? "velocity" : resizeEl ? "resize" : "move",
         index: idx,
         pointerId: e.pointerId,
         startClientX: e.clientX,
         startClientY: e.clientY,
         origSpans,
+        workingSpans: origSpans.map((s) => ({ ...s })),
         selectedList,
+        selectedSet,
+        origMidis,
         gridWidth: Number(prRoot.dataset.prWidth || 640),
         totalTicks,
         rowMidis,
@@ -665,6 +1013,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
         origRowIndices,
         moved: false,
         lastAuditionMidi: origSpans[idx].midi,
+        lastDeltaMidi: 0,
         el: noteEl
       };
       noteEl.classList.add("is-dragging");
@@ -673,23 +1022,26 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     }
   });
 
-  const updateVelocityFromPointer = (clientY: number) => {
+  const updateVelocityFromLanePointer = (clientY: number) => {
     if (!velDrag) return;
     const rect = velDrag.laneEl.getBoundingClientRect();
     if (rect.height <= 0) return;
-    const ratio = 1 - (clientY - rect.top) / rect.height;
-    const vel = Math.max(0.05, Math.min(1, ratio));
-    velDrag.origSpans[velDrag.index].velocity = vel;
-    const stem = velDrag.laneEl.querySelector<HTMLElement>(`[data-pr-vel-idx="${velDrag.index}"]`);
-    if (stem) stem.style.height = `${Math.round(vel * 100)}%`;
-    const readout = container.querySelector<HTMLElement>("#st-pr-vel-readout");
-    if (readout) readout.textContent = `Vel ${Math.round(vel * 127)}`;
+    const targetMidi = clientYToMidiVelocity(clientY, rect);
+    const deltaMidi = targetMidi - velDrag.anchorOrigMidi;
+    velDrag.workingSpans = applyRelativeVelocityDelta(
+      velDrag.origSpans,
+      velDrag.selectedSet,
+      velDrag.origMidis,
+      deltaMidi
+    );
+    velDrag.changed = true;
+    syncVelocityDOM(velDrag.workingSpans, velDrag.selectedSet);
   };
 
   container.addEventListener("pointermove", (e) => {
     if (velDrag && e.pointerId === velDrag.pointerId) {
       e.preventDefault();
-      updateVelocityFromPointer(e.clientY);
+      updateVelocityFromLanePointer(e.clientY);
       return;
     }
     if (!noteDrag || e.pointerId !== noteDrag.pointerId) return;
@@ -699,6 +1051,22 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     const dy = e.clientY - noteDrag.startClientY;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) noteDrag.moved = true;
     if (!noteDrag.moved) return;
+
+    if (noteDrag.mode === "velocity") {
+      const pxPerStep = e.shiftKey ? 4 : 1.5;
+      const deltaMidi = Math.round(-dy / pxPerStep);
+      if (deltaMidi !== noteDrag.lastDeltaMidi) {
+        noteDrag.lastDeltaMidi = deltaMidi;
+        noteDrag.workingSpans = applyRelativeVelocityDelta(
+          noteDrag.origSpans,
+          noteDrag.selectedSet,
+          noteDrag.origMidis,
+          deltaMidi
+        );
+        syncVelocityDOM(noteDrag.workingSpans, noteDrag.selectedSet);
+      }
+      return;
+    }
 
     const deltaTicksRaw = (dx / noteDrag.gridWidth) * noteDrag.totalTicks;
     const snap = state.snapTicks > 0 ? state.snapTicks : 15;
@@ -740,8 +1108,11 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     }
 
     if (velDrag && (!e || e.pointerId === velDrag.pointerId)) {
-      const updated = velDrag.origSpans.map((s) => ({ ...s }));
+      const drag = velDrag;
       velDrag = null;
+      const updated = drag.workingSpans.map((s) => ({ ...s }));
+      const anchor = updated[drag.index];
+      if (anchor) previewNote(anchor.midi, anchor.velocity, 160);
       commitSpans(updated);
     }
 
@@ -749,6 +1120,18 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const drag = noteDrag;
       noteDrag = null;
       drag.el.classList.remove("is-dragging");
+
+      if (drag.mode === "velocity") {
+        if (!drag.moved || drag.lastDeltaMidi === 0) {
+          requestRender();
+          return;
+        }
+        const updated = drag.workingSpans.map((s) => ({ ...s }));
+        const anchor = updated[drag.index];
+        if (anchor) previewNote(anchor.midi, anchor.velocity, 160);
+        commitSpans(updated);
+        return;
+      }
 
       if (!drag.moved) {
         requestRender();

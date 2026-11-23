@@ -971,7 +971,7 @@ function renderStudioHtml(): string {
                 <button type="button" class="st-dock-tab${activeDockTab === "instrument" && !dockCollapsed ? " is-active" : ""}" id="st-tab-instrument" role="tab" aria-selected="${activeDockTab === "instrument" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="instrument">Instrument</button>
               </div>
               <div class="st-dock-focused">
-                <span class="st-dock-track-name">${escapeHtml(focusedMachine.name)}</span>
+                <span class="st-dock-track-name">${escapeHtml(focused.name)} · ${escapeHtml(focusedMachine.name)}</span>
                 <span class="st-dock-track-sub">${escapeHtml(focused.presetName)}</span>
               </div>
               <div class="st-dock-actions">
@@ -1262,6 +1262,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   // Coalesce rapid state updates into a single microtask render
   let renderQueued = false;
   let draggingKnobParam: string | null = null;
+  let draggingKnobTrackId: string | null = null;
   let draggingRange: { trackId: string; type: string } | null = null;
   let pendingAutosaveAfterDrag = false;
   let wasRecordingUi = false;
@@ -1287,8 +1288,21 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     for (let i = 0; i < tracks.length; i++) {
       const t = tracks[i];
       const regs = t.getRegions(tr.totalTicks);
+      let evHash = 0;
+      for (let j = 0; j < t.events.length; j++) {
+        const ev = t.events[j];
+        const code =
+          ev.type === "noteOn"
+            ? (ev.midi << 8) ^ Math.round(ev.velocity * 127)
+            : ev.type === "noteOff"
+              ? ev.midi ^ 0x1000
+              : ev.type === "cc"
+                ? (ev.cc << 8) ^ Math.round(ev.value) ^ 0x2000
+                : Math.round((ev.value + 1) * 1000) ^ 0x3000;
+        evHash = ((evHash * 31) ^ (ev.tick + code)) | 0;
+      }
       parts.push(
-        `${t.id}:${t.name}:${t.machineId}:${t.presetId}:${t.volume.toFixed(3)}:${t.pan.toFixed(3)}:${t.mute ? 1 : 0}:${t.solo ? 1 : 0}:${t.midiChannel}:${t.events.length}:${regs.length}:${JSON.stringify(t.patch)}:${regs.map((r) => `${r.id}@${r.startTick}:${r.length}:${r.offset}:${r.loop ? 1 : 0}:${r.events.length}`).join(",")}`
+        `${t.id}:${t.name}:${t.machineId}:${t.presetId}:${t.volume.toFixed(3)}:${t.pan.toFixed(3)}:${t.mute ? 1 : 0}:${t.solo ? 1 : 0}:${t.midiChannel}:${t.events.length}:${evHash}:${regs.length}:${JSON.stringify(t.patch)}:${regs.map((r) => `${r.id}@${r.startTick}:${r.length}:${r.offset}:${r.loop ? 1 : 0}:${r.events.length}`).join(",")}`
       );
     }
     return parts.join("|");
@@ -1408,8 +1422,9 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
     if (container.hidden) return;
     if (draggingKnobParam) {
+      const dragTrack = (draggingKnobTrackId ? studioEngine.getTrack(draggingKnobTrackId) : null) || studioEngine.getFocusedTrack();
       markProjectDirty();
-      updateStudioInstrumentKnobDOM(container, studioEngine.getFocusedTrack(), draggingKnobParam);
+      updateStudioInstrumentKnobDOM(container, dragTrack, draggingKnobParam);
       return;
     }
     if (draggingRange) {
@@ -1536,24 +1551,10 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           studioEngine.addTrack();
           break;
         case "focus-track":
-          if (trackId) {
-            studioEngine.setFocusedTrack(trackId);
-            // GarageBand workflow: selecting a track arms it cleanly when not recording (unless multi-channel MIDI routing is active)
-            if (!studioEngine.getTransportSnapshot().recording) {
-              const allTracks = studioEngine.getTracks();
-              const hasExplicitChannels = allTracks.some((t) => t.midiChannel > 0);
-              if (!hasExplicitChannels) {
-                for (const t of allTracks) {
-                  if (t.armed !== (t.id === trackId)) {
-                    studioEngine.setTrackArmed(t.id, t.id === trackId);
-                  }
-                }
-              }
-            }
-          }
+          if (trackId) focusTrackSelection(trackId);
           break;
         case "open-track-instrument":
-          if (trackId) studioEngine.setFocusedTrack(trackId);
+          if (trackId) focusTrackSelection(trackId);
           activeDockTab = "instrument";
           dockCollapsed = false;
           renderStudioPanel();
@@ -1679,7 +1680,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         }
         case "inst-preset-prev":
         case "inst-preset-next": {
-          const ft = studioEngine.getFocusedTrack();
+          const ft = resolveInstrumentTrack(btn);
           const m = getStudioMachineDef(ft.machineId);
           const idx = m.presets.findIndex((p) => p.id === ft.presetId);
           const dir = action === "inst-preset-next" ? 1 : -1;
@@ -1727,16 +1728,16 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         }
         case "drum-select-voice": {
           const dv = btn.getAttribute("data-st-drum-voice") as DrumVoice | null;
-          const tid = trackId || studioEngine.getFocusedTrack().id;
+          const ft = resolveInstrumentTrack(btn);
           if (dv && DRUM_NOTES[dv] !== undefined) {
-            setStudioSelectedDrumVoice(tid, dv);
+            setStudioSelectedDrumVoice(ft.id, dv);
             renderStudioPanel();
           }
           break;
         }
         case "drum-audition": {
           const dv = btn.getAttribute("data-st-drum-voice") as DrumVoice | null;
-          const ft = trackId ? studioEngine.getTrack(trackId) || studioEngine.getFocusedTrack() : studioEngine.getFocusedTrack();
+          const ft = resolveInstrumentTrack(btn);
           if (dv && DRUM_NOTES[dv] !== undefined) {
             setStudioSelectedDrumVoice(ft.id, dv);
             studioEngine.prepareAudioSync();
@@ -1747,7 +1748,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         }
         case "drum-pick-kit": {
           const kid = btn.getAttribute("data-st-kit") || "";
-          const ft = trackId ? studioEngine.getTrack(trackId) || studioEngine.getFocusedTrack() : studioEngine.getFocusedTrack();
+          const ft = resolveInstrumentTrack(btn);
           if (kid) {
             studioEngine.prepareAudioSync();
             studioEngine.setTrackMachinePreset(ft.id, ft.machineId, `kit:${kid}`);
@@ -1760,7 +1761,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           const val = btn.getAttribute("data-st-value");
           if (param && val !== null) {
             studioEngine.prepareAudioSync();
-            studioEngine.getFocusedTrack().setParam(param, val);
+            resolveInstrumentTrack(btn).setParam(param, val);
           }
           break;
         }
@@ -1770,7 +1771,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           const off = btn.getAttribute("data-st-off") || "off";
           if (param) {
             studioEngine.prepareAudioSync();
-            const ft = studioEngine.getFocusedTrack();
+            const ft = resolveInstrumentTrack(btn);
             ft.setParam(param, String(ft.patch[param]) === on ? off : on);
           }
           break;
@@ -2229,11 +2230,27 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       return;
     }
 
+    // Clicking anywhere in a track header (outside native selects/inputs/buttons) focuses that track
+    if (!target.closest("select, input, button")) {
+      const trackRow = target.closest<HTMLElement>(".st-track[data-track-id]");
+      if (trackRow && target.closest(".st-track-ctl")) {
+        const tid = trackRow.getAttribute("data-track-id");
+        if (tid) focusTrackSelection(tid);
+        return;
+      }
+      const mixStrip = target.closest<HTMLElement>(".st-mix-strip[data-mix-track]");
+      if (mixStrip) {
+        const tid = mixStrip.getAttribute("data-mix-track");
+        if (tid) focusTrackSelection(tid);
+        return;
+      }
+    }
+
     // Clicking a timeline lane focuses that track and seeks
     const lane = target.closest<HTMLElement>("[data-st-lane]");
     if (lane) {
       const tid = lane.getAttribute("data-track-id");
-      if (tid) studioEngine.setFocusedTrack(tid);
+      if (tid) focusTrackSelection(tid);
       seekFromPointer(lane, e.clientX);
       return;
     }
@@ -2289,7 +2306,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     const instSelectParam = el.getAttribute("data-st-param-select");
     if (instSelectParam) {
       studioEngine.prepareAudioSync();
-      studioEngine.getFocusedTrack().setParam(instSelectParam, el.value);
+      resolveInstrumentTrack(el).setParam(instSelectParam, el.value);
       return;
     }
     const rangeType = el.getAttribute("data-st-range");
@@ -2307,12 +2324,14 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     const selType = el.getAttribute("data-st-select");
     const trackId = el.getAttribute("data-track-id") || "";
     if (selType === "machine" && trackId) {
+      focusTrackSelection(trackId);
+      instPageFilter = "all";
       studioEngine.prepareAudioSync();
       studioEngine.setTrackMachine(trackId, el.value);
-      instPageFilter = "all";
       return;
     }
     if (selType === "preset" && trackId) {
+      focusTrackSelection(trackId);
       studioEngine.prepareAudioSync();
       if (el.value !== "custom") {
         const t = studioEngine.getTrack(trackId);
@@ -2361,6 +2380,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
 
   // ---- Pointer interactions: Dock resizer, Loop handles, Ruler scrub, Embedded Original Synth Knobs ----
   let knobDrag: {
+    trackId: string;
     key: string;
     startY: number;
     startX: number;
@@ -2385,18 +2405,60 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   } | null = null;
 
   let vecPadDrag: {
+    trackId: string;
     svg: SVGSVGElement;
     pointerId: number;
   } | null = null;
 
-  const updateVectorFromPointer = (svg: SVGSVGElement, clientX: number, clientY: number) => {
+  const resolveInstrumentTrack = (el: HTMLElement | SVGElement | null): SY1TrackEngine => {
+    const synthRoot = el?.closest<HTMLElement>(".st-embedded-synth[data-track-id]");
+    const tid = synthRoot?.getAttribute("data-track-id") || el?.getAttribute("data-track-id") || "";
+    return (tid ? studioEngine.getTrack(tid) : undefined) || studioEngine.getFocusedTrack();
+  };
+
+  const focusTrackSelection = (targetTrackId: string): void => {
+    if (!targetTrackId || !studioEngine.getTrack(targetTrackId)) return;
+    const prevId = studioEngine.getFocusedTrack().id;
+    if (prevId !== targetTrackId) {
+      instPageFilter = "all";
+      if (studioEngine.regions.selection().length > 0) {
+        const curRegion = studioEngine.regions.current(targetTrackId);
+        if (!curRegion) studioEngine.regions.clearSelection();
+      }
+      if (knobDrag) {
+        knobDrag.el.classList.remove("is-dragging");
+        knobDrag = null;
+      }
+      if (vecPadDrag) {
+        vecPadDrag = null;
+      }
+      draggingKnobParam = null;
+      draggingKnobTrackId = null;
+    }
+    studioEngine.setFocusedTrack(targetTrackId);
+    // GarageBand workflow: selecting a track arms it cleanly when not recording (unless multi-channel MIDI routing is active)
+    if (!studioEngine.getTransportSnapshot().recording) {
+      const allTracks = studioEngine.getTracks();
+      const hasExplicitChannels = allTracks.some((t) => t.midiChannel > 0);
+      if (!hasExplicitChannels) {
+        for (const t of allTracks) {
+          if (t.armed !== (t.id === targetTrackId)) {
+            studioEngine.setTrackArmed(t.id, t.id === targetTrackId);
+          }
+        }
+      }
+    }
+  };
+
+  const updateVectorFromPointer = (trackId: string, svg: SVGSVGElement, clientX: number, clientY: number) => {
     const rect = svg.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
     const ux = ((clientX - rect.left) / rect.width) * 200;
     const uy = ((clientY - rect.top) / rect.height) * 200;
     const nx = Math.max(0, Math.min(1, (ux - 12) / 176));
     const ny = Math.max(0, Math.min(1, (uy - 12) / 176));
-    const ft = studioEngine.getFocusedTrack();
+    const ft = studioEngine.getTrack(trackId);
+    if (!ft) return;
     ft.setParam("vecX", nx);
     ft.setParam("vecY", ny);
     updateStudioVectorPadDOM(container, ft);
@@ -2412,10 +2474,12 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     if (vecPad) {
       e.preventDefault();
       studioEngine.prepareAudioSync();
+      const track = resolveInstrumentTrack(vecPad);
       draggingKnobParam = "vecX";
-      vecPadDrag = { svg: vecPad, pointerId: e.pointerId };
+      draggingKnobTrackId = track.id;
+      vecPadDrag = { trackId: track.id, svg: vecPad, pointerId: e.pointerId };
       try { vecPad.setPointerCapture(e.pointerId); } catch (err) {}
-      updateVectorFromPointer(vecPad, e.clientX, e.clientY);
+      updateVectorFromPointer(track.id, vecPad, e.clientX, e.clientY);
       return;
     }
 
@@ -2481,9 +2545,11 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     if (!key) return;
     e.preventDefault();
     studioEngine.prepareAudioSync();
-    const track = studioEngine.getFocusedTrack();
+    const track = resolveInstrumentTrack(knob);
     draggingKnobParam = key;
+    draggingKnobTrackId = track.id;
     knobDrag = {
+      trackId: track.id,
       key,
       startY: e.clientY,
       startX: e.clientX,
@@ -2498,7 +2564,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   container.addEventListener("pointermove", (e) => {
     if (vecPadDrag && e.pointerId === vecPadDrag.pointerId) {
       e.preventDefault();
-      updateVectorFromPointer(vecPadDrag.svg, e.clientX, e.clientY);
+      updateVectorFromPointer(vecPadDrag.trackId, vecPadDrag.svg, e.clientX, e.clientY);
       return;
     }
     if (dockResizeDrag && e.pointerId === dockResizeDrag.pointerId) {
@@ -2534,13 +2600,14 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     const dx = e.clientX - knobDrag.startX;
     const sens = e.shiftKey ? 700 : 200;
     const nextVal = synthDenorm(knobDrag.key, knobDrag.startN + (dy + dx * 0.5) / sens);
-    studioEngine.getFocusedTrack().setParam(knobDrag.key, nextVal);
+    studioEngine.setTrackParam(knobDrag.trackId, knobDrag.key, nextVal);
   });
 
   const endInteractiveDrags = (e?: PointerEvent) => {
     if (vecPadDrag && (!e || e.pointerId === vecPadDrag.pointerId)) {
       vecPadDrag = null;
       draggingKnobParam = null;
+      draggingKnobTrackId = null;
       if (pendingAutosaveAfterDrag) {
         pendingAutosaveAfterDrag = false;
         scheduleAutosave();
@@ -2569,6 +2636,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     knobDrag.el.classList.remove("is-dragging");
     knobDrag = null;
     draggingKnobParam = null;
+    draggingKnobTrackId = null;
     if (pendingAutosaveAfterDrag) {
       pendingAutosaveAfterDrag = false;
       scheduleAutosave();
@@ -2596,7 +2664,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     const lane = target.closest<HTMLElement>("[data-st-lane]");
     if (lane) {
       const tid = lane.getAttribute("data-track-id");
-      if (tid) studioEngine.setFocusedTrack(tid);
+      if (tid) focusTrackSelection(tid);
       activeDockTab = "piano-roll";
       dockCollapsed = false;
       renderStudioPanel();
@@ -2607,7 +2675,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     if (!knob) return;
     const key = knob.getAttribute("data-st-param");
     if (key && SYNTH_PARAMS[key]) {
-      studioEngine.getFocusedTrack().setParam(key, SYNTH_PARAMS[key].def);
+      resolveInstrumentTrack(knob).setParam(key, SYNTH_PARAMS[key].def);
     }
   });
 
@@ -2620,7 +2688,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       const key = knob.getAttribute("data-st-param");
       if (!key) return;
       e.preventDefault();
-      const track = studioEngine.getFocusedTrack();
+      const track = resolveInstrumentTrack(knob);
       const curN = synthNorm(key, Number(track.patch[key]));
       track.setParam(key, synthDenorm(key, curN - Math.sign(e.deltaY) * 0.03));
     },
@@ -2659,7 +2727,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     if (!key) return;
     const def = SYNTH_PARAMS[key];
     if (!def) return;
-    const track = studioEngine.getFocusedTrack();
+    const track = resolveInstrumentTrack(knob);
     const next = def.step
       ? Number(track.patch[key]) + dir * def.step
       : synthDenorm(key, synthNorm(key, Number(track.patch[key])) + dir * 0.02);

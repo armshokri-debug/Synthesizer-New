@@ -676,7 +676,7 @@ export class SY1TrackEngine {
 
   noteOn(midi: number, velocity = 0.85, at = 0): void {
     const m = Math.max(0, Math.min(127, Math.round(midi)));
-    const vel = Math.max(0.01, Math.min(1, Number(velocity) || 0.85));
+    const vel = Math.max(1 / 127, Math.min(1, Number(velocity) || 0.85));
 
     if (this.isDrumTrack()) {
       const voice = drumVoiceForNote(m);
@@ -1057,7 +1057,7 @@ export class SY1TrackEngine {
       const midi = Math.max(0, Math.min(127, Math.round(s.midi)));
       const startTick = Math.max(0, Math.round(s.startTick));
       const endTick = Math.max(startTick + 1, Math.round(s.endTick));
-      const velocity = Math.max(0.01, Math.min(1, Number.isFinite(s.velocity) ? s.velocity : 0.85));
+      const velocity = Math.max(1 / 127, Math.min(1, Number.isFinite(s.velocity) ? s.velocity : 0.85));
       next.push({ type: "noteOn", tick: startTick, midi, velocity });
       next.push({ type: "noteOff", tick: endTick, midi });
     }
@@ -1079,7 +1079,7 @@ export class SY1TrackEngine {
       midi: Math.max(0, Math.min(127, Math.round(midi))),
       startTick: start,
       endTick: end,
-      velocity: Math.max(0.01, Math.min(1, velocity))
+      velocity: Math.max(1 / 127, Math.min(1, velocity))
     });
     this.replaceNoteSpans(spans);
   }

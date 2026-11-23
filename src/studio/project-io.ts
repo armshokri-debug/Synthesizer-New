@@ -124,7 +124,7 @@ function validateMidiEvent(raw: unknown, idx: number, trackLabel: string): Studi
       type: "noteOn",
       tick: safeTick,
       midi,
-      velocity: Math.max(0.01, Math.min(1, vel))
+      velocity: Math.max(1 / 127, Math.min(1, vel))
     };
   }
 

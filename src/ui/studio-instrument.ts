@@ -355,8 +355,8 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
 
   return `
     <div class="st-inst-wrap">
-      <div class="st-embedded-chassis" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}">
-        <div class="synth-panel st-embedded-synth" dir="ltr" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}" data-page="${escapeHtml(validPage)}">
+      <div class="st-embedded-chassis" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}">
+        <div class="synth-panel st-embedded-synth" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}" data-page="${escapeHtml(validPage)}">
           <div class="synth-top st-embedded-top">
             <div class="synth-brand">
               ${brandHtml}
@@ -397,7 +397,9 @@ export function updateStudioInstrumentKnobDOM(container: HTMLElement, track: SY1
   const val = Number(track.patch[key]);
   const n = Math.max(0, Math.min(1, synthNorm(key, val)));
   const fmt = def.fmt ? def.fmt(val) : String(val);
-  const knobs = container.querySelectorAll<HTMLElement>(`.st-inst-knob[data-st-param="${key}"]`);
+  const root = container.querySelector<HTMLElement>(`.st-embedded-synth[data-track-id="${track.id}"]`);
+  if (!root) return;
+  const knobs = root.querySelectorAll<HTMLElement>(`.st-inst-knob[data-st-param="${key}"]`);
   knobs.forEach((knob) => {
     const dial = knob.querySelector<HTMLElement>(".sk-dial");
     if (dial) dial.style.setProperty("--n", n.toFixed(4));
@@ -409,21 +411,23 @@ export function updateStudioInstrumentKnobDOM(container: HTMLElement, track: SY1
 
 /** Fast DOM-only Nishapur Vector XY pad update during pointer drag (zero innerHTML rebuild). */
 export function updateStudioVectorPadDOM(container: HTMLElement, track: SY1TrackEngine): void {
+  const root = container.querySelector<HTMLElement>(`.st-embedded-synth[data-track-id="${track.id}"]`);
+  if (!root) return;
   const cx = Math.max(0, Math.min(1, Number(track.patch.vecX ?? 0.5)));
   const cy = Math.max(0, Math.min(1, Number(track.patch.vecY ?? 0.5)));
   const px = toSvgCoord(cx);
   const py = toSvgCoord(cy);
-  const cursor = container.querySelector<SVGGElement>("[data-st-vec-cursor]");
+  const cursor = root.querySelector<SVGGElement>("[data-st-vec-cursor]");
   if (cursor) cursor.setAttribute("transform", `translate(${px.toFixed(1)}, ${py.toFixed(1)})`);
-  const anchor = container.querySelector<SVGCircleElement>("[data-st-vec-anchor]");
+  const anchor = root.querySelector<SVGCircleElement>("[data-st-vec-anchor]");
   if (anchor) {
     anchor.setAttribute("cx", px.toFixed(1));
     anchor.setAttribute("cy", py.toFixed(1));
   }
-  const orbit = container.querySelector<SVGPathElement>("[data-st-vec-orbit]");
+  const orbit = root.querySelector<SVGPathElement>("[data-st-vec-orbit]");
   if (orbit) orbit.setAttribute("d", buildStudioOrbitPathD(track));
-  const rx = container.querySelector<HTMLElement>('[data-st-vec-readout="x"] b');
+  const rx = root.querySelector<HTMLElement>('[data-st-vec-readout="x"] b');
   if (rx) rx.textContent = `${Math.round(cx * 100)}%`;
-  const ry = container.querySelector<HTMLElement>('[data-st-vec-readout="y"] b');
+  const ry = root.querySelector<HTMLElement>('[data-st-vec-readout="y"] b');
   if (ry) ry.textContent = `${Math.round(cy * 100)}%`;
 }

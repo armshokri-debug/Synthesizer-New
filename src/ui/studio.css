@@ -1735,6 +1735,78 @@ html.is-studio .sy1-shell::after {
   opacity: 0.88;
 }
 
+.st-pr.is-vel-mode .st-pr-grid {
+  cursor: ns-resize;
+}
+
+.st-pr.is-vel-mode .st-pr-note {
+  cursor: ns-resize;
+  padding-right: 4px;
+  touch-action: none;
+  box-shadow: inset 0 -2px 0 rgba(255, 242, 214, 0.55);
+}
+
+.st-pr.is-vel-mode .st-pr-note-resize {
+  display: none;
+}
+
+.st-pr-vel-mode-btn.is-active {
+  background: rgba(240, 162, 51, 0.24);
+  border-color: var(--st-accent);
+  color: #ffe3b0;
+}
+
+.st-pr-vel-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.st-pr-vel-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--st-ink-dim);
+  padding-right: 2px;
+}
+
+.st-pr-vel-step {
+  min-width: 24px;
+  padding: 0 5px;
+}
+
+.st-pr-vel-input {
+  width: 46px;
+  height: 26px;
+  padding: 0 4px;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--st-ink);
+  background: #121417;
+  border: 1px solid var(--st-border-hi);
+  border-radius: 4px;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.st-pr-vel-input::-webkit-inner-spin-button,
+.st-pr-vel-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.st-pr-vel-input:focus {
+  outline: none;
+  border-color: var(--st-accent);
+}
+
+.st-pr-vel-readout {
+  min-width: 34px;
+  text-align: left;
+  padding-left: 2px;
+}
+
 .st-pr-note-lbl {
   pointer-events: none;
   white-space: nowrap;
@@ -1752,11 +1824,19 @@ html.is-studio .sy1-shell::after {
 
 /* Velocity Lane */
 .st-pr-vel-bar {
-  flex: 0 0 58px;
-  height: 58px;
+  flex: 0 0 64px;
+  height: 64px;
   display: flex;
   border-top: 1px solid var(--st-border-hi);
   background: #14161a;
+  transition: height 120ms ease, flex-basis 120ms ease, border-color 120ms ease;
+}
+
+.st-pr-vel-bar.is-vel-mode {
+  flex: 0 0 88px;
+  height: 88px;
+  border-top-color: var(--st-accent-border);
+  background: #171a20;
 }
 
 .st-pr-vel-lbl {
@@ -1765,6 +1845,7 @@ html.is-studio .sy1-shell::after {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -1773,15 +1854,30 @@ html.is-studio .sy1-shell::after {
   background: #191b20;
 }
 
+.st-pr-vel-scale {
+  font-size: 0.52rem;
+  line-height: 1.5;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--st-ink-dim);
+  opacity: 0.72;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .st-pr-vel-scroll {
   flex: 1 1 auto;
   overflow-x: auto;
   overflow-y: hidden;
+  touch-action: pan-x;
 }
 
 .st-pr-vel-lane {
   position: relative;
   height: 100%;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
 }
 
 .st-pr-vel-midline {
@@ -1798,25 +1894,37 @@ html.is-studio .sy1-shell::after {
   position: absolute;
   bottom: 0;
   width: 8px;
+  min-height: 4px;
   margin-left: -2px;
-  background: rgba(240, 162, 51, 0.72);
+  background: rgba(240, 162, 51, 0.78);
   border-radius: 2px 2px 0 0;
   cursor: ns-resize;
   touch-action: none;
 }
 
+.st-pr-vel-stem::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  right: -9px;
+  top: -16px;
+  bottom: 0;
+}
+
 .st-pr-vel-stem.is-selected {
   background: #ffd176;
+  z-index: 2;
 }
 
 .st-pr-vel-head {
   position: absolute;
-  top: -3px;
-  left: 1px;
-  width: 6px;
-  height: 6px;
+  top: -4px;
+  left: 0;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: #fff2d6;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
 }
 
 /* ---------------------------------------------------------- Mixer View */

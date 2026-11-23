@@ -1140,7 +1140,7 @@ export class SY1StudioEngine {
   liveNoteOn(midi: number, velocity = 0.85, midiChannel = 0): void {
     if (!this.clockNowOverride) this.prepareAudioSync();
     const m = Math.max(0, Math.min(127, Math.round(midi)));
-    const vel = Math.max(0.01, Math.min(1, Number(velocity) || 0.85));
+    const vel = Math.max(1 / 127, Math.min(1, Number(velocity) || 0.85));
     const targets = this.resolveLiveTargets(midiChannel);
     if (targets.length === 0) return;
 
