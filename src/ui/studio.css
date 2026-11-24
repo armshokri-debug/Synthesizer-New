@@ -2777,4 +2777,56 @@ html.is-studio .sy1-shell::after {
   }
 }
 
+/* ---------------------------------------------------------- Phase 7.3: Full-Size Per-Track Instrument Editor */
+html.is-studio #kb-arp,
+html.is-studio #kb-oriental,
+html.is-studio #kb-scale-notes {
+  display: none !important;
+}
+
+.st-daw.is-inst-focus .st-arr-wrap,
+.st-daw.is-inst-focus .st-dock-resizer,
+.st-daw.is-inst-focus .st-dock-head,
+.st-daw.is-inst-focus .st-bars-group,
+.st-daw.is-inst-focus #st-open-btn,
+.st-daw.is-inst-focus .st-export-wrap {
+  display: none;
+}
+
+.st-daw.is-inst-focus .st-dock {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+.st-daw.is-inst-focus .st-inst-wrap {
+  padding: 12px 16px 18px;
+}
+
+#sy1-studio .st-daw.is-inst-focus .st-embedded-chassis {
+  max-width: 1360px;
+}
+
+.st-inst-back-btn {
+  border-color: var(--st-accent-border);
+  background: var(--st-accent-soft);
+  color: #ffe2b3;
+  font-weight: 700;
+}
+
+.st-inst-back-btn:hover {
+  border-color: var(--st-accent);
+  background: rgba(240, 162, 51, 0.24);
+  color: #fff2db;
+}
+
+.st-inst-focus-sel {
+  height: 30px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 0 8px;
+  max-width: 175px;
+}
+
+
 

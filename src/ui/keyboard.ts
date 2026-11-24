@@ -1,7 +1,7 @@
 import { centsFor, downKeys, getMachine, getSynthPatch, isNoteSounding, midiToName, noteOff, noteOn, NOTE_NAMES, onParamChange, prepareAudio, releasePhysicalNotes, setModWheel, setPitchBend, setSynthParam } from "../engine/synth";
 import { getCustomTuning } from "../engine/params";
 import { getScale, keyMap, KeyInfo, spellScale, TONIC_NAMES } from "../engine/scales";
-import { drumLabel, DRUM_NOTES, DRUM_VOICES } from "../engine/drums";
+import { drumLabel, DRUM_NOTES, DRUM_VOICES, DrumVoice } from "../engine/drums";
 
 /** Computer keys for the 8 drum pads (home row). */
 const DRUM_KEYMAP: Record<string, number> = {
@@ -25,9 +25,15 @@ export interface KeyboardTarget {
   getHold: () => boolean;
   toggleHold: () => void;
   getBadge: () => { machine: string; name: string; role: string };
+  isDrums?: () => boolean;
+  getDrumLabel?: (v: DrumVoice) => string;
 }
 
 let externalTarget: KeyboardTarget | null = null;
+
+function isTargetDrums(): boolean {
+  return externalTarget ? Boolean(externalTarget.isDrums?.()) : getMachine().kind === "drums";
+}
 
 export function setKeyboardTarget(target: KeyboardTarget | null): void {
   externalTarget = target;
@@ -100,14 +106,15 @@ export function renderKeyboard(): void {
   syncHold();
   syncOriental();
   const area = kb.closest(".kb-area");
-  const drums = !externalTarget && getMachine().kind === "drums";
+  const drums = isTargetDrums();
   if (area) area.classList.toggle("is-drums", drums);
   kb.classList.toggle("is-pads", drums);
   if (drums) {
     // the drum machine plays 8 pads instead of a keyboard
     kb.style.removeProperty("--whites");
+    const getPadLabel = (v: DrumVoice) => (externalTarget?.getDrumLabel ? externalTarget.getDrumLabel(v) : drumLabel(v));
     kb.innerHTML = DRUM_VOICES.map((v, i) =>
-      `<div class="key pad" data-midi="${DRUM_NOTES[v]}"><span class="pad-name">${drumLabel(v)}</span><span class="pad-key">${DRUM_KEY_LETTERS[i]}</span></div>`
+      `<div class="key pad" data-midi="${DRUM_NOTES[v]}"><span class="pad-name">${getPadLabel(v)}</span><span class="pad-key">${DRUM_KEY_LETTERS[i]}</span></div>`
     ).join("");
     return;
   }
@@ -221,6 +228,13 @@ export function syncOriental(): void {
   const btn = document.getElementById("kb-oriental");
   const notesEl = document.getElementById("kb-scale-notes");
   if (!btn) return;
+  if (externalTarget) {
+    btn.classList.remove("active");
+    if (notesEl) notesEl.innerHTML = "";
+    const strip = document.querySelector(".kb-strip");
+    if (strip) strip.classList.remove("is-oriental");
+    return;
+  }
   const p = getSynthPatch();
   const on = p.oriental === "on";
   const id = String(p.tuning || "shur");
@@ -401,7 +415,7 @@ export function initKeyboardInteractions(): void {
     if (target?.closest?.(".sk, .st-knob, input, textarea, select")) return;
 
     const k = e.key.toLowerCase();
-    const isDrums = !externalTarget && getMachine().kind === "drums";
+    const isDrums = isTargetDrums();
     if (k === "z" && !isDrums) {
       shiftOctave(-1);
       return;

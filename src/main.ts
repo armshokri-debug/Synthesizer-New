@@ -8,6 +8,7 @@ import "./ui/skins.css";
 import "./ui/keyboard.css";
 import "./ui/studio.css";
 import { installAudioUnlock } from "./engine/bus";
+import { DRUM_NOTES, DRUM_VOICES } from "./engine/drums";
 import { applySkin } from "./ui/skins";
 import { getEngine, getHQState } from "./engine/hq";
 import { requestMidi, setMidiInputInterceptor } from "./engine/midi";
@@ -34,8 +35,8 @@ import { initKeyboardInteractions, renderKeyboard, setKeyboardTarget, syncKeyboa
 import { initKnobInteractions } from "./ui/knob";
 import { fitPanel, initPanelInteractions, renderPanel, selectDrumVoiceForNote, setStudioOpenHandler } from "./ui/panel";
 import { startSynthScope } from "./ui/scope";
-import { initArpPanel } from "./ui/arp-panel";
-import { initOrientalPanel } from "./ui/oriental-panel";
+import { initArpPanel, closeArpPanel } from "./ui/arp-panel";
+import { initOrientalPanel, setOrientalOpen } from "./ui/oriental-panel";
 import { initLibrary } from "./ui/library";
 import { initMachineBrowser } from "./ui/machine-browser";
 import { initDawPanel } from "./ui/daw-panel";
@@ -46,6 +47,7 @@ import { getParamMacro, paramNorm } from "./engine/cc-map";
 import { batchPluginVisuals } from "./ui/plugin-visuals";
 import { studioEngine } from "./studio/studio-engine";
 import { studioStorage } from "./studio/storage";
+import { getDrumLabelsForTrack, getStudioMachineDef } from "./studio/track-engine";
 import {
   runOffline4TrackStressProbe,
   runOfflineBounceProbe,
@@ -54,12 +56,15 @@ import {
   runOfflineStemsProbe,
   runPostRestoreParityProbe
 } from "./studio/parity-probe";
+import { getStudioSelectedDrumVoice, setStudioSelectedDrumVoice } from "./ui/studio-instrument";
 import {
   hideStudioPanel,
   hydrateStudioFromStorage,
   importStudioProjectJson,
   initStudioPanel,
+  isStudioInstrumentFocusOpen,
   isStudioPlayheadLoopActive,
+  renderStudioPanel,
   saveStudioProjectNow,
   scheduleAutosave,
   showStudioPanel
@@ -121,22 +126,44 @@ function initApp(): void {
   initKeyboardInteractions();
   startSynthScope();
 
-  // tapping a drum pad also selects that drum for editing
+  // tapping a drum pad also selects that drum for editing (isolated per Studio track when Studio is active)
   const kb = document.getElementById("kb");
   if (kb) {
     kb.addEventListener("pointerdown", (e) => {
       const pad = (e.target as HTMLElement).closest(".pad") as HTMLElement | null;
-      if (pad) selectDrumVoiceForNote(Number(pad.dataset.midi));
+      if (!pad) return;
+      const midi = Number(pad.dataset.midi);
+      if (studioEngine.isActive()) {
+        const ft = studioEngine.getFocusedTrack();
+        if (ft.isDrumTrack()) {
+          const voice = DRUM_VOICES.find((v) => DRUM_NOTES[v] === midi);
+          if (voice && getStudioSelectedDrumVoice(ft.id) !== voice) {
+            setStudioSelectedDrumVoice(ft.id, voice);
+            renderStudioPanel();
+          }
+        }
+        return;
+      }
+      selectDrumVoiceForNote(midi);
     });
   }
 
   // Web-only SY-1 Studio initialization (strictly disabled inside AU/VST3 plugin)
   if (!plugin) {
     let synthRecording: ReturnType<typeof initSynthRecording>;
+    let lastStudioKbSig = "";
+    const studioKeyboardSig = () => {
+      const ft = studioEngine.getFocusedTrack();
+      return `${ft.id}|${ft.machineId}|${ft.presetId}|${ft.presetName}|${ft.isDrumTrack() ? 1 : 0}|${ft.patch.hold === "on" ? 1 : 0}`;
+    };
+
     const enterStudioMode = () => {
       allNotesOff();
+      closeArpPanel();
+      setOrientalOpen(false);
       studioEngine.setActive(true);
       studioEngine.setKeyHighlightListener(syncKeyboardHighlights);
+      lastStudioKbSig = studioKeyboardSig();
       setKeyboardTarget({
         noteOn: (m, v) => studioEngine.liveNoteOn(m, v),
         noteOff: (m) => studioEngine.liveNoteOff(m),
@@ -152,7 +179,13 @@ function initApp(): void {
         },
         getBadge: () => {
           const ft = studioEngine.getFocusedTrack();
-          return { machine: "sy1", name: "SY-1 Studio", role: `${ft.name} · ${ft.presetName}` };
+          const m = getStudioMachineDef(ft.machineId);
+          return { machine: ft.machineId, name: m.name, role: `${ft.name} · ${ft.presetName}` };
+        },
+        isDrums: () => studioEngine.getFocusedTrack().isDrumTrack(),
+        getDrumLabel: (v) => {
+          const ft = studioEngine.getFocusedTrack();
+          return getDrumLabelsForTrack(ft.machineId, ft.patch, ft.presetId)[v];
         }
       });
       setMidiInputInterceptor((cmd, d1, d2, ch) => {
@@ -182,6 +215,7 @@ function initApp(): void {
     const exitStudioMode = () => {
       studioEngine.setActive(false);
       studioEngine.setKeyHighlightListener(null);
+      lastStudioKbSig = "";
       setMidiInputInterceptor((cmd,d1,d2,ch)=>synthRecording.captureController(cmd,d1,d2,ch));
       setKeyboardTarget(null);
       hideStudioPanel();
@@ -195,9 +229,11 @@ function initApp(): void {
     setMidiInputInterceptor((cmd,d1,d2,ch)=>synthRecording.captureController(cmd,d1,d2,ch));
     studioEngine.onChange(() => {
       if (studioEngine.isActive()) {
-        const ft = studioEngine.getFocusedTrack();
-        const roleEl = document.getElementById("kb-machine-role");
-        if (roleEl) roleEl.textContent = `${ft.name} · ${ft.presetName}`;
+        const sig = studioKeyboardSig();
+        if (sig !== lastStudioKbSig) {
+          lastStudioKbSig = sig;
+          renderKeyboard();
+        }
       }
     });
 
@@ -210,6 +246,7 @@ function initApp(): void {
       open: enterStudioMode,
       close: exitStudioMode,
       isOpen: () => studioEngine.isActive(),
+      isInstrumentFocusOpen: isStudioInstrumentFocusOpen,
       diagnostics: {
         runOfflineParityProbe,
         runOfflineIsolationProbe,

@@ -49,7 +49,14 @@ function render(): void {
 }
 
 function setOpen(v: boolean): void {
+  if (v && document.documentElement.classList.contains("is-studio")) return;
   open = v;
+  render();
+}
+
+export function closeArpPanel(): void {
+  if (!open) return;
+  open = false;
   render();
 }
 

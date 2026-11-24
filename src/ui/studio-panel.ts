@@ -38,6 +38,7 @@ import {
 } from "../studio/types";
 import { machineArt } from "./machine-browser";
 import {
+  getStudioSelectedDrumVoice,
   renderStudioInstrumentHtml,
   setStudioSelectedDrumVoice,
   updateStudioInstrumentKnobDOM,
@@ -55,6 +56,14 @@ let activeDockTab: StudioDockTab = "piano-roll";
 let dockExpanded = false;
 let dockCollapsed = false;
 let dockHeightPx = 310;
+let instrumentFocusMode = false;
+let preInstFocusState: {
+  dockTab: StudioDockTab;
+  dockCollapsed: boolean;
+  dockExpanded: boolean;
+  browserOpen: boolean;
+  keysVisible: boolean;
+} | null = null;
 
 let browserOpen = true;
 let browserMachineId = "all"; // "all" or specific city synth id
@@ -130,6 +139,26 @@ function favKey(machineId: string, presetId: string): string {
 /** Diagnostics helper: true only while transport playhead animation loop is actively running. */
 export function isStudioPlayheadLoopActive(): boolean {
   return rafId !== 0;
+}
+
+export function isStudioInstrumentFocusOpen(): boolean {
+  return instrumentFocusMode;
+}
+
+function exitInstrumentFocusMode(restoreState = true): void {
+  if (!instrumentFocusMode) return;
+  instrumentFocusMode = false;
+  const prev = preInstFocusState;
+  preInstFocusState = null;
+  if (restoreState && prev) {
+    activeDockTab = prev.dockTab;
+    dockCollapsed = prev.dockCollapsed;
+    dockExpanded = prev.dockExpanded;
+    browserOpen = prev.browserOpen;
+    keysVisible = prev.keysVisible;
+    applyKeyboardVisibility();
+  }
+  renderStudioPanel();
 }
 
 export function getStudioDockTab(): StudioDockTab {
@@ -656,7 +685,9 @@ function renderStudioHtml(): string {
     .join("");
 
   let dockContent = "";
-  if (!dockCollapsed) {
+  if (instrumentFocusMode) {
+    dockContent = renderStudioInstrumentHtml(focused, instPageFilter);
+  } else if (!dockCollapsed) {
     if (activeDockTab === "piano-roll") {
       dockContent = renderPianoRollHtml();
     } else if (activeDockTab === "mixer") {
@@ -774,14 +805,30 @@ function renderStudioHtml(): string {
     </div>`;
   }
 
+  const topbarLeftHtml = instrumentFocusMode
+    ? `<button type="button" class="st-btn st-inst-back-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio arrangement">← Back to Studio</button>
+       <select class="st-select st-inst-focus-sel" id="st-inst-track-select" data-st-select="focus-track" aria-label="Editing track">
+         ${tracks
+           .map(
+             (t) =>
+               `<option value="${escapeHtml(t.id)}"${t.id === focused.id ? " selected" : ""}>${escapeHtml(t.name)} · ${escapeHtml(getStudioMachineDef(t.machineId).name)}</option>`
+           )
+           .join("")}
+       </select>
+       <select class="st-select st-inst-focus-sel" id="st-inst-machine-select" data-st-select="machine" data-track-id="${escapeHtml(focused.id)}" aria-label="${escapeHtml(focused.name)} instrument">
+         ${machineOptionsHtml(focused.machineId)}
+       </select>
+       <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>`
+    : `<button type="button" class="st-btn" id="st-back-btn" data-st-action="close-studio" title="Return to standalone SY-1 Synth">← Synth</button>
+       <div class="st-brand">SY-1 <span>Studio</span></div>
+       <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>
+       <input type="text" class="st-name-input" id="st-project-name" value="${escapeHtml(tr.projectName)}" maxlength="80" aria-label="Project name" placeholder="Untitled Session" />`;
+
   return `
-    <div class="st-daw${dockExpanded ? " is-dock-expanded" : ""}${dockCollapsed ? " is-dock-collapsed" : ""}" dir="ltr" style="--st-dock-h:${dockHeightPx}px">
+    <div class="st-daw${dockExpanded ? " is-dock-expanded" : ""}${dockCollapsed && !instrumentFocusMode ? " is-dock-collapsed" : ""}${instrumentFocusMode ? " is-inst-focus" : ""}" dir="ltr" style="--st-dock-h:${dockHeightPx}px">
       <header class="st-topbar">
         <div class="st-tb-left">
-          <button type="button" class="st-btn" id="st-back-btn" data-st-action="close-studio" title="Return to standalone SY-1 Synth">← Synth</button>
-          <div class="st-brand">SY-1 <span>Studio</span></div>
-          <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>
-          <input type="text" class="st-name-input" id="st-project-name" value="${escapeHtml(tr.projectName)}" maxlength="80" aria-label="Project name" placeholder="Untitled Session" />
+          ${topbarLeftHtml}
         </div>
 
         <div class="st-tb-center" role="group" aria-label="Master Transport">
@@ -983,7 +1030,7 @@ function renderStudioHtml(): string {
                 <button type="button" class="st-btn st-tiny-btn" id="st-dock-collapse" data-st-action="dock-collapse" aria-pressed="${dockCollapsed}" title="Collapse or expand bottom panel">${dockCollapsed ? "Show" : "Hide"}</button>
               </div>
             </div>
-            <div class="st-dock-body" id="st-dock-body"${dockCollapsed ? " hidden" : ""}>
+            <div class="st-dock-body" id="st-dock-body"${dockCollapsed && !instrumentFocusMode ? " hidden" : ""}>
               ${dockContent}
             </div>
           </section>
@@ -1207,7 +1254,15 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   document.addEventListener(
     "keydown",
     (e) => {
-      if (!hasActiveModal() || container.hidden) return;
+      if (container.hidden) return;
+      if (!hasActiveModal()) {
+        if (e.key === "Escape" && instrumentFocusMode && !exportMenuOpen && !openDrawerVisible) {
+          e.preventDefault();
+          e.stopPropagation();
+          exitInstrumentFocusMode(true);
+        }
+        return;
+      }
       const dialog = container.querySelector<HTMLElement>(".st-dialog");
       if (e.key === "Escape") {
         e.preventDefault();
@@ -1555,9 +1610,25 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         case "open-track-instrument":
           if (trackId) focusTrackSelection(trackId);
+          if (!instrumentFocusMode) {
+            preInstFocusState = {
+              dockTab: activeDockTab,
+              dockCollapsed,
+              dockExpanded,
+              browserOpen,
+              keysVisible
+            };
+            instrumentFocusMode = true;
+            browserOpen = false;
+            keysVisible = true;
+            applyKeyboardVisibility();
+          }
           activeDockTab = "instrument";
           dockCollapsed = false;
           renderStudioPanel();
+          break;
+        case "close-track-instrument":
+          exitInstrumentFocusMode(true);
           break;
         case "open-browser-for-track":
           browserOpen = true;
@@ -1682,11 +1753,16 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         case "inst-preset-next": {
           const ft = resolveInstrumentTrack(btn);
           const m = getStudioMachineDef(ft.machineId);
-          const idx = m.presets.findIndex((p) => p.id === ft.presetId);
+          const orderedIds = [
+            ...(m.kind === "drums" && m.kits ? m.kits.map((k) => `kit:${k.id}`) : []),
+            ...m.presets.map((p) => p.id)
+          ];
+          if (orderedIds.length === 0) break;
+          const idx = orderedIds.indexOf(ft.presetId);
           const dir = action === "inst-preset-next" ? 1 : -1;
-          const nextIdx = ((idx < 0 ? 0 : idx) + dir + m.presets.length) % m.presets.length;
+          const nextIdx = ((idx < 0 ? 0 : idx) + dir + orderedIds.length) % orderedIds.length;
           studioEngine.prepareAudioSync();
-          studioEngine.setTrackMachinePreset(ft.id, m.id, m.presets[nextIdx].id);
+          studioEngine.setTrackMachinePreset(ft.id, m.id, orderedIds[nextIdx]);
           break;
         }
         case "browser-machine": {
@@ -1739,10 +1815,16 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           const dv = btn.getAttribute("data-st-drum-voice") as DrumVoice | null;
           const ft = resolveInstrumentTrack(btn);
           if (dv && DRUM_NOTES[dv] !== undefined) {
+            const prevVoice = getStudioSelectedDrumVoice(ft.id);
             setStudioSelectedDrumVoice(ft.id, dv);
             studioEngine.prepareAudioSync();
-            ft.noteOn(DRUM_NOTES[dv], 0.9);
-            renderStudioPanel();
+            if (ft.id === studioEngine.getFocusedTrack().id) {
+              studioEngine.liveNoteOn(DRUM_NOTES[dv], 0.9);
+              studioEngine.liveNoteOff(DRUM_NOTES[dv]);
+            } else {
+              ft.noteOn(DRUM_NOTES[dv], 0.9);
+            }
+            if (prevVoice !== dv) renderStudioPanel();
           }
           break;
         }
@@ -1902,6 +1984,8 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
                 suppressNextAutosave = true;
                 suppressDirtyTracking = true;
                 await studioEngine.createNewProject({ name: nextName });
+                instrumentFocusMode = false;
+                preInstFocusState = null;
                 pendingClearTrackId = null;
                 await studioStorage.saveAutosave(studioEngine.exportProject());
                 syncCleanContentBaseline();
@@ -2025,6 +2109,8 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
               suppressNextAutosave = true;
               suppressDirtyTracking = true;
               await studioEngine.loadProject(res.data);
+              instrumentFocusMode = false;
+              preInstFocusState = null;
               pendingClearTrackId = null;
               await studioStorage.saveAutosave(studioEngine.exportProject());
               syncCleanContentBaseline();
@@ -2100,6 +2186,8 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
               suppressNextAutosave = true;
               suppressDirtyTracking = true;
               await studioEngine.loadProject(res.data.project);
+              instrumentFocusMode = false;
+              preInstFocusState = null;
               pendingClearTrackId = null;
               syncCleanContentBaseline();
               openDrawerVisible = false;
@@ -2323,6 +2411,11 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
     const selType = el.getAttribute("data-st-select");
     const trackId = el.getAttribute("data-track-id") || "";
+    if (selType === "focus-track" && el.value) {
+      focusTrackSelection(el.value);
+      renderStudioPanel();
+      return;
+    }
     if (selType === "machine" && trackId) {
       focusTrackSelection(trackId);
       instPageFilter = "all";
@@ -2755,6 +2848,8 @@ export function hideStudioPanel(): void {
   cachedPlayheadEls = [];
   cachedClockEl = null;
   cachedMeterEls = [];
+  instrumentFocusMode = false;
+  preInstFocusState = null;
   exportMenuOpen = false;
   pendingClearTrackId = null;
   pendingDeleteProject = null;

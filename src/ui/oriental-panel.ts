@@ -246,6 +246,7 @@ function bindPanelEvents(): void {
 }
 
 export function setOrientalOpen(v: boolean): void {
+  if (v && document.documentElement.classList.contains("is-studio")) return;
   open = v;
   if (!v) {
     sclStatusMsg = "";
