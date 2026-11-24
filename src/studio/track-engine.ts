@@ -125,8 +125,15 @@ function isOfflineCtx(ctx: BaseAudioContext): boolean {
   return typeof OfflineAudioContext !== "undefined" && ctx instanceof OfflineAudioContext;
 }
 
+function studioEventPriority(ev: StudioMidiEvent): number {
+  if (ev.type === "noteOff") return 0;
+  if (ev.type === "cc") return 1;
+  if (ev.type === "pitchBend") return 2;
+  return 3;
+}
+
 function compareStudioEvents(a: StudioMidiEvent, b: StudioMidiEvent): number {
-  return a.tick - b.tick || (a.type === "noteOff" ? -1 : 1) - (b.type === "noteOff" ? -1 : 1);
+  return a.tick - b.tick || studioEventPriority(a) - studioEventPriority(b);
 }
 
 export interface SY1TrackOptions {

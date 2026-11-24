@@ -51,10 +51,42 @@ function isController(event: StudioMidiEvent): event is Exclude<StudioMidiEvent,
   return event.type === "cc" || event.type === "pitchBend";
 }
 
+function playbackSortPriority(event: StudioMidiEvent): number {
+  if (event.type === "noteOff") return 0;
+  if (event.type === "cc") return 1;
+  if (event.type === "pitchBend") return 2;
+  return 3;
+}
+
 /** Materialize one visible region; its immutable source coordinates survive trims and splits. */
 export function regionPlayback(region: MidiRegion): StudioMidiEvent[] {
   if (!region.loop && region.offset === 0 && region.length >= region.sourceLength) {
-    return region.events.map(event => ({ ...event }));
+    const out = region.events.map(event => ({ ...event }));
+    if (!out.length) return out;
+    // Close any genuinely dangling note or sustain pedal at the region boundary so it cannot bleed into a copied/following region.
+    const openDepth = new Map<number, number>();
+    let sustained = false;
+    const ordered = out
+      .map((event, order) => ({ event, order }))
+      .sort((a, b) => a.event.tick - b.event.tick || playbackSortPriority(a.event) - playbackSortPriority(b.event) || a.order - b.order);
+    for (const { event } of ordered) {
+      if (event.type === "noteOn") {
+        openDepth.set(event.midi, (openDepth.get(event.midi) ?? 0) + 1);
+      } else if (event.type === "noteOff") {
+        const d = openDepth.get(event.midi) ?? 0;
+        if (d <= 1) openDepth.delete(event.midi);
+        else openDepth.set(event.midi, d - 1);
+      } else if (event.type === "cc" && event.cc === 64) {
+        sustained = event.value >= 64;
+      }
+    }
+    for (const midi of openDepth.keys()) {
+      out.push({ type: "noteOff", tick: region.length, midi });
+    }
+    if (sustained) {
+      out.push({ type: "cc", cc: 64, value: 0, tick: region.length });
+    }
+    return out;
   }
   if (!region.events.length) return [];
   const spans = extractNoteSpans(region.events, region.sourceLength);
@@ -97,12 +129,80 @@ export function regionPlayback(region: MidiRegion): StudioMidiEvent[] {
 }
 
 export function flattenRegions(regions: readonly MidiRegion[]): StudioMidiEvent[] {
-  const output: StudioMidiEvent[] = [];
+  const raw: { event: StudioMidiEvent; order: number }[] = [];
+  let order = 0;
   for (const region of [...regions].sort((a, b) => a.startTick - b.startTick)) {
     for (const event of regionPlayback(region)) {
-      output.push({ ...event, tick: event.tick + region.startTick });
-      if (output.length > MAX_REGION_EVENTS) throw new Error("Track exceeds the playback event limit.");
+      raw.push({ event: { ...event, tick: event.tick + region.startTick }, order: order++ });
+      if (raw.length > MAX_REGION_EVENTS) throw new Error("Track exceeds the playback event limit.");
     }
+  }
+  if (raw.length <= 1) return raw.map(item => item.event);
+
+  raw.sort(
+    (a, b) =>
+      a.event.tick - b.event.tick ||
+      playbackSortPriority(a.event) - playbackSortPriority(b.event) ||
+      a.order - b.order
+  );
+
+  // Normalize same-pitch overlaps and exact same-tick duplicate triggers across regions:
+  // - Two identical (tick, midi) noteOns never double-fire a drum or synth voice.
+  // - Overlapping same-pitch notes emit a clean noteOff at retrigger and suppress the superseded earlier noteOff.
+  // - Duplicate identical controller events at the exact same tick are collapsed.
+  const output: StudioMidiEvent[] = [];
+  const openDepth = new Map<number, number>();
+  const lastNoteOnTick = new Map<number, number>();
+  const lastNoteOnOutIndex = new Map<number, number>();
+  let lastCtrlTick = -1;
+  const seenCtrlAtTick = new Set<string>();
+
+  for (const { event } of raw) {
+    if (event.tick !== lastCtrlTick) {
+      lastCtrlTick = event.tick;
+      seenCtrlAtTick.clear();
+    }
+    if (event.type === "noteOn") {
+      const depth = openDepth.get(event.midi) ?? 0;
+      if (depth > 0 && lastNoteOnTick.get(event.midi) === event.tick) {
+        // Same-tick duplicate noteOn for the same pitch: keep one trigger so copied/overlapped regions never double-hit.
+        const idx = lastNoteOnOutIndex.get(event.midi);
+        if (idx !== undefined) {
+          const prev = output[idx];
+          if (prev && prev.type === "noteOn") {
+            output[idx] = { ...prev, velocity: event.velocity };
+          }
+        }
+        openDepth.set(event.midi, depth + 1);
+        continue;
+      }
+      if (depth > 0) {
+        // Cleanly release the still-sounding earlier note of the same pitch right before retriggering.
+        output.push({ type: "noteOff", tick: event.tick, midi: event.midi });
+      }
+      openDepth.set(event.midi, depth + 1);
+      lastNoteOnTick.set(event.midi, event.tick);
+      lastNoteOnOutIndex.set(event.midi, output.length);
+      output.push(event);
+    } else if (event.type === "noteOff") {
+      const depth = openDepth.get(event.midi) ?? 0;
+      if (depth <= 0) continue;
+      if (depth > 1) {
+        // Earlier superseded note's noteOff: do not cut off the newer overlapping note early.
+        openDepth.set(event.midi, depth - 1);
+        continue;
+      }
+      openDepth.delete(event.midi);
+      lastNoteOnTick.delete(event.midi);
+      lastNoteOnOutIndex.delete(event.midi);
+      output.push(event);
+    } else {
+      const key = event.type === "cc" ? `cc:${event.cc}:${event.value}` : `pb:${event.value}`;
+      if (seenCtrlAtTick.has(key)) continue;
+      seenCtrlAtTick.add(key);
+      output.push(event);
+    }
+    if (output.length > MAX_REGION_EVENTS) throw new Error("Track exceeds the playback event limit.");
   }
   return output;
 }

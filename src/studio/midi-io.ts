@@ -172,31 +172,43 @@ export function extractNoteSpans(events: StudioMidiEvent[], fallbackEndTick: num
     .map((ev, order) => ({ ev, order, tick: Math.max(0, Math.round(ev.tick)) }))
     .sort((a, b) => a.tick - b.tick || eventSortPriority(a.ev) - eventSortPriority(b.ev) || a.order - b.order);
 
-  const open = new Map<number, { startTick: number; velocity: number }>();
+  const open = new Map<number, { startTick: number; velocity: number; depth: number }>();
   const spans: StudioNoteSpan[] = [];
 
   for (const { ev, tick } of sorted) {
     if (ev.type === "noteOn") {
       const existing = open.get(ev.midi);
       if (existing) {
-        spans.push({
-          midi: ev.midi,
-          startTick: existing.startTick,
-          endTick: Math.max(existing.startTick + 1, tick),
-          velocity: existing.velocity
-        });
+        if (tick > existing.startTick) {
+          spans.push({
+            midi: ev.midi,
+            startTick: existing.startTick,
+            endTick: tick,
+            velocity: existing.velocity
+          });
+          open.set(ev.midi, { startTick: tick, velocity: ev.velocity, depth: existing.depth + 1 });
+        } else {
+          // Exact same-tick duplicate noteOn for the same pitch: keep one span with updated velocity and count depth.
+          existing.velocity = ev.velocity;
+          existing.depth += 1;
+        }
+      } else {
+        open.set(ev.midi, { startTick: tick, velocity: ev.velocity, depth: 1 });
       }
-      open.set(ev.midi, { startTick: tick, velocity: ev.velocity });
     } else if (ev.type === "noteOff") {
       const existing = open.get(ev.midi);
       if (existing) {
-        spans.push({
-          midi: ev.midi,
-          startTick: existing.startTick,
-          endTick: Math.max(existing.startTick + 1, tick),
-          velocity: existing.velocity
-        });
-        open.delete(ev.midi);
+        if (existing.depth > 1) {
+          existing.depth -= 1;
+        } else {
+          spans.push({
+            midi: ev.midi,
+            startTick: existing.startTick,
+            endTick: Math.max(existing.startTick + 1, tick),
+            velocity: existing.velocity
+          });
+          open.delete(ev.midi);
+        }
       }
     }
   }

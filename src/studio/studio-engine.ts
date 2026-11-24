@@ -70,6 +70,9 @@ export function getLiveRecordingRamBudgetBytes(): number {
 
 const SCHEDULER_INTERVAL_MS = 25;
 const LOOKAHEAD_SEC = 0.1;
+/** Small live-AudioContext start headroom so beat 1 (tick 0) schedules cleanly ahead of ctx.currentTime without late clamping or inter-voice flam. */
+const PLAY_START_LEAD_SEC = 0.05;
+const SEEK_PLAY_LEAD_SEC = 0.025;
 /** If the audio clock jumps further ahead than this (main-thread stall or iPad background sleep), re-anchor cleanly instead of burst-firing stale backlog. */
 const SCHEDULER_STALL_THRESHOLD_SEC = 0.35;
 
@@ -792,11 +795,13 @@ export class SY1StudioEngine {
     this.playheadTick = clamped;
     if (this.playing) {
       const now = this.nowAudioTime();
+      const seekLead = !this.clockNowOverride ? SEEK_PLAY_LEAD_SEC : 0;
+      const startAt = now + seekLead;
       this.releasePlaybackNotes(now);
-      this.anchorAudioTime = now;
+      this.anchorAudioTime = startAt;
       this.anchorTick = clamped;
       this.anchorBpm = this.bpm;
-      this.cursorAudioTime = now;
+      this.cursorAudioTime = startAt;
       this.cursorTick = clamped;
     }
     this.notify();
@@ -818,11 +823,12 @@ export class SY1StudioEngine {
       this.playheadTick = 0;
     }
     const now = this.nowAudioTime();
+    const startLead = countInSeconds > 0 ? countInSeconds : (!this.clockNowOverride ? PLAY_START_LEAD_SEC : 0);
     this.playing = true;
-    this.anchorAudioTime = now + countInSeconds;
+    this.anchorAudioTime = now + startLead;
     this.anchorTick = this.playheadTick;
     this.anchorBpm = this.bpm;
-    this.cursorAudioTime = now + countInSeconds;
+    this.cursorAudioTime = now + startLead;
     this.countInStart = countInSeconds > 0 ? now : null;
     this.countInEnd = countInSeconds > 0 ? now + countInSeconds : null;
     this.cursorTick = this.playheadTick;
@@ -1631,9 +1637,10 @@ export class SY1StudioEngine {
     const exactDurationSec = endTick * secPerTick + tailSec;
     const totalFrames = Math.max(128, Math.round(exactDurationSec * sampleRate));
 
-    // 2-quantum pre-roll (256 samples): suspend at quantum 1 so Chromium's AudioWorklet
-    // thread reliably flushes MessagePort patch + t=0 events before sample 0 of the song renders.
-    const preRollFrames = 256;
+    // 64-quantum silent pre-roll (8192 samples, ~170.7 ms at 48 kHz; sliced off before frame 0):
+    // flushes AudioWorklet MessagePort patch + t=0 events AND lets WebAudio DynamicsCompressorNode
+    // internal detector settle before beat 1 so Bar 1 matches copied/subsequent bars identically.
+    const preRollFrames = 8192;
     const preRollSec = preRollFrames / sampleRate;
     const offline = new OfflineAudioContext(2, totalFrames + preRollFrames, sampleRate);
     const offlineMaster = useMasterBus
@@ -1642,6 +1649,9 @@ export class SY1StudioEngine {
     const destination: AudioNode = offlineMaster ? offlineMaster.sum : offline.destination;
 
     const clones: { src: SY1TrackEngine; clone: SY1TrackEngine; events: StudioMidiEvent[] }[] = [];
+
+    const offlinePriority = (e: StudioMidiEvent) =>
+      e.type === "noteOff" ? 0 : e.type === "cc" ? 1 : e.type === "pitchBend" ? 2 : 3;
 
     for (const src of selectedTracks) {
       const clone = new SY1TrackEngine({
@@ -1662,7 +1672,7 @@ export class SY1StudioEngine {
       const evs = src.events
         .filter((e) => e.tick >= 0 && e.tick < endTick)
         .map((e) => ({ ...e }))
-        .sort((a, b) => a.tick - b.tick || (a.type === "noteOff" ? -1 : 1) - (b.type === "noteOff" ? -1 : 1));
+        .sort((a, b) => a.tick - b.tick || offlinePriority(a) - offlinePriority(b));
       clones.push({ src, clone, events: evs });
     }
 
