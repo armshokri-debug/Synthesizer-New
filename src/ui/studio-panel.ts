@@ -79,6 +79,7 @@ let arrScrollLeft = 0;
 let arrScrollTop = 0;
 let instPageFilter = "all";
 let exportMenuOpen = false;
+let studioMenuKind: "settings" | "project" = "project";
 let pendingClearTrackId: string | null = null;
 let pendingDeleteProject: { id: string; name: string } | null = null;
 let pendingProjectNameModal: {
@@ -167,8 +168,13 @@ export function getStudioDockTab(): StudioDockTab {
   return activeDockTab;
 }
 
+function preferExpandedNoteEditor(): boolean {
+  return window.matchMedia("(max-width: 600px), (max-height: 500px)").matches;
+}
+
 export function setStudioDockTab(tab: StudioDockTab): void {
   activeDockTab = tab;
+  if (tab === "piano-roll" && preferExpandedNoteEditor()) dockExpanded = true;
   dockCollapsed = false;
   dockPinnedOpen = true;
   renderStudioPanel();
@@ -615,6 +621,33 @@ function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEng
 
 // ------------------------------------------------------------ Full Studio Shell ----
 
+// Small, consistent line icons for the Studio shell; no icon font or dependency.
+const STUDIO_ICONS = {
+  instrument: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M12 5v14M16 5v14M6 5v8M10 5v8M14 5v8"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  rewind: '<path d="M5 5v14"/><path d="m19 5-11 7 11 7z" fill="currentColor" stroke="none"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
+  play: '<path d="M8 4.5v15L20 12z" fill="currentColor" stroke="none"/>',
+  pause: '<path d="M8 5v14M16 5v14" stroke-width="3.5"/>',
+  record: '<circle cx="12" cy="12" r="7" fill="currentColor" stroke="none"/>',
+  loop: '<path d="M17 2l4 4-4 4M21 6H7a4 4 0 0 0-4 4M7 22l-4-4 4-4M3 18h14a4 4 0 0 0 4-4"/>',
+  metronome: '<path d="M8 4h8l5 16H3L8 4zM12 16l7-11M12 8v3"/><circle cx="12" cy="16" r="1" fill="currentColor"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M19 5l-2 2M7 17l-2 2"/><circle cx="12" cy="12" r="7"/>',
+  more: '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+  save: '<path d="M5 3h12l4 4v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 3v6h8V3M7 21v-7h10v7"/>',
+  undo: '<path d="M9 5 4 10l5 5M4 10h10a6 6 0 0 1 0 12"/>',
+  redo: '<path d="m15 5 5 5-5 5m5-5H10a6 6 0 0 0 0 12"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  browser: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M5 8h2M5 12h2"/>',
+  mixer: '<path d="M5 3v18M12 3v18M19 3v18"/><path d="M2 8h6M9 15h6M16 10h6" stroke-width="3"/>',
+  notes: '<path d="M4 5h9v3H4zM10 11h10v3H10zM4 17h7v3H4z"/>',
+  edit: '<path d="m4 16 12-12 4 4L8 20H4v-4zM13 7l4 4"/>',
+  keys: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14M15 5v14"/>'
+} as const;
+function stIcon(name: keyof typeof STUDIO_ICONS): string {
+  return `<svg class="st-ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${STUDIO_ICONS[name]}</svg>`;
+}
+
 function renderStudioHtml(): string {
   const tr = studioEngine.getTransportSnapshot();
   const tracks = studioEngine.getTracks();
@@ -799,8 +832,8 @@ function renderStudioHtml(): string {
        <select class="st-select st-inst-focus-sel" id="st-inst-machine-select" data-st-select="machine" data-track-id="${escapeHtml(focused.id)}" aria-label="${escapeHtml(focused.name)} instrument">
          ${machineOptionsHtml(focused.machineId)}
        </select>
-       <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>`
-    : `<button type="button" class="st-btn st-ghost-btn" id="st-back-btn" data-st-action="close-studio" title="Return to standalone SY-1 Synth">← Back</button>
+       <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser" aria-label="Instrument browser">${stIcon("browser")}</button>`
+    : `<button type="button" class="st-btn st-ghost-btn" id="st-back-btn" data-st-action="close-studio" title="Return to synths" aria-label="Return to synths">${stIcon("instrument")}</button>
        <input type="text" class="st-name-input" id="st-project-name" value="${escapeHtml(tr.projectName)}" maxlength="80" aria-label="Project name" placeholder="Untitled Project" />`;
 
   return `
@@ -812,49 +845,35 @@ function renderStudioHtml(): string {
 
         <div class="st-tb-center" role="group" aria-label="Master Transport">
           <div class="st-seg st-transport-seg">
-            <button type="button" class="st-btn is-play${tr.playing ? " is-active" : ""}" id="st-play-btn" data-st-action="play" aria-pressed="${tr.playing}" title="Play / Pause">${tr.playing ? "Playing" : "▶ Play"}</button>
-            <button type="button" class="st-btn" id="st-stop-btn" data-st-action="stop" title="Stop">■ Stop</button>
-            <button type="button" class="st-btn is-rec${tr.recording ? " is-active" : ""}" id="st-rec-btn" data-st-action="record" aria-pressed="${tr.recording}" title="Record">● Rec</button>
-            <button type="button" class="st-btn st-mobile-hide${tr.loopEnabled ? " is-active" : ""}" id="st-loop-btn" data-st-action="toggle-loop" aria-pressed="${tr.loopEnabled}" title="Toggle Loop">Loop</button>
+            <button type="button" class="st-btn st-tool" id="st-rewind-btn" data-st-action="rewind"${tr.recording ? " disabled" : ""} title="Go to beginning" aria-label="Go to beginning">${stIcon("rewind")}</button>
+            <button type="button" class="st-btn st-tool" id="st-stop-btn" data-st-action="stop" title="Stop" aria-label="Stop">${stIcon("stop")}</button>
+            <button type="button" class="st-btn st-tool is-play${tr.playing ? " is-active" : ""}" id="st-play-btn" data-st-action="play" aria-pressed="${tr.playing}" title="Play / Pause" aria-label="${tr.playing ? "Pause" : "Play"}">${stIcon(tr.playing ? "pause" : "play")}</button>
+            <button type="button" class="st-btn st-tool is-rec${tr.recording ? " is-active" : ""}" id="st-rec-btn" data-st-action="record" aria-pressed="${tr.recording}" title="Record" aria-label="Record">${stIcon("record")}</button>
           </div>
-          <div class="st-clock${countInBeat ? " is-countin" : ""}" id="st-clock" aria-label="Transport position">${clockLabel}</div>
-          <div class="st-seg st-tempo-seg" role="group" aria-label="Tempo">
-            <button type="button" class="st-btn st-step-btn" data-st-action="bpm-down" aria-label="Decrease BPM">−</button>
-            <button type="button" class="st-btn st-bpm-val" id="st-bpm-val" data-st-action="bpm-tap" title="Tap tempo">${fmtBpm(tr.bpm)} BPM</button>
-            <button type="button" class="st-btn st-step-btn" data-st-action="bpm-up" aria-label="Increase BPM">+</button>
+          <div class="st-lcd" aria-label="Position and tempo">
+            <div class="st-clock${countInBeat ? " is-countin" : ""}" id="st-clock" aria-label="Transport position">${clockLabel}</div>
+            <button type="button" class="st-btn st-bpm-val" id="st-bpm-val" data-st-action="bpm-tap" title="Tap tempo · precise BPM in Settings" aria-label="Tap tempo">${fmtBpm(tr.bpm)} <small>BPM</small></button>
           </div>
-          <div class="st-seg st-click-seg st-mobile-hide" role="group" aria-label="Metronome and Count-in">
-            <button type="button" class="st-btn${recSettings.metronome ? " is-active" : ""}" id="st-click-btn" data-st-action="metronome" aria-pressed="${recSettings.metronome}" title="Metronome click (monitor only)">Click</button>
-            <button type="button" class="st-btn${recSettings.countIn ? " is-active" : ""}" id="st-countin-btn" data-st-action="count-in" aria-pressed="${recSettings.countIn}" title="1-bar Count-in before recording">1-Bar</button>
+          <div class="st-seg st-performance-seg">
+            <button type="button" class="st-btn st-tool${tr.loopEnabled ? " is-active" : ""}" id="st-loop-btn" data-st-action="toggle-loop" aria-pressed="${tr.loopEnabled}" title="Loop" aria-label="Loop">${stIcon("loop")}</button>
+            <button type="button" class="st-btn st-tool${recSettings.metronome ? " is-active" : ""}" id="st-click-btn" data-st-action="metronome" aria-pressed="${recSettings.metronome}" title="Metronome (monitor only)" aria-label="Metronome">${stIcon("metronome")}</button>
           </div>
         </div>
 
         <div class="st-tb-right">
           <span class="st-save-state${saveStateClass}" id="st-save-state" title="Stored locally in this browser">${saveStateLabel}</span>
-          <button type="button" class="st-btn${projectDirty ? " is-dirty" : ""}" id="st-save-btn" data-st-action="save-project" title="Save project locally">Save</button>
-          <button type="button" class="st-btn st-mobile-hide${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer" title="Projects: New, Open, Rename, Duplicate, Delete">Projects</button>
-          ${
-            instrumentFocusMode
-              ? `<button type="button" class="st-btn${keysVisible ? " is-active" : ""}" id="st-keys-toggle" data-st-action="toggle-keys" aria-pressed="${keysVisible}" title="Show or hide on-screen keyboard">Keys</button>`
-              : ""
-          }
-          <div class="st-export-wrap">
-            <button type="button" class="st-btn${exportMenuOpen ? " is-active" : ""}" id="st-export-menu-btn" data-st-action="toggle-export-menu" aria-haspopup="menu" aria-expanded="${exportMenuOpen}">${exporting ? "Rendering…" : exportingStems ? "Stems…" : "More ▾"}</button>
-            <div class="st-export-menu" id="st-export-menu" role="menu"${exportMenuOpen ? "" : " hidden"}>
-              <div class="st-menu-mobile-group st-mobile-only">
-                <button type="button" class="st-menu-item" role="menuitem" data-st-action="toggle-open-drawer">Projects…</button>
-                <button type="button" class="st-menu-item${tr.loopEnabled ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${tr.loopEnabled}" data-st-action="toggle-loop">${tr.loopEnabled ? "✓ " : ""}Loop</button>
-                <button type="button" class="st-menu-item${recSettings.metronome ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${recSettings.metronome}" data-st-action="metronome">${recSettings.metronome ? "✓ " : ""}Metronome Click</button>
-                <button type="button" class="st-menu-item${recSettings.countIn ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${recSettings.countIn}" data-st-action="count-in">${recSettings.countIn ? "✓ " : ""}1-Bar Count-in</button>
-                <div class="st-menu-sep"></div>
-              </div>
-              ${
-                !instrumentFocusMode
-                  ? `<button type="button" class="st-menu-item${keysVisible ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${keysVisible}" id="st-keys-toggle" data-st-action="toggle-keys">${keysVisible ? "✓ " : ""}On-Screen Keys</button>`
-                  : ""
-              }
-              <button type="button" class="st-menu-item" role="menuitem" data-st-action="clear-track" data-track-id="${escapeHtml(focused.id)}"${studioEngine.regions.regions(focused.id).length === 0 ? " disabled" : ""}>Clear ${escapeHtml(focusedMachine.name)} Track…</button>
-              <div class="st-menu-sep"></div>
+          <button type="button" class="st-btn st-tool${projectDirty ? " is-dirty" : ""}" id="st-save-btn" data-st-action="save-project" title="Save project locally" aria-label="Save project">${stIcon("save")}</button>
+          <button type="button" class="st-btn st-tool${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer" title="Projects" aria-label="Projects">${stIcon("folder")}</button>
+          ${instrumentFocusMode ? `<button type="button" class="st-btn st-tool${keysVisible ? " is-active" : ""}" id="st-keys-toggle" data-st-action="toggle-keys" aria-pressed="${keysVisible}" title="On-screen keyboard" aria-label="On-screen keyboard">${stIcon("keys")}</button>` : ""}
+          <div class="st-export-wrap st-menu-anchor">
+            <button type="button" class="st-btn st-tool${exportMenuOpen && studioMenuKind === "settings" ? " is-active" : ""}" id="st-settings-btn" data-st-action="toggle-settings-menu" aria-haspopup="menu" aria-expanded="${exportMenuOpen && studioMenuKind === "settings"}" aria-label="Studio settings" title="Studio settings">${stIcon("settings")}</button>
+            <button type="button" class="st-btn st-tool${exportMenuOpen && studioMenuKind === "project" ? " is-active" : ""}" id="st-export-menu-btn" data-st-action="toggle-export-menu" aria-haspopup="menu" aria-expanded="${exportMenuOpen && studioMenuKind === "project"}" aria-label="Project actions" title="Project actions">${exporting || exportingStems ? "…" : stIcon("more")}</button>
+            <div class="st-export-menu" id="st-export-menu" role="menu" aria-label="${studioMenuKind === "settings" ? "Studio settings" : "Project actions"}"${exportMenuOpen ? "" : " hidden"}>
+              <div class="st-menu-title">${studioMenuKind === "settings" ? "Studio settings" : "Project actions"}</div>
+              <div class="st-menu-view"${studioMenuKind !== "settings" ? " hidden" : ""}>
+                <label class="st-setting-field">Tempo <input id="st-bpm-input" type="number" min="40" max="240" step="1" value="${tr.bpm}" aria-label="Tempo BPM" /><span>BPM</span></label>
+                <button type="button" class="st-menu-item${recSettings.countIn ? " is-checked" : ""}" id="st-countin-btn" role="menuitemcheckbox" aria-checked="${recSettings.countIn}" data-st-action="count-in">${recSettings.countIn ? "✓ " : ""}1-Bar Count-in</button>
+                ${!instrumentFocusMode ? `<button type="button" class="st-menu-item${keysVisible ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${keysVisible}" id="st-keys-toggle" data-st-action="toggle-keys">${keysVisible ? "✓ " : ""}On-Screen Keys</button>` : ""}
               <div class="st-menu-label">Arrangement Length (Bars)</div>
               <div class="st-menu-bars">
                 ${barButtons}
@@ -866,7 +885,12 @@ function renderStudioHtml(): string {
               <button type="button" class="st-menu-item${recMode === "overdub" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "overdub"}" data-st-action="set-rec-mode" data-rec-mode="overdub">${recMode === "overdub" ? "✓ " : ""}Overdub (Merge)</button>
               <button type="button" class="st-menu-item${recMode === "takes" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "takes"}" data-st-action="set-rec-mode" data-rec-mode="takes">${recMode === "takes" ? "✓ " : ""}Separate Takes</button>
               <button type="button" class="st-menu-item${recMode === "replace" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "replace"}" data-st-action="set-rec-mode" data-rec-mode="replace">${recMode === "replace" ? "✓ " : ""}Replace Armed Track</button>
-              <div class="st-menu-sep"></div>
+
+              </div>
+              <div class="st-menu-view"${studioMenuKind !== "project" ? " hidden" : ""}>
+                <button type="button" class="st-menu-item" role="menuitem" data-st-action="toggle-open-drawer">My Projects…</button>
+                <button type="button" class="st-menu-item" role="menuitem" data-st-action="save-project">Save project</button>
+                <div class="st-menu-sep"></div>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-wav" data-st-action="export-wav"${exporting || exportingStems ? " disabled" : ""}>Export 24-bit WAV Mix</button>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-stems" data-st-action="export-stems"${exporting || exportingStems ? " disabled" : ""}>Export 24-bit WAV Stems</button>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-midi" data-st-action="export-midi">Export MIDI (SMF-1)</button>
@@ -874,6 +898,10 @@ function renderStudioHtml(): string {
               <div class="st-menu-sep"></div>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-project" data-st-action="export-project">Export .sy1studio</button>
               <button type="button" class="st-menu-item" role="menuitem" id="st-import-project-btn" data-st-action="trigger-import-project"${tr.recording ? " disabled" : ""}>Import .sy1studio</button>
+
+                <div class="st-menu-sep"></div>
+                <button type="button" class="st-menu-item st-menu-destructive" role="menuitem" data-st-action="clear-track" data-track-id="${escapeHtml(focused.id)}"${studioEngine.regions.regions(focused.id).length === 0 ? " disabled" : ""}>Clear ${escapeHtml(focusedMachine.name)} Track…</button>
+              </div>
             </div>
             <input type="file" id="st-import-file" accept=".sy1studio,.json,application/json" hidden />
           </div>
@@ -956,17 +984,17 @@ function renderStudioHtml(): string {
               <div class="st-arr-tb-left">
                 ${
                   !instrumentFocusMode
-                    ? `<button type="button" class="st-btn st-tiny-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>`
+                    ? `<button type="button" class="st-btn st-tiny-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser" aria-label="Instrument browser">${stIcon("browser")}</button>`
                     : ""
                 }
                 ${
                   tracks.length < STUDIO_MAX_TRACKS
-                    ? `<button type="button" class="st-btn st-tiny-btn" id="st-add-track-btn" data-st-action="add-track">+ Track</button>`
+                    ? `<button type="button" class="st-btn st-tiny-btn" id="st-add-track-btn" data-st-action="add-track" aria-label="Add track" title="Add track">${stIcon("plus")}<span class="st-tool-label">Track</span></button>`
                     : ""
                 }
                 <div class="st-seg st-history-seg" role="group" aria-label="Edit history">
-                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶</button>
-                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>${stIcon("undo")}</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>${stIcon("redo")}</button>
                 </div>
                 <label class="st-arr-snap-field" title="Arrangement region snap grid (independent from Piano Roll Snap)">
                   <span class="st-arr-snap-lbl">Snap</span>
@@ -1020,9 +1048,9 @@ function renderStudioHtml(): string {
           <section class="st-dock" id="st-dock" aria-label="Studio Bottom Editor">
             <div class="st-dock-head">
               <div class="st-dock-tabs" role="tablist" aria-label="Studio views">
-                <button type="button" class="st-dock-tab${activeDockTab === "piano-roll" && !dockCollapsed ? " is-active" : ""}" id="st-tab-pianoroll" role="tab" aria-selected="${activeDockTab === "piano-roll" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="piano-roll">Piano Roll</button>
-                <button type="button" class="st-dock-tab${activeDockTab === "mixer" && !dockCollapsed ? " is-active" : ""}" id="st-tab-mixer" role="tab" aria-selected="${activeDockTab === "mixer" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="mixer">Mixer</button>
-                <button type="button" class="st-dock-tab${activeDockTab === "instrument" && !dockCollapsed ? " is-active" : ""}" id="st-tab-instrument" role="tab" aria-selected="${activeDockTab === "instrument" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="instrument">Instrument</button>
+                <button type="button" class="st-dock-tab${activeDockTab === "piano-roll" && !dockCollapsed ? " is-active" : ""}" id="st-tab-pianoroll" role="tab" aria-selected="${activeDockTab === "piano-roll" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="piano-roll" aria-label="Piano Roll">${stIcon("notes")}<span class="st-dock-label">Piano Roll</span></button>
+                <button type="button" class="st-dock-tab${activeDockTab === "mixer" && !dockCollapsed ? " is-active" : ""}" id="st-tab-mixer" role="tab" aria-selected="${activeDockTab === "mixer" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="mixer" aria-label="Mixer">${stIcon("mixer")}<span class="st-dock-label">Mixer</span></button>
+                <button type="button" class="st-dock-tab${activeDockTab === "instrument" && !dockCollapsed ? " is-active" : ""}" id="st-tab-instrument" role="tab" aria-selected="${activeDockTab === "instrument" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="instrument" aria-label="Instrument">${stIcon("instrument")}<span class="st-dock-label">Instrument</span></button>
               </div>
               <div class="st-dock-focused">
                 <span class="st-dock-track-name">${escapeHtml(focusedMachine.name)}</span>
@@ -1032,8 +1060,8 @@ function renderStudioHtml(): string {
               </div>
               <div class="st-dock-actions">
                 <div class="st-seg st-dock-history" role="group" aria-label="Edit history">
-                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶</button>
-                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>${stIcon("undo")}</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>${stIcon("redo")}</button>
                 </div>
                 ${
                   !dockCollapsed
@@ -1223,10 +1251,7 @@ function seekFromPointer(el: HTMLElement, clientX: number): void {
 }
 
 export function showStudioPianoRoll(): void {
-  activeDockTab = "piano-roll";
-  dockCollapsed = false;
-  dockPinnedOpen = true;
-  renderStudioPanel();
+  setStudioDockTab("piano-roll");
 }
 
 export function initStudioPanel(opts: { onClose: () => void }): void {
@@ -1556,11 +1581,15 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           applyKeyboardVisibility();
           renderStudioPanel();
           break;
-        case "toggle-export-menu":
-          exportMenuOpen = !exportMenuOpen;
+        case "toggle-settings-menu":
+        case "toggle-export-menu": {
+          const kind = action === "toggle-settings-menu" ? "settings" : "project";
+          exportMenuOpen = !(exportMenuOpen && studioMenuKind === kind);
+          studioMenuKind = kind;
           renderStudioPanel();
-          container.querySelector<HTMLElement>(exportMenuOpen ? "#st-export-menu [role='menuitem']:not(:disabled)" : "#st-export-menu-btn")?.focus();
+          container.querySelector<HTMLElement>(exportMenuOpen ? "#st-export-menu .st-menu-view:not([hidden]) [role^='menuitem']:not(:disabled)" : kind === "settings" ? "#st-settings-btn" : "#st-export-menu-btn")?.focus();
           break;
+        }
         case "metronome":
           studioEngine.setRecordingSettings({ metronome: !studioEngine.getRecordingSettings().metronome });
           break;
@@ -1586,6 +1615,9 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         case "play":
           if (studioEngine.getTransportSnapshot().playing) void studioEngine.stop();
           else void studioEngine.play();
+          break;
+        case "rewind":
+          studioEngine.seekToTick(0);
           break;
         case "stop":
           void studioEngine.stop();
@@ -1735,12 +1767,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         case "dock-tab": {
           const tab = btn.getAttribute("data-st-dock-tab") as StudioDockTab | null;
-          if (tab) {
-            activeDockTab = tab;
-            dockCollapsed = false;
-            dockPinnedOpen = true;
-            renderStudioPanel();
-          }
+          if (tab) setStudioDockTab(tab);
           break;
         }
         case "dock-expand":
@@ -2410,6 +2437,12 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         });
       return;
     }
+    if (el.id === "st-bpm-input") {
+      const bpm = Number(el.value);
+      if (Number.isFinite(bpm) && el.value.trim()) studioEngine.setBpm(bpm);
+      renderStudioPanel();
+      return;
+    }
     if (el.id === "st-bars-custom") {
       studioEngine.setBars(Number(el.value));
       return;
@@ -2802,10 +2835,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     if (lane) {
       const tid = lane.getAttribute("data-track-id");
       if (tid) focusTrackSelection(tid);
-      activeDockTab = "piano-roll";
-      dockCollapsed = false;
-      dockPinnedOpen = true;
-      renderStudioPanel();
+      showStudioPianoRoll();
       return;
     }
 
@@ -2840,14 +2870,14 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       e.stopPropagation();
       exportMenuOpen = false;
       renderStudioPanel();
-      container.querySelector<HTMLElement>("#st-export-menu-btn")?.focus();
+      container.querySelector<HTMLElement>(studioMenuKind === "settings" ? "#st-settings-btn" : "#st-export-menu-btn")?.focus();
       return;
     }
     const inExportMenu = (e.target as HTMLElement | null)?.closest("#st-export-menu");
     if (inExportMenu && ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
       e.preventDefault();
       e.stopPropagation();
-      const items = Array.from(inExportMenu.querySelectorAll<HTMLElement>("[role='menuitem']:not(:disabled)"));
+      const items = Array.from(inExportMenu.querySelectorAll<HTMLElement>(".st-menu-view:not([hidden]) [role^='menuitem']:not(:disabled)"));
       const current = items.indexOf(document.activeElement as HTMLElement);
       const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 :
         (current + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;

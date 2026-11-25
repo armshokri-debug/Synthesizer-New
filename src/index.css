@@ -3564,3 +3564,104 @@ button.synth-machine-select {
 .is-plugin .synth-tempo .tempo-sync-btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); box-shadow: 0 0 8px var(--accent-glow-soft, transparent); }
 .is-plugin.is-synced .synth-tempo button:disabled { opacity: 0.35; cursor: default; }
 .is-plugin.is-synced .synth-tempo .synth-tempo-val:disabled { opacity: 1; }
+
+/* Web-only opt-in ALL tab. Original instrument layout and skins are untouched
+   for every existing section tab. Allow vertical scroll rather than shrinking keys. */
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sections {
+  grid-auto-rows: minmax(min-content, auto);
+  align-content: start;
+  overflow-y: auto;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sec { display: flex; }
+@media (max-width: 760px) {
+  html:not(.is-plugin) #sy1-panel .synth-tabs { min-width: 0; max-width: 100%; overflow-x: auto; }
+  html:not(.is-plugin) #sy1-panel .synth-tab { flex: 0 0 auto; }
+}
+
+/* ALL is a scrolling overview, not a squeezed version of the paged layout.
+   Scope these geometry rules to web ALL only; original skins/tabs stay intact. */
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 226px), 1fr));
+  grid-template-rows: none;
+  grid-auto-flow: row;
+  grid-auto-rows: max-content;
+  align-content: start;
+  align-items: start;
+  gap: 8px;
+  padding: 3px 4px 10px;
+  overflow: auto;
+  touch-action: pan-y;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sec {
+  display: flex;
+  flex-flow: column nowrap;
+  align-content: start;
+  align-items: stretch;
+  justify-content: start;
+  grid-row: auto;
+  grid-column: auto;
+  height: auto;
+  min-height: max-content;
+  max-height: none;
+  gap: 8px;
+  padding: 8px;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sec.sec-wide,
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sec:has(.drum-steps) { grid-column: 1 / -1; }
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sec > * {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  align-self: stretch;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .sk-row {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: start;
+  justify-content: space-evenly;
+  gap: 6px;
+  min-height: max-content;
+  height: auto;
+  width: 100%;
+  margin: 0;
+  --k-in: 42px;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .sk-row > .sk {
+  --k: 42px;
+  flex: 1 0 54px;
+  width: auto;
+  max-width: 100%;
+  min-width: 54px;
+  min-height: 69px;
+  padding: 3px 2px 2px;
+  box-sizing: border-box;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .sk-label,
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .sk-val {
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-choice { flex-wrap: wrap; }
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-choice-btn { flex: 1 1 36px; min-height: 32px; white-space: normal; }
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-custom { max-width: 100%; min-width: 0; overflow-x: auto; }
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-tabs { overflow-x: auto; scrollbar-width: thin; touch-action: pan-x; }
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-tab { flex-shrink: 0; touch-action: pan-x; }
+@media (max-width: 760px) {
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-subbar { flex-wrap: wrap; }
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-tabs { flex: 1 0 100%; margin-left: 0; }
+}
+/* Size containment from the original paged skin suppresses intrinsic height. */
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sec {
+  container-type: inline-size;
+  contain: none;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sections {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .sk-caption { display: block; }

@@ -579,6 +579,7 @@ function renderMachineOptions(): string {
 const PAGE_KEY = (id: string) => `sy1.m.${id}.page`;
 const PAGED_MQ = "(max-width: 760px), (max-height: 560px) and (orientation: landscape)";
 let currentPage = "";
+const allowAllPage = () => !(globalThis as any).__SY1_PLUGIN__;
 let connOpen = false;
 
 function isPagedLayout(): boolean {
@@ -603,10 +604,10 @@ function applyPageVisibility(): void {
   const panel = document.querySelector<HTMLElement>(".synth-panel");
   const shell = document.querySelector<HTMLElement>(".sy1-shell");
   if (!panel) return;
-  if (!m.pages.some((p) => p.id === currentPage)) currentPage = m.pages[0].id;
+  if (!(allowAllPage() && currentPage === "all") && !m.pages.some((p) => p.id === currentPage)) currentPage = m.pages[0].id;
   panel.setAttribute("data-page", currentPage);
 
-  const activePages = new Set<string>([currentPage]);
+  const activePages = new Set<string>(currentPage === "all" ? m.pages.map(p => p.id) : [currentPage]);
   const wideFitPaged = !!shell && shell.classList.contains("is-fit-paged") && window.innerWidth >= 761;
   if (wideFitPaged && m.pages.length > 1) {
     const curSecs = m.sections.filter((s) => s.page === currentPage);
@@ -631,21 +632,21 @@ function applyPageVisibility(): void {
     const pg = t.getAttribute("data-page") || "";
     const isPrimary = pg === currentPage;
     const isShown = activePages.has(pg);
-    t.classList.toggle("active", isShown);
+    t.classList.toggle("active", currentPage === "all" ? isPrimary : isShown);
     t.setAttribute("aria-selected", isPrimary ? "true" : "false");
   });
 }
 
 export function setPanelPage(id: string): void {
   const m = getMachine();
-  if (!m.pages.some((p) => p.id === id)) id = m.pages[0].id;
+  if (!(allowAllPage() && id === "all") && !m.pages.some((p) => p.id === id)) id = m.pages[0].id;
   currentPage = id;
   applyPageVisibility();
   try { localStorage.setItem(PAGE_KEY(m.id), id); } catch (e) {}
 }
 
 function stepPanelPage(dir: number): void {
-  const pages = getMachine().pages;
+  const pages = allowAllPage() ? [{id: "all", label: "All"}, ...getMachine().pages] : getMachine().pages;
   const i = pages.findIndex((p) => p.id === currentPage);
   const next = pages[Math.max(0, Math.min(pages.length - 1, i + dir))];
   if (next) setPanelPage(next.id);
@@ -735,7 +736,7 @@ export function renderSynthPanelHtml(): string {
           <button type="button" class="synth-midi-btn preset-step-btn" data-action="preset-next" aria-label="Next preset">▶</button>
         </div>
         ${tempo}
-        <nav class="synth-tabs" role="tablist" aria-label="Panel pages">${m.pages.map((pg) =>
+        <nav class="synth-tabs" role="tablist" aria-label="Panel pages">${(allowAllPage() ? [{id: "all", label: "ALL"}, ...m.pages] : m.pages).map((pg) =>
           `<button type="button" class="synth-tab" role="tab" data-action="synth-page" data-page="${pg.id}">${escapeHtml(pg.label)}</button>`).join("")}</nav>
       </div>
       <div class="synth-sections">
@@ -889,7 +890,7 @@ export function fitPanel(): void {
     Array.from(panel.querySelectorAll<HTMLElement>(".synth-sec")).some(
       (s) => getComputedStyle(s).display !== "none" && s.scrollHeight > s.clientHeight + 1
     );
-  if (!window.matchMedia(PAGED_MQ).matches && overflowing()) {
+  if (currentPage !== "all" && !window.matchMedia(PAGED_MQ).matches && overflowing()) {
     shell.classList.add("is-fit-paged");
   }
   applyPageVisibility();
