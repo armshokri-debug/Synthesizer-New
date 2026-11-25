@@ -5,9 +5,9 @@ import { STUDIO_SNAP_OPTIONS } from "../studio/types";
 import type { SY1TrackEngine } from "../studio/track-engine";
 import { escapeHtml } from "../engine/params";
 
-export function renderRegions(track: SY1TrackEngine, total: number, color: string): string {
+export function renderRegions(track: SY1TrackEngine, total: number, color: string, isFocused = true): string {
   const regions = studioEngine.regions.regions(track.id);
-  if (!regions.length) return '<div class="st-lane-empty">Arm to record or add notes in Piano Roll</div>';
+  if (!regions.length) return isFocused ? '<div class="st-lane-empty">Record or double-click to add notes</div>' : "";
   return regions.filter(region => region.startTick < total).map(region => {
     const selected = studioEngine.regions.has(region.id);
     const width = Math.min(region.length, total - region.startTick) / total * 100;

@@ -54,8 +54,9 @@ const TRACK_COLORS = ["#f0a233", "#4ba3d9", "#55b884", "#cf6e8a"];
 
 let activeDockTab: StudioDockTab = "piano-roll";
 let dockExpanded = false;
-let dockCollapsed = false;
-let dockHeightPx = 310;
+let dockCollapsed = true;
+let dockPinnedOpen = false;
+let dockHeightPx = 300;
 let instrumentFocusMode = false;
 let preInstFocusState: {
   dockTab: StudioDockTab;
@@ -65,7 +66,7 @@ let preInstFocusState: {
   keysVisible: boolean;
 } | null = null;
 
-let browserOpen = true;
+let browserOpen = false;
 let browserMachineId = "all"; // "all" or specific city synth id
 let browserCategory = "All";
 let browserSearch = "";
@@ -168,6 +169,7 @@ export function getStudioDockTab(): StudioDockTab {
 export function setStudioDockTab(tab: StudioDockTab): void {
   activeDockTab = tab;
   dockCollapsed = false;
+  dockPinnedOpen = true;
   renderStudioPanel();
 }
 
@@ -261,6 +263,9 @@ export async function importStudioProjectJson(text: string): Promise<{ ok: boole
     suppressDirtyTracking = true;
     await studioEngine.loadProject(candidate);
     pendingClearTrackId = null;
+    dockCollapsed = true;
+    dockPinnedOpen = false;
+    dockExpanded = false;
     await studioStorage.saveAutosave(studioEngine.exportProject());
     markProjectSaved();
     openDrawerVisible = false;
@@ -456,21 +461,20 @@ function renderInstrumentBrowserHtml(focused: SY1TrackEngine): string {
     <aside class="st-browser${browserOpen ? "" : " is-collapsed"}" id="st-browser" aria-label="Instrument Browser"${browserOpen ? "" : " hidden"}>
       <div class="st-br-head">
         <div class="st-br-title-row">
-          <span class="st-br-title">Instruments</span>
-          <span class="st-br-target">→ ${escapeHtml(focused.name)}</span>
+          <span class="st-br-title">Browser</span>
           <button type="button" class="st-icon-btn" data-st-action="toggle-browser" aria-label="Close instrument browser" title="Hide Browser">✕</button>
         </div>
         <div class="st-br-search-row">
-          <input type="search" class="st-br-search" id="st-browser-search" value="${escapeHtml(browserSearch)}" placeholder="Search synths, drums, presets…" aria-label="Search instruments and presets" />
+          <input type="search" class="st-br-search" id="st-browser-search" value="${escapeHtml(browserSearch)}" placeholder="Search instruments, presets…" aria-label="Search instruments and presets" />
           <button type="button" class="st-btn st-br-fav-btn${browserFavsOnly ? " is-active" : ""}" id="st-browser-fav-btn" data-st-action="browser-toggle-favs" aria-pressed="${browserFavsOnly}" title="Show favorites only">★</button>
         </div>
       </div>
 
-      <div class="st-br-machines" role="listbox" aria-label="Iranian city synthesizers and drum machines">
+      <div class="st-br-machines" role="listbox" aria-label="Synthesizers and drum machines">
         <div class="st-br-filter-row">
-          <button type="button" class="st-br-fchip${browserMachineId === "all" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="all">All (${machines.length})</button>
-          <button type="button" class="st-br-fchip${browserMachineId === "synths" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="synths">Synths (${STUDIO_SYNTH_MACHINES.length})</button>
-          <button type="button" class="st-br-fchip${browserMachineId === "drums" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="drums">Drums (${STUDIO_DRUM_MACHINES.length})</button>
+          <button type="button" class="st-br-fchip${browserMachineId === "all" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="all">All</button>
+          <button type="button" class="st-br-fchip${browserMachineId === "synths" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="synths">Synths</button>
+          <button type="button" class="st-br-fchip${browserMachineId === "drums" ? " is-active" : ""}" data-st-action="browser-machine" data-st-machine="drums">Drums</button>
         </div>
         ${machines
           .map((m) => {
@@ -478,26 +482,23 @@ function renderInstrumentBrowserHtml(focused: SY1TrackEngine): string {
             const loaded = focused.machineId === m.id;
             return `<button type="button" class="st-br-mcard${active ? " is-active" : ""}${loaded ? " is-loaded" : ""}" data-st-action="browser-machine" data-st-machine="${escapeHtml(m.id)}" aria-selected="${active}">
               <span class="st-br-mart">${machineArt(m)}</span>
-              <span class="st-br-minfo">
-                <span class="st-br-mname">${escapeHtml(m.name)}${m.kind === "drums" ? " · Drums" : ""}</span>
-                <span class="st-br-mrole">${escapeHtml(m.role)}</span>
-              </span>
+              <span class="st-br-mname">${escapeHtml(m.name)}</span>
+              ${m.kind === "drums" ? `<span class="st-br-mkind">Drums</span>` : ""}
             </button>`;
           })
           .join("")}
       </div>
 
-      <label class="st-br-cats">
-        <span>Category</span>
+      <div class="st-br-cats">
         <select id="st-browser-category" aria-label="Preset category">
         ${categories
           .map(
             (cat) =>
-              `<option value="${escapeHtml(cat)}"${effCategory === cat ? " selected" : ""}>${escapeHtml(cat)}</option>`
+              `<option value="${escapeHtml(cat)}"${effCategory === cat ? " selected" : ""}>${cat === "All" ? "All Categories" : escapeHtml(cat)}</option>`
           )
           .join("")}
         </select>
-      </label>
+      </div>
 
       <div class="st-br-list" id="st-browser-list" role="listbox" aria-label="Presets">
         ${
@@ -514,7 +515,7 @@ function renderInstrumentBrowserHtml(focused: SY1TrackEngine): string {
                   </div>`;
                 })
                 .join("")
-            : `<div class="st-br-empty">${browserFavsOnly ? "No favorite presets yet. Tap ★ on any preset." : "No matching presets."}</div>`
+            : `<div class="st-br-empty">${browserFavsOnly ? "No favorite presets yet." : "No matching presets."}</div>`
         }
       </div>
     </aside>`;
@@ -547,6 +548,13 @@ function renderLaneGrid(bars: number, zoom: number): string {
 
 // ------------------------------------------------------------ Mixer View ----
 
+function renderTrackIconHtml(isDrum: boolean): string {
+  if (isDrum) {
+    return `<svg class="st-trk-svg" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1.2" fill="currentColor" opacity="0.9"/><rect x="9" y="2" width="5" height="5" rx="1.2" fill="currentColor" opacity="0.55"/><rect x="2" y="9" width="5" height="5" rx="1.2" fill="currentColor" opacity="0.55"/><rect x="9" y="9" width="5" height="5" rx="1.2" fill="currentColor" opacity="0.9"/></svg>`;
+  }
+  return `<svg class="st-trk-svg" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1.5 9.5L4 4.5l3 7 3-6 2.5 4h2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
 function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEngine): string {
   const masterVol = getMasterVolume();
   const strips = tracks
@@ -557,17 +565,17 @@ function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEng
       const panStr = fmtPan(t.pan);
       return `<div class="st-mix-strip${isFocused ? " is-focused" : ""}" data-mix-track="${escapeHtml(t.id)}" style="--trk-color:${color}">
         <div class="st-mix-top">
-          <button type="button" class="st-mix-name" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}">${escapeHtml(t.name)}</button>
-          <span class="st-mix-sub" title="${escapeHtml(mDef.name)} · ${escapeHtml(t.presetName)}">${escapeHtml(mDef.name)} · ${escapeHtml(t.presetName)}</span>
+          <button type="button" class="st-mix-name" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}">${escapeHtml(mDef.name)}</button>
+          <span class="st-mix-sub" title="${escapeHtml(t.name)} · ${escapeHtml(t.presetName)}">${escapeHtml(t.name)}</span>
         </div>
         <div class="st-mix-pan">
           <span class="st-mix-lbl" data-st-pan-lbl="${escapeHtml(t.id)}">${panStr}</span>
           <input type="range" class="st-range" min="-1" max="1" step="0.02" value="${t.pan.toFixed(2)}" data-st-range="pan" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} mixer pan" />
         </div>
         <div class="st-mix-btns">
-          <button type="button" class="st-btn st-mini-btn is-rec${t.armed ? " is-active" : ""}" data-st-action="toggle-arm" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.armed}" title="Record Arm">R</button>
           <button type="button" class="st-btn st-mini-btn is-mute${t.mute ? " is-active" : ""}" data-st-action="toggle-mute" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.mute}" title="Mute">M</button>
           <button type="button" class="st-btn st-mini-btn is-solo${t.solo ? " is-active" : ""}" data-st-action="toggle-solo" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.solo}" title="Solo">S</button>
+          <button type="button" class="st-btn st-mini-btn is-rec${t.armed ? " is-active" : ""}" data-st-action="toggle-arm" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.armed}" title="Record Arm">R</button>
         </div>
         <div class="st-mix-fader-row">
           <div class="st-mix-meter" aria-hidden="true">
@@ -578,9 +586,7 @@ function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEng
           </div>
         </div>
         <div class="st-mix-db" data-st-db-lbl="${escapeHtml(t.id)}">${fmtDb(t.volume)}</div>
-        <label class="st-mix-routing">MIDI input
-          <select class="st-select" data-st-select="channel" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(mDef.name)} MIDI input channel">${midiChannelOptionsHtml(t.midiChannel)}</select>
-        </label>
+        <select class="st-select st-mix-ch-sel" data-st-select="channel" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(mDef.name)} MIDI input channel">${midiChannelOptionsHtml(t.midiChannel)}</select>
       </div>`;
     })
     .join("");
@@ -591,13 +597,7 @@ function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEng
       <div class="st-mix-strip is-master">
         <div class="st-mix-top">
           <span class="st-mix-name">Master</span>
-          <span class="st-mix-sub">Stereo Out</span>
-        </div>
-        <div class="st-mix-pan">
-          <span class="st-mix-lbl">Stereo</span>
-        </div>
-        <div class="st-mix-btns">
-          <span class="st-mix-tag">24-bit Bus</span>
+          <span class="st-mix-sub">Out</span>
         </div>
         <div class="st-mix-fader-row">
           <div class="st-mix-meter is-master" aria-hidden="true">
@@ -626,7 +626,7 @@ function renderStudioHtml(): string {
 
   const barButtons = STUDIO_BAR_PRESETS.map(
     (b) =>
-      `<button type="button" class="st-btn st-bar-btn${tr.bars === b ? " is-active" : ""}" data-st-action="set-bars" data-st-bars="${b}">${b}</button>`
+      `<button type="button" class="st-btn st-tiny-btn st-bar-btn${tr.bars === b ? " is-active" : ""}" data-st-action="set-bars" data-st-bars="${b}">${b}</button>`
   ).join("");
 
   const laneZoomStyle = arrZoom > 1 ? `min-width:${Math.round(arrZoom * 100)}%` : "";
@@ -635,49 +635,29 @@ function renderStudioHtml(): string {
     .map((t, idx) => {
       const color = trackColor(idx);
       const isFocused = t.id === focused.id;
-      const panStr = fmtPan(t.pan);
-      const noteCount = t.getNoteCount();
       const mDef = getStudioMachineDef(t.machineId);
-      const noteUnit = t.isDrumTrack() ? (noteCount === 1 ? "hit" : "hits") : noteCount === 1 ? "note" : "notes";
 
       return `<div class="st-track${isFocused ? " is-focused" : ""}" data-track-id="${escapeHtml(t.id)}" data-track-idx="${idx}" style="--trk-color:${color}">
         <div class="st-track-ctl">
           <div class="st-track-top">
-            <button type="button" class="st-track-title st-track-focus" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}" aria-label="Focus ${escapeHtml(mDef.name)}" title="Focus instrument">●</button>
-            <select class="st-select st-machine-sel" data-st-select="machine" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} instrument" title="Select instrument for ${escapeHtml(t.name)}">
+            <button type="button" class="st-track-focus" data-st-action="focus-track" data-track-id="${escapeHtml(t.id)}" aria-label="Select ${escapeHtml(mDef.name)}" title="Select track">${renderTrackIconHtml(t.isDrumTrack())}</button>
+            <select class="st-select st-machine-sel" data-st-select="machine" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} instrument" title="Change instrument">
               ${machineOptionsHtml(t.machineId)}
             </select>
-            <button type="button" class="st-track-city" data-st-action="open-track-instrument" data-track-id="${escapeHtml(t.id)}" title="Open ${escapeHtml(mDef.name)} instrument panel">Edit</button>
-          </div>
-          <div class="st-track-preset-row">
-            <button type="button" class="st-btn st-mini-btn is-rec${t.armed ? " is-active" : ""}" data-st-action="toggle-arm" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.armed}" title="Record Arm">R</button>
-            <button type="button" class="st-btn st-mini-btn is-mute${t.mute ? " is-active" : ""}" data-st-action="toggle-mute" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.mute}" title="Mute">M</button>
-            <button type="button" class="st-btn st-mini-btn is-solo${t.solo ? " is-active" : ""}" data-st-action="toggle-solo" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.solo}" title="Solo">S</button>
-            <select class="st-select st-preset-sel" data-st-select="preset" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} preset">
-              ${presetGroupsHtml(t.machineId, t.presetId)}
-            </select>
+            <button type="button" class="st-track-city" data-st-action="open-track-instrument" data-track-id="${escapeHtml(t.id)}" title="Edit ${escapeHtml(mDef.name)}">Edit</button>
           </div>
           <div class="st-track-mid">
-            <div class="st-fader-wrap" title="Track Volume">
-              <span class="st-fader-lbl">Vol</span>
-              <input type="range" class="st-range" min="0" max="1" step="0.01" value="${t.volume.toFixed(2)}" data-st-range="volume" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} volume" />
+            <div class="st-track-msr">
+              <button type="button" class="st-btn st-mini-btn is-mute${t.mute ? " is-active" : ""}" data-st-action="toggle-mute" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.mute}" title="Mute">M</button>
+              <button type="button" class="st-btn st-mini-btn is-solo${t.solo ? " is-active" : ""}" data-st-action="toggle-solo" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.solo}" title="Solo">S</button>
+              <button type="button" class="st-btn st-mini-btn is-rec${t.armed ? " is-active" : ""}" data-st-action="toggle-arm" data-track-id="${escapeHtml(t.id)}" aria-pressed="${t.armed}" title="Record Arm">R</button>
             </div>
-            <div class="st-fader-wrap st-pan-wrap" title="Track Pan (${panStr})">
-              <span class="st-fader-lbl" data-st-pan-lbl="${escapeHtml(t.id)}">${panStr}</span>
-              <input type="range" class="st-range" min="-1" max="1" step="0.02" value="${t.pan.toFixed(2)}" data-st-range="pan" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(t.name)} pan" />
-            </div>
-          </div>
-          <div class="st-track-meta">
-            <div class="st-hdr-meter" aria-hidden="true"><span class="st-hdr-meter-fill" data-st-hdr-meter="${escapeHtml(t.id)}" style="transform:scaleX(0)"></span></div>
-            <span class="st-track-stats" data-st-meta="${escapeHtml(t.id)}">${noteCount} ${noteUnit}</span>
-            <div class="st-track-tools">
-              <button type="button" class="st-btn st-tiny-btn" data-st-action="clear-track" data-track-id="${escapeHtml(t.id)}"${studioEngine.regions.regions(t.id).length === 0 ? " disabled" : ""}>Clear</button>
-            </div>
+            <input type="range" class="st-range st-track-vol" min="0" max="1" step="0.01" value="${t.volume.toFixed(2)}" data-st-range="volume" data-track-id="${escapeHtml(t.id)}" aria-label="${escapeHtml(mDef.name)} volume" title="Volume" />
           </div>
         </div>
-        <div class="st-lane" data-st-lane="1" data-track-id="${escapeHtml(t.id)}" style="${laneZoomStyle}" title="Click to focus track & seek · Double-click to edit in Piano Roll">
+        <div class="st-lane" data-st-lane="1" data-track-id="${escapeHtml(t.id)}" style="${laneZoomStyle}" title="Click to select track & seek · Double-click to open Piano Roll">
           <div class="st-lane-grid">${renderLaneGrid(tr.bars, arrZoom)}</div>
-          <div class="st-lane-notes">${renderRegions(t, tr.totalTicks, color)}</div>
+          <div class="st-lane-notes">${renderRegions(t, tr.totalTicks, color, isFocused)}</div>
           <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
         </div>
       </div>`;
@@ -819,10 +799,8 @@ function renderStudioHtml(): string {
          ${machineOptionsHtml(focused.machineId)}
        </select>
        <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>`
-    : `<button type="button" class="st-btn" id="st-back-btn" data-st-action="close-studio" title="Return to standalone SY-1 Synth">← Synth</button>
-       <div class="st-brand">SY-1 <span>Studio</span></div>
-       <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>
-       <input type="text" class="st-name-input" id="st-project-name" value="${escapeHtml(tr.projectName)}" maxlength="80" aria-label="Project name" placeholder="Untitled Session" />`;
+    : `<button type="button" class="st-btn st-ghost-btn" id="st-back-btn" data-st-action="close-studio" title="Return to standalone SY-1 Synth">← Back</button>
+       <input type="text" class="st-name-input" id="st-project-name" value="${escapeHtml(tr.projectName)}" maxlength="80" aria-label="Project name" placeholder="Untitled Project" />`;
 
   return `
     <div class="st-daw${dockExpanded ? " is-dock-expanded" : ""}${dockCollapsed && !instrumentFocusMode ? " is-dock-collapsed" : ""}${instrumentFocusMode ? " is-inst-focus" : ""}" dir="ltr" style="--st-dock-h:${dockHeightPx}px">
@@ -832,51 +810,72 @@ function renderStudioHtml(): string {
         </div>
 
         <div class="st-tb-center" role="group" aria-label="Master Transport">
-          <div class="st-seg">
-            <button type="button" class="st-btn is-play${tr.playing ? " is-active" : ""}" id="st-play-btn" data-st-action="play" aria-pressed="${tr.playing}">${tr.playing ? "Playing" : "▶ Play"}</button>
-            <button type="button" class="st-btn" id="st-stop-btn" data-st-action="stop">■ Stop</button>
-            <button type="button" class="st-btn is-rec${tr.recording ? " is-active" : ""}" id="st-rec-btn" data-st-action="record" aria-pressed="${tr.recording}">● Rec</button>
-            <button type="button" class="st-btn${tr.loopEnabled ? " is-active" : ""}" id="st-loop-btn" data-st-action="toggle-loop" aria-pressed="${tr.loopEnabled}">Loop</button>
+          <div class="st-seg st-transport-seg">
+            <button type="button" class="st-btn is-play${tr.playing ? " is-active" : ""}" id="st-play-btn" data-st-action="play" aria-pressed="${tr.playing}" title="Play / Pause">${tr.playing ? "Playing" : "▶ Play"}</button>
+            <button type="button" class="st-btn" id="st-stop-btn" data-st-action="stop" title="Stop">■ Stop</button>
+            <button type="button" class="st-btn is-rec${tr.recording ? " is-active" : ""}" id="st-rec-btn" data-st-action="record" aria-pressed="${tr.recording}" title="Record">● Rec</button>
+            <button type="button" class="st-btn st-mobile-hide${tr.loopEnabled ? " is-active" : ""}" id="st-loop-btn" data-st-action="toggle-loop" aria-pressed="${tr.loopEnabled}" title="Toggle Loop">Loop</button>
           </div>
           <div class="st-clock${countInBeat ? " is-countin" : ""}" id="st-clock" aria-label="Transport position">${clockLabel}</div>
-          <div class="st-seg" role="group" aria-label="Tempo">
+          <div class="st-seg st-tempo-seg" role="group" aria-label="Tempo">
             <button type="button" class="st-btn st-step-btn" data-st-action="bpm-down" aria-label="Decrease BPM">−</button>
             <button type="button" class="st-btn st-bpm-val" id="st-bpm-val" data-st-action="bpm-tap" title="Tap tempo">${fmtBpm(tr.bpm)} BPM</button>
             <button type="button" class="st-btn st-step-btn" data-st-action="bpm-up" aria-label="Increase BPM">+</button>
           </div>
-          <div class="st-bars-group" role="group" aria-label="Timeline length in bars">
-            ${barButtons}
-            <input type="number" class="st-bar-input" id="st-bars-custom" min="1" max="512" value="${tr.bars}" aria-label="Custom bar count" title="Custom bar length (1–512)" />
+          <div class="st-seg st-click-seg st-mobile-hide" role="group" aria-label="Metronome and Count-in">
+            <button type="button" class="st-btn${recSettings.metronome ? " is-active" : ""}" id="st-click-btn" data-st-action="metronome" aria-pressed="${recSettings.metronome}" title="Metronome click (monitor only)">Click</button>
+            <button type="button" class="st-btn${recSettings.countIn ? " is-active" : ""}" id="st-countin-btn" data-st-action="count-in" aria-pressed="${recSettings.countIn}" title="1-bar Count-in before recording">1-Bar</button>
           </div>
         </div>
 
         <div class="st-tb-right">
-          <span class="st-save-state${saveStateClass}" id="st-save-state" title="Stored locally in this browser (no cloud sync)">${saveStateLabel}</span>
-          <button type="button" class="st-btn${projectDirty ? " is-dirty" : ""}" id="st-save-btn" data-st-action="save-project" title="Save project locally in this browser">Save</button>
-          <button type="button" class="st-btn${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer" title="My Projects: New, Open, Rename, Duplicate, Delete, Recovery">Projects</button>
+          <span class="st-save-state${saveStateClass}" id="st-save-state" title="Stored locally in this browser">${saveStateLabel}</span>
+          <button type="button" class="st-btn${projectDirty ? " is-dirty" : ""}" id="st-save-btn" data-st-action="save-project" title="Save project locally">Save</button>
+          <button type="button" class="st-btn st-mobile-hide${openDrawerVisible ? " is-active" : ""}" id="st-open-btn" data-st-action="toggle-open-drawer" title="Projects: New, Open, Rename, Duplicate, Delete">Projects</button>
+          ${
+            instrumentFocusMode
+              ? `<button type="button" class="st-btn${keysVisible ? " is-active" : ""}" id="st-keys-toggle" data-st-action="toggle-keys" aria-pressed="${keysVisible}" title="Show or hide on-screen keyboard">Keys</button>`
+              : ""
+          }
           <div class="st-export-wrap">
             <button type="button" class="st-btn${exportMenuOpen ? " is-active" : ""}" id="st-export-menu-btn" data-st-action="toggle-export-menu" aria-haspopup="menu" aria-expanded="${exportMenuOpen}">${exporting ? "Rendering…" : exportingStems ? "Stems…" : "More ▾"}</button>
             <div class="st-export-menu" id="st-export-menu" role="menu"${exportMenuOpen ? "" : " hidden"}>
-              <button type="button" class="st-menu-item" role="menuitem" id="st-export-wav" data-st-action="export-wav"${exporting || exportingStems ? " disabled" : ""}>24-bit WAV Mix</button>
-              <button type="button" class="st-menu-item" role="menuitem" id="st-export-stems" data-st-action="export-stems"${exporting || exportingStems ? " disabled" : ""}>24-bit WAV Stems</button>
-              <button type="button" class="st-menu-item" role="menuitem" id="st-export-midi" data-st-action="export-midi">MIDI (SMF-1)</button>
-              ${tr.hasLiveTake ? `<button type="button" class="st-menu-item" role="menuitem" id="st-export-live" data-st-action="export-live">Live Take WAV (${tr.liveTakeDurationSec.toFixed(1)}s)</button>` : ""}
+              <div class="st-menu-mobile-group st-mobile-only">
+                <button type="button" class="st-menu-item" role="menuitem" data-st-action="toggle-open-drawer">Projects…</button>
+                <button type="button" class="st-menu-item${tr.loopEnabled ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${tr.loopEnabled}" data-st-action="toggle-loop">${tr.loopEnabled ? "✓ " : ""}Loop</button>
+                <button type="button" class="st-menu-item${recSettings.metronome ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${recSettings.metronome}" data-st-action="metronome">${recSettings.metronome ? "✓ " : ""}Metronome Click</button>
+                <button type="button" class="st-menu-item${recSettings.countIn ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${recSettings.countIn}" data-st-action="count-in">${recSettings.countIn ? "✓ " : ""}1-Bar Count-in</button>
+                <div class="st-menu-sep"></div>
+              </div>
+              ${
+                !instrumentFocusMode
+                  ? `<button type="button" class="st-menu-item${keysVisible ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${keysVisible}" id="st-keys-toggle" data-st-action="toggle-keys">${keysVisible ? "✓ " : ""}On-Screen Keys</button>`
+                  : ""
+              }
+              <button type="button" class="st-menu-item" role="menuitem" data-st-action="clear-track" data-track-id="${escapeHtml(focused.id)}"${studioEngine.regions.regions(focused.id).length === 0 ? " disabled" : ""}>Clear ${escapeHtml(focusedMachine.name)} Track…</button>
               <div class="st-menu-sep"></div>
-              <button type="button" class="st-menu-item" role="menuitem" id="st-export-project" data-st-action="export-project">Export .sy1studio</button>
-              <button type="button" class="st-menu-item" role="menuitem" id="st-import-project-btn" data-st-action="trigger-import-project"${tr.recording ? " disabled" : ""}>Import .sy1studio</button>
+              <div class="st-menu-label">Arrangement Length (Bars)</div>
+              <div class="st-menu-bars">
+                ${barButtons}
+                <input type="number" class="st-bar-input" id="st-bars-custom" min="1" max="512" value="${tr.bars}" aria-label="Custom bar count" title="Custom bar length (1–512)" />
+              </div>
               <div class="st-menu-sep"></div>
-              <button type="button" class="st-menu-item" role="menuitem" data-st-action="metronome" aria-pressed="${recSettings.metronome}">Metronome: ${recSettings.metronome ? "On" : "Off"}</button>
-              <button type="button" class="st-menu-item" role="menuitem" data-st-action="count-in" aria-pressed="${recSettings.countIn}">1-bar Count-in: ${recSettings.countIn ? "On" : "Off"}</button>
               <label class="st-click-level">Click volume <input id="st-click-volume" type="range" min="0" max="1" step="0.01" value="${recSettings.clickVolume}" aria-label="Metronome volume"></label>
-              <div class="st-menu-sep"></div>
               <div class="st-menu-label">Recording Mode</div>
               <button type="button" class="st-menu-item${recMode === "overdub" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "overdub"}" data-st-action="set-rec-mode" data-rec-mode="overdub">${recMode === "overdub" ? "✓ " : ""}Overdub (Merge)</button>
               <button type="button" class="st-menu-item${recMode === "takes" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "takes"}" data-st-action="set-rec-mode" data-rec-mode="takes">${recMode === "takes" ? "✓ " : ""}Separate Takes</button>
               <button type="button" class="st-menu-item${recMode === "replace" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "replace"}" data-st-action="set-rec-mode" data-rec-mode="replace">${recMode === "replace" ? "✓ " : ""}Replace Armed Track</button>
+              <div class="st-menu-sep"></div>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-export-wav" data-st-action="export-wav"${exporting || exportingStems ? " disabled" : ""}>Export 24-bit WAV Mix</button>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-export-stems" data-st-action="export-stems"${exporting || exportingStems ? " disabled" : ""}>Export 24-bit WAV Stems</button>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-export-midi" data-st-action="export-midi">Export MIDI (SMF-1)</button>
+              ${tr.hasLiveTake ? `<button type="button" class="st-menu-item" role="menuitem" id="st-export-live" data-st-action="export-live">Live Take WAV (${tr.liveTakeDurationSec.toFixed(1)}s)</button>` : ""}
+              <div class="st-menu-sep"></div>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-export-project" data-st-action="export-project">Export .sy1studio</button>
+              <button type="button" class="st-menu-item" role="menuitem" id="st-import-project-btn" data-st-action="trigger-import-project"${tr.recording ? " disabled" : ""}>Import .sy1studio</button>
             </div>
             <input type="file" id="st-import-file" accept=".sy1studio,.json,application/json" hidden />
           </div>
-          <button type="button" class="st-btn${keysVisible ? " is-active" : ""}" id="st-keys-toggle" data-st-action="toggle-keys" aria-pressed="${keysVisible}" title="Show or hide on-screen keyboard">Keys</button>
         </div>
       </header>
 
@@ -954,29 +953,27 @@ function renderStudioHtml(): string {
           <section class="st-arr-wrap" aria-label="Arrangement Timeline">
             <div class="st-arr-toolbar">
               <div class="st-arr-tb-left">
-                <span class="st-arr-count">Tracks ${tracks.length}/${STUDIO_MAX_TRACKS}</span>
+                ${
+                  !instrumentFocusMode
+                    ? `<button type="button" class="st-btn st-tiny-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser">Browser</button>`
+                    : ""
+                }
                 ${
                   tracks.length < STUDIO_MAX_TRACKS
                     ? `<button type="button" class="st-btn st-tiny-btn" id="st-add-track-btn" data-st-action="add-track">+ Track</button>`
                     : ""
                 }
                 <div class="st-seg st-history-seg" role="group" aria-label="Edit history">
-                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶ Undo</button>
-                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷ Redo</button>
-                </div>
-                <div class="st-seg st-rec-assist-seg" role="group" aria-label="Recording metronome and count-in">
-                  <button type="button" class="st-btn st-tiny-btn${recSettings.metronome ? " is-active" : ""}" id="st-click-btn" data-st-action="metronome" aria-pressed="${recSettings.metronome}" title="Monitor-only metronome click (never printed to export)">Click</button>
-                  <button type="button" class="st-btn st-tiny-btn${recSettings.countIn ? " is-active" : ""}" id="st-countin-btn" data-st-action="count-in" aria-pressed="${recSettings.countIn}" title="1-bar count-in before recording">1-Bar In</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷</button>
                 </div>
                 ${
                   recMode !== "overdub" || tr.recording
                     ? `<span class="st-rec-mode-tag${recMode === "replace" ? " is-replace" : ""}" id="st-rec-mode-tag">${recMode === "replace" ? "Replace" : recMode === "takes" ? "New Take" : "Overdub"}</span>`
                     : ""
                 }
-                <span class="st-arr-loop-info${tr.loopEnabled ? " is-on" : ""}">Loop Bar ${tr.loopStartBar}–${tr.loopEndBar}</span>
               </div>
               <div class="st-arr-tb-right">
-                <span class="st-arr-zoom-lbl">Zoom</span>
                 <button type="button" class="st-btn st-tiny-btn" data-st-action="arr-zoom-out" aria-label="Zoom out timeline">−</button>
                 <input type="range" class="st-range st-arr-zoom-range" id="st-arr-zoom" min="1" max="4" step="0.25" value="${arrZoom.toFixed(2)}" aria-label="Arrangement horizontal zoom" />
                 <button type="button" class="st-btn st-tiny-btn" data-st-action="arr-zoom-in" aria-label="Zoom in timeline">+</button>
@@ -987,7 +984,7 @@ function renderStudioHtml(): string {
             <div class="st-arr-scroll" id="st-arr-scroll">
               <div class="st-arr-canvas">
                 <div class="st-ruler-row">
-                  <div class="st-ruler-label">Track</div>
+                  <div class="st-ruler-label">Tracks</div>
                   <div class="st-ruler" id="st-ruler" data-st-ruler="1" style="${laneZoomStyle}" title="Click or drag to seek · drag loop edges to adjust loop range">
                     ${
                       tr.loopEnabled
@@ -1006,7 +1003,7 @@ function renderStudioHtml(): string {
             </div>
           </section>
 
-          <div class="st-dock-resizer" id="st-dock-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize bottom editor panel" title="Drag to resize · Double-click to reset height">
+          <div class="st-dock-resizer" id="st-dock-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize bottom editor panel" title="Drag to resize · Double-click to reset height"${dockCollapsed && !instrumentFocusMode ? " hidden" : ""}>
             <span class="st-dock-grip"></span>
           </div>
 
@@ -1018,16 +1015,22 @@ function renderStudioHtml(): string {
                 <button type="button" class="st-dock-tab${activeDockTab === "instrument" && !dockCollapsed ? " is-active" : ""}" id="st-tab-instrument" role="tab" aria-selected="${activeDockTab === "instrument" && !dockCollapsed}" data-st-action="dock-tab" data-st-dock-tab="instrument">Instrument</button>
               </div>
               <div class="st-dock-focused">
-                <span class="st-dock-track-name">${escapeHtml(focused.name)} · ${escapeHtml(focusedMachine.name)}</span>
-                <span class="st-dock-track-sub">${escapeHtml(focused.presetName)}</span>
+                <span class="st-dock-track-name">${escapeHtml(focusedMachine.name)}</span>
+                <select class="st-select st-dock-preset-sel" data-st-select="preset" data-track-id="${escapeHtml(focused.id)}" aria-label="${escapeHtml(focusedMachine.name)} preset">
+                  ${presetGroupsHtml(focused.machineId, focused.presetId)}
+                </select>
               </div>
               <div class="st-dock-actions">
                 <div class="st-seg st-dock-history" role="group" aria-label="Edit history">
-                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶ Undo</button>
-                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷ Redo</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶</button>
+                  <button type="button" class="st-btn st-tiny-btn st-hist-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷</button>
                 </div>
-                <button type="button" class="st-btn st-tiny-btn${dockExpanded ? " is-active" : ""}" id="st-dock-expand" data-st-action="dock-expand" aria-pressed="${dockExpanded}" title="Toggle full-height focused view">${dockExpanded ? "Split" : "Expand"}</button>
-                <button type="button" class="st-btn st-tiny-btn" id="st-dock-collapse" data-st-action="dock-collapse" aria-pressed="${dockCollapsed}" title="Collapse or expand bottom panel">${dockCollapsed ? "Show" : "Hide"}</button>
+                ${
+                  !dockCollapsed
+                    ? `<button type="button" class="st-btn st-tiny-btn${dockExpanded ? " is-active" : ""}" id="st-dock-expand" data-st-action="dock-expand" aria-pressed="${dockExpanded}" title="Toggle full-height focused view">${dockExpanded ? "Split" : "Expand"}</button>`
+                    : ""
+                }
+                <button type="button" class="st-btn st-tiny-btn" id="st-dock-collapse" data-st-action="dock-collapse" aria-pressed="${dockCollapsed}" title="Collapse or expand bottom panel">${dockCollapsed ? "Open" : "Close"}</button>
               </div>
             </div>
             <div class="st-dock-body" id="st-dock-body"${dockCollapsed && !instrumentFocusMode ? " hidden" : ""}>
@@ -1212,6 +1215,7 @@ function seekFromPointer(el: HTMLElement, clientX: number): void {
 export function showStudioPianoRoll(): void {
   activeDockTab = "piano-roll";
   dockCollapsed = false;
+  dockPinnedOpen = true;
   renderStudioPanel();
 }
 
@@ -1308,11 +1312,6 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     openEditor: showStudioPianoRoll,
     error: message => setStatus(message, "error")
   });
-
-  // Responsive initial browser state: collapsed on narrow portrait screens so timeline has full width
-  if (typeof window !== "undefined" && window.innerWidth <= 768) {
-    browserOpen = false;
-  }
 
   // Coalesce rapid state updates into a single microtask render
   let renderQueued = false;
@@ -1729,18 +1728,27 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           if (tab) {
             activeDockTab = tab;
             dockCollapsed = false;
+            dockPinnedOpen = true;
             renderStudioPanel();
           }
           break;
         }
         case "dock-expand":
           dockExpanded = !dockExpanded;
-          if (dockExpanded) dockCollapsed = false;
+          if (dockExpanded) {
+            dockCollapsed = false;
+            dockPinnedOpen = true;
+          }
           renderStudioPanel();
           break;
         case "dock-collapse":
           dockCollapsed = !dockCollapsed;
-          if (dockCollapsed) dockExpanded = false;
+          if (dockCollapsed) {
+            dockExpanded = false;
+            dockPinnedOpen = false;
+          } else {
+            dockPinnedOpen = true;
+          }
           renderStudioPanel();
           break;
         case "inst-page": {
@@ -1865,6 +1873,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "toggle-open-drawer": {
+          exportMenuOpen = false;
           openDrawerVisible = !openDrawerVisible;
           if (openDrawerVisible) {
             void refreshOpenDrawerData().then(() => renderStudioPanel());
@@ -1987,6 +1996,9 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
                 instrumentFocusMode = false;
                 preInstFocusState = null;
                 pendingClearTrackId = null;
+                dockCollapsed = true;
+                dockPinnedOpen = false;
+                dockExpanded = false;
                 await studioStorage.saveAutosave(studioEngine.exportProject());
                 syncCleanContentBaseline();
                 openDrawerVisible = false;
@@ -2112,6 +2124,9 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
               instrumentFocusMode = false;
               preInstFocusState = null;
               pendingClearTrackId = null;
+              dockCollapsed = true;
+              dockPinnedOpen = false;
+              dockExpanded = false;
               await studioStorage.saveAutosave(studioEngine.exportProject());
               syncCleanContentBaseline();
               openDrawerVisible = false;
@@ -2189,6 +2204,9 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
               instrumentFocusMode = false;
               preInstFocusState = null;
               pendingClearTrackId = null;
+              dockCollapsed = true;
+              dockPinnedOpen = false;
+              dockExpanded = false;
               syncCleanContentBaseline();
               openDrawerVisible = false;
               setStatus(`Recovered "${res.data.project.name}"`, "ok");
@@ -2529,6 +2547,17 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       draggingKnobTrackId = null;
     }
     studioEngine.setFocusedTrack(targetTrackId);
+    // Keep Piano Roll minimized when switching to a track that has no regions and no active selection
+    if (
+      activeDockTab === "piano-roll" &&
+      !dockCollapsed &&
+      studioEngine.regions.selection().length === 0 &&
+      studioEngine.regions.regions(targetTrackId).length === 0
+    ) {
+      dockCollapsed = true;
+      dockPinnedOpen = false;
+      dockExpanded = false;
+    }
     // GarageBand workflow: selecting a track arms it cleanly when not recording (unless multi-channel MIDI routing is active)
     if (!studioEngine.getTransportSnapshot().recording) {
       const allTracks = studioEngine.getTracks();
@@ -2760,6 +2789,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
       if (tid) focusTrackSelection(tid);
       activeDockTab = "piano-roll";
       dockCollapsed = false;
+      dockPinnedOpen = true;
       renderStudioPanel();
       return;
     }
@@ -2830,9 +2860,8 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
 
 export function showStudioPanel(): void {
   document.documentElement.classList.add("is-studio");
-  // Keep Instrument Browser collapsed by default on narrow portrait tablets/phones so timeline is immediately unobstructed
-  if (typeof window !== "undefined" && window.innerWidth <= 768) {
-    browserOpen = false;
+  if (!dockPinnedOpen && studioEngine.regions.selection().length === 0) {
+    dockCollapsed = true;
   }
   const synthEl = document.getElementById("sy1-panel");
   const studioEl = document.getElementById("sy1-studio");

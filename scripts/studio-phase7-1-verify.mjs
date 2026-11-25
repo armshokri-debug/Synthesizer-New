@@ -263,6 +263,8 @@ async function run() {
       await wait(120);
       const after = await cdp.eval(`document.querySelector('.st-embedded-synth[data-track-id="${trackId}"] .st-inst-knob[data-st-param="${paramKey}"] .sk-val')?.textContent || ''`);
       assert(after !== info.before, `Dragging ${paramKey} on ${trackId} should change value (was "${info.before}", still "${after}")`);
+      await cdp.eval(`document.getElementById('st-inst-back-btn')?.click()`);
+      await wait(120);
       return { before: info.before, after };
     };
 
@@ -272,7 +274,7 @@ async function run() {
     const bakuEdit = await dragKnobOnTrack("track-3", "baku", "res", -55);
 
     // Verify clicking Track 1 header re-shows Tabriz with its exact edited cutoff (unchanged by Yazd/Baku/Kerman edits!)
-    await cdp.eval(`document.querySelector('.st-track[data-track-id="track-1"] .st-track-ctl .st-track-stats')?.click()`);
+    await cdp.eval(`document.querySelector('.st-track[data-track-id="track-1"] [data-st-action="focus-track"]')?.click()`);
     await wait(140);
     const t1Check = await cdp.eval(`({
       trackId: document.querySelector('.st-embedded-synth')?.dataset.trackId,
@@ -283,7 +285,7 @@ async function run() {
       `Track 1 Tabriz patch must stay isolated: expected "${tabrizEdit.after}", got ${JSON.stringify(t1Check)}`);
 
     // Verify Track 2 Yazd cutoff is also intact
-    await cdp.eval(`document.querySelector('.st-track[data-track-id="track-2"] .st-track-ctl .st-track-stats')?.click()`);
+    await cdp.eval(`document.querySelector('.st-track[data-track-id="track-2"] [data-st-action="focus-track"]')?.click()`);
     await wait(140);
     const t2Check = await cdp.eval(`({
       trackId: document.querySelector('.st-embedded-synth')?.dataset.trackId,

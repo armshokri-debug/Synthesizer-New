@@ -52,7 +52,7 @@ html.is-studio .sy1-shell::after {
   --st-accent-border: rgba(240, 162, 51, 0.5);
   --st-rec: #e24c44;
   --st-ok: #55b884;
-  --st-hdr-w: 284px;
+  --st-hdr-w: 236px;
 }
 
 #sy1-studio,
@@ -106,14 +106,11 @@ html.is-studio .sy1-shell::after {
   flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: 6px 8px;
+  gap: 8px 10px;
   min-height: 46px;
-  padding: 5px 10px;
-  background:
-    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.014) 0 1px, rgba(0, 0, 0, 0.08) 1px 2px, transparent 2px 4px),
-    linear-gradient(180deg, #27292e 0%, #1d1f23 55%, #17181c 100%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  padding: 6px 12px;
+  background: linear-gradient(180deg, #212328 0%, #181a1e 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   position: relative;
   z-index: 90;
 }
@@ -123,7 +120,7 @@ html.is-studio .sy1-shell::after {
 .st-tb-right {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: nowrap;
   min-width: 0;
 }
@@ -133,35 +130,41 @@ html.is-studio .sy1-shell::after {
   flex-shrink: 0;
 }
 
-.st-brand {
-  font-size: 0.84rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--st-ink);
-  white-space: nowrap;
-  padding: 0 2px;
+.st-ghost-btn {
+  border-color: transparent;
+  background: transparent;
+  color: var(--st-ink-dim);
+  padding: 0 7px;
 }
 
-.st-brand span {
-  color: var(--st-accent);
+.st-ghost-btn:hover:not(:disabled) {
+  border-color: var(--st-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--st-ink);
 }
 
 .st-name-input {
   height: 30px;
-  width: 132px;
+  width: 148px;
   max-width: 100%;
   padding: 0 8px;
   border-radius: 5px;
-  border: 1px solid var(--st-border-hi);
-  background: #121316;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--st-ink);
-  font-size: 0.76rem;
-  font-weight: 500;
+  font-size: 0.84rem;
+  font-weight: 600;
   outline: none;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.st-name-input:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--st-border);
 }
 
 .st-name-input:focus {
+  background: #121316;
   border-color: var(--st-accent-border);
 }
 
@@ -348,6 +351,44 @@ html.is-studio .sy1-shell::after {
   cursor: default;
 }
 
+.st-menu-bars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px 6px;
+}
+
+.st-menu-bars .st-bar-btn {
+  min-width: 28px;
+  min-height: 26px;
+  padding: 0 5px;
+  font-size: 0.68rem;
+}
+
+.st-menu-bars .st-bar-input {
+  width: 46px;
+  height: 26px;
+  margin-left: auto;
+  background: #121316;
+  border: 1px solid var(--st-border-hi);
+  border-radius: 4px;
+  color: var(--st-ink);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 0 3px;
+}
+
+.st-menu-mobile-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.st-mobile-only {
+  display: none;
+}
+
 .st-menu-sep {
   height: 1px;
   background: var(--st-border);
@@ -509,13 +550,13 @@ html.is-studio .sy1-shell::after {
 
 /* ---------------------------------------------------------- Left Instrument Browser */
 .st-browser {
-  flex: 0 0 248px;
-  width: 248px;
+  flex: 0 0 228px;
+  width: 228px;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--st-surface);
-  border-right: 1px solid var(--st-border-hi);
+  background: #17191d;
+  border-right: 1px solid var(--st-border);
   overflow: hidden;
 }
 
@@ -527,14 +568,15 @@ html.is-studio .sy1-shell::after {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 8px 9px;
   border-bottom: 1px solid var(--st-border);
 }
 
 .st-br-title-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
 }
 
@@ -543,16 +585,7 @@ html.is-studio .sy1-shell::after {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--st-ink);
-}
-
-.st-br-target {
-  font-size: 0.7rem;
-  color: var(--st-accent);
-  margin-right: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--st-ink-dim);
 }
 
 .st-br-search-row {
@@ -564,13 +597,13 @@ html.is-studio .sy1-shell::after {
 .st-br-search {
   flex: 1 1 auto;
   min-width: 0;
-  height: 30px;
+  height: 28px;
   padding: 0 8px;
   border-radius: 5px;
-  border: 1px solid var(--st-border-hi);
-  background: #121316;
+  border: 1px solid var(--st-border);
+  background: #111316;
   color: var(--st-ink);
-  font-size: 0.75rem;
+  font-size: 0.74rem;
   outline: none;
 }
 
@@ -579,10 +612,10 @@ html.is-studio .sy1-shell::after {
 }
 
 .st-br-fav-btn {
-  min-height: 30px;
-  min-width: 30px;
+  min-height: 28px;
+  min-width: 28px;
   padding: 0;
-  font-size: 0.84rem;
+  font-size: 0.82rem;
 }
 
 .st-browser-backdrop {
@@ -593,9 +626,9 @@ html.is-studio .sy1-shell::after {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 7px 9px;
-  max-height: 224px;
+  gap: 2px;
+  padding: 6px 8px;
+  max-height: 204px;
   overflow-y: auto;
   border-bottom: 1px solid var(--st-border);
 }
@@ -604,16 +637,16 @@ html.is-studio .sy1-shell::after {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 4px;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 
 .st-br-fchip {
   height: 24px;
   border-radius: 4px;
-  border: 1px solid var(--st-border);
+  border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.03);
   color: var(--st-ink-dim);
-  font-size: 0.66rem;
+  font-size: 0.67rem;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -630,45 +663,37 @@ html.is-studio .sy1-shell::after {
   color: #ffcf82;
 }
 
-.st-br-mchip,
 .st-br-mcard {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 5px 7px;
+  padding: 4px 6px;
   border-radius: 5px;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.025);
+  background: transparent;
   color: var(--st-ink);
   cursor: pointer;
 }
 
-.st-br-mchip {
-  justify-content: space-between;
-  padding: 6px 8px;
-}
-
-.st-br-mchip:hover,
 .st-br-mcard:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.st-br-mchip.is-active,
 .st-br-mcard.is-active {
   background: var(--st-accent-soft);
   border-color: var(--st-accent-border);
 }
 
 .st-br-mcard.is-loaded:not(.is-active) {
-  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .st-br-mart {
-  flex: 0 0 48px;
-  width: 48px;
-  height: 29px;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 20px;
   border-radius: 3px;
   overflow: hidden;
   display: block;
@@ -680,15 +705,8 @@ html.is-studio .sy1-shell::after {
   display: block;
 }
 
-.st-br-minfo {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.st-br-mname,
-.st-br-mchip-name {
-  font-size: 0.76rem;
+.st-br-mname {
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--st-ink);
   white-space: nowrap;
@@ -696,34 +714,33 @@ html.is-studio .sy1-shell::after {
   text-overflow: ellipsis;
 }
 
-.st-br-mrole,
-.st-br-mchip-role {
-  font-size: 0.66rem;
-  color: var(--st-ink-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.st-br-mkind {
+  margin-left: auto;
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--st-ink-muted);
+  flex-shrink: 0;
 }
 
 .st-br-cats {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 3px 4px;
-  padding: 6px 8px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--st-border);
-  color: var(--st-ink-dim);
-  font-size: 0.72rem;
 }
 
 .st-br-cats select {
   flex: 1;
   min-width: 0;
-  min-height: 34px;
-  border: 1px solid var(--st-border-hi);
+  min-height: 28px;
+  border: 1px solid var(--st-border);
   border-radius: 4px;
-  background: var(--st-bg);
+  background: #111316;
   color: var(--st-ink);
+  font-size: 0.72rem;
   padding: 0 6px;
 }
 
@@ -1004,7 +1021,7 @@ html.is-studio .sy1-shell::after {
   align-items: center;
 }
 
-/* Tracks List */
+/* Tracks List — Calm GarageBand Track Lanes */
 .st-tracks {
   display: flex;
   flex-direction: column;
@@ -1013,13 +1030,18 @@ html.is-studio .sy1-shell::after {
 .st-track {
   display: flex;
   align-items: stretch;
-  min-height: 106px;
-  border-bottom: 1px solid var(--st-border);
-  background: #15171b;
+  min-height: 76px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: #14161a;
+  transition: background-color 120ms ease;
 }
 
 .st-track.is-focused {
-  background: #191c22;
+  background: #191d25;
+}
+
+.st-track.is-focused .st-lane {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.028) 0%, rgba(255, 255, 255, 0.008) 100%);
 }
 
 .st-track-ctl {
@@ -1031,71 +1053,52 @@ html.is-studio .sy1-shell::after {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 4px;
-  padding: 6px 8px 6px 10px;
-  background: #1c1e23;
-  border-right: 1px solid var(--st-border-hi);
-  box-shadow: inset 3px 0 0 var(--trk-color, var(--st-accent));
+  gap: 7px;
+  padding: 8px 10px 8px 12px;
+  background: #181a1f;
+  border-right: 1px solid var(--st-border);
+  box-shadow: inset 2px 0 0 rgba(255, 255, 255, 0.14);
 }
 
 .st-track.is-focused .st-track-ctl {
-  background: #23262d;
+  background: #21252e;
+  box-shadow: inset 3px 0 0 var(--trk-color, var(--st-accent));
 }
 
 .st-track-top {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
-.st-track-title {
-  border: none;
-  background: transparent;
-  color: var(--st-ink);
-  font-size: 0.74rem;
-  font-weight: 700;
-  padding: 0;
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.st-track.is-focused .st-track-title {
-  color: #ffcf82;
-}
-
-.st-machine-sel {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-weight: 600;
-  color: #f3efe7;
-}
-
-.st-track-city {
-  border: 1px solid var(--st-border-hi);
-  background: #14161a;
-  color: var(--st-ink-dim);
-  border-radius: 4px;
-  font-size: 0.65rem;
-  font-weight: 600;
+.st-track-focus {
+  flex: 0 0 24px;
+  width: 24px;
   height: 24px;
-  padding: 0 7px;
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.st-track-city:hover {
-  border-color: var(--st-accent-border);
-  color: var(--st-accent);
-}
-
-.st-track-preset-row {
-  display: flex;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--st-ink-dim);
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  min-width: 0;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.st-track-focus:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--st-ink);
+}
+
+.st-track.is-focused .st-track-focus {
+  color: var(--trk-color, var(--st-accent));
+  background: color-mix(in srgb, var(--trk-color, #f0a233) 14%, transparent);
+}
+
+.st-trk-svg {
+  display: block;
 }
 
 .st-select {
@@ -1109,21 +1112,81 @@ html.is-studio .sy1-shell::after {
   min-width: 0;
 }
 
-.st-preset-sel {
+.st-machine-sel {
   flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #e6e2da;
+  cursor: pointer;
+}
+
+.st-machine-sel:hover,
+.st-machine-sel:focus {
+  background: #121417;
+  border-color: var(--st-border-hi);
+}
+
+.st-machine-sel option {
+  background: #181a1f;
+  color: #e8e5de;
+}
+
+.st-track.is-focused .st-machine-sel {
+  color: #ffffff;
+}
+
+.st-track-city {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--st-ink-dim);
+  border-radius: 4px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  height: 22px;
+  padding: 0 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.st-track.is-focused .st-track-city {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--st-ink);
+}
+
+.st-track-city:hover {
+  border-color: var(--st-accent-border);
+  color: #ffcf82;
 }
 
 .st-track-mid {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.st-track-msr {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
 }
 
 .st-mini-btn {
-  min-height: 24px;
-  min-width: 24px;
+  min-height: 22px;
+  min-width: 22px;
   padding: 0;
-  font-size: 0.68rem;
+  border-radius: 4px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--st-ink-muted);
+  font-size: 0.64rem;
   font-weight: 700;
 }
 
@@ -1139,24 +1202,15 @@ html.is-studio .sy1-shell::after {
   color: #c2e7ff;
 }
 
-.st-fader-wrap {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.st-mini-btn.is-rec.is-active {
+  background: #4b1f1e;
+  border-color: var(--st-rec);
+  color: #ffd1ce;
+}
+
+.st-track-vol {
   flex: 1 1 auto;
-  min-width: 58px;
-}
-
-.st-pan-wrap {
-  max-width: 68px;
-  min-width: 50px;
-}
-
-.st-fader-lbl {
-  font-size: 0.62rem;
-  color: var(--st-ink-muted);
-  min-width: 18px;
-  font-variant-numeric: tabular-nums;
+  min-width: 60px;
 }
 
 .st-range {
@@ -1165,52 +1219,6 @@ html.is-studio .sy1-shell::after {
   accent-color: var(--st-accent);
   cursor: pointer;
   margin: 0;
-}
-
-.st-track-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.st-hdr-meter {
-  width: 34px;
-  height: 4px;
-  border-radius: 2px;
-  background: #101215;
-  overflow: hidden;
-  flex: 0 0 34px;
-}
-
-.st-hdr-meter-fill {
-  display: block;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, #4db87e 0%, #f0a233 78%, #e24c44 100%);
-  transform-origin: left center;
-}
-
-.st-track-stats {
-  font-size: 0.63rem;
-  color: var(--st-ink-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.st-track-tools {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  flex: 0 0 auto;
-}
-
-.st-ch-select {
-  height: 22px;
-  font-size: 0.64rem;
-  padding: 0 3px;
 }
 
 /* Arrangement Track Lane */
@@ -1321,6 +1329,10 @@ html.is-studio .sy1-shell::after {
   touch-action: none;
 }
 
+.st-dock-resizer[hidden] {
+  display: none;
+}
+
 .st-dock-resizer:hover,
 .st-dock-resizer.is-dragging {
   background: #272a31;
@@ -1352,6 +1364,7 @@ html.is-studio .sy1-shell::after {
   flex: 0 0 auto;
   height: auto;
   min-height: 0;
+  border-top: 1px solid var(--st-border);
 }
 
 .st-dock-head {
@@ -1361,8 +1374,12 @@ html.is-studio .sy1-shell::after {
   justify-content: space-between;
   gap: 10px;
   padding: 0 10px;
-  background: #1e2026;
-  border-bottom: 1px solid var(--st-border-hi);
+  background: #1b1d22;
+  border-bottom: 1px solid var(--st-border);
+}
+
+.st-daw.is-dock-collapsed .st-dock-head {
+  border-bottom: none;
 }
 
 .st-dock-tabs {
@@ -1396,25 +1413,26 @@ html.is-studio .sy1-shell::after {
 
 .st-dock-focused {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   overflow: hidden;
 }
 
 .st-dock-track-name {
-  font-size: 0.76rem;
-  font-weight: 700;
-  color: var(--st-ink);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--st-ink-dim);
   white-space: nowrap;
 }
 
-.st-dock-track-sub {
-  font-size: 0.72rem;
-  color: var(--st-ink-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.st-dock-preset-sel {
+  height: 24px;
+  max-width: 190px;
+  font-size: 0.7rem;
+  background: #121417;
+  border: 1px solid var(--st-border);
+  color: var(--st-ink);
 }
 
 .st-dock-actions {
@@ -1946,27 +1964,27 @@ html.is-studio .sy1-shell::after {
 }
 
 .st-mix-strip {
-  flex: 0 0 132px;
-  width: 132px;
+  flex: 0 0 114px;
+  width: 114px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 8px 9px;
-  background: #1c1e24;
-  border: 1px solid var(--st-border-hi);
+  gap: 6px;
+  padding: 8px;
+  background: #1a1c21;
+  border: 1px solid var(--st-border);
   border-top: 2px solid var(--trk-color, var(--st-accent));
   border-radius: 5px;
 }
 
 .st-mix-strip.is-focused {
-  background: #22252d;
-  border-color: rgba(255, 255, 255, 0.22);
+  background: #20242d;
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .st-mix-strip.is-master {
   margin-left: auto;
   border-top-color: #d6d3cb;
-  background: #202227;
+  background: #1e2025;
 }
 
 .st-mix-top {
@@ -1980,7 +1998,7 @@ html.is-studio .sy1-shell::after {
   background: transparent;
   padding: 0;
   text-align: left;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 700;
   color: var(--st-ink);
   cursor: pointer;
@@ -2005,24 +2023,25 @@ html.is-studio .sy1-shell::after {
 }
 
 .st-mix-lbl {
-  font-size: 0.64rem;
+  font-size: 0.62rem;
   color: var(--st-ink-dim);
-  min-width: 24px;
+  min-width: 22px;
   font-variant-numeric: tabular-nums;
 }
 
 .st-mix-btns {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 4px;
 }
 
-.st-mix-tag {
+.st-mix-ch-sel {
+  width: 100%;
+  height: 22px;
   font-size: 0.65rem;
-  color: var(--st-ink-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  padding: 0 4px;
+  border-color: var(--st-border);
 }
 
 .st-mix-fader-row {
@@ -2277,23 +2296,23 @@ html.is-studio .sy1-shell::after {
 /* ---------------------------------------------------------- Responsive: Compact Desktop (1180-1360px, e.g. 1280x800) */
 @media (max-width: 1360px) {
   .st-topbar {
-    gap: 5px 6px;
-    padding: 5px 8px;
+    gap: 6px 8px;
+    padding: 5px 10px;
   }
 
   .st-tb-left,
   .st-tb-center,
   .st-tb-right {
-    gap: 4px;
+    gap: 5px;
   }
 
   .st-name-input {
-    width: 110px;
+    width: 124px;
   }
 
   .st-btn {
     padding: 0 7px;
-    font-size: 0.7rem;
+    font-size: 0.71rem;
   }
 
   .st-clock {
@@ -2305,21 +2324,12 @@ html.is-studio .sy1-shell::after {
   .st-bpm-val {
     min-width: 66px;
   }
-
-  .st-bar-btn {
-    min-width: 24px;
-    padding: 0 4px;
-  }
-
-  .st-bar-input {
-    width: 40px;
-  }
 }
 
 /* ---------------------------------------------------------- Responsive: iPad Landscape (769-1120px, e.g. 1024x768) */
 @media (max-width: 1120px) {
   #sy1-studio {
-    --st-hdr-w: 246px;
+    --st-hdr-w: 216px;
   }
 
   .st-browser {
@@ -2361,15 +2371,23 @@ html.is-studio .sy1-shell::after {
   }
 
   .st-mini-btn {
-    min-height: 26px;
-    min-width: 26px;
+    min-height: 24px;
+    min-width: 24px;
   }
 }
 
 /* ---------------------------------------------------------- Responsive: iPad Portrait & Mobile (<=768px) */
 @media (max-width: 768px) {
   #sy1-studio {
-    --st-hdr-w: 210px;
+    --st-hdr-w: 194px;
+  }
+
+  .st-mobile-hide {
+    display: none !important;
+  }
+
+  .st-mobile-only {
+    display: flex;
   }
 
   .st-topbar {
@@ -2381,6 +2399,7 @@ html.is-studio .sy1-shell::after {
   .st-tb-left {
     order: 1;
     flex: 1 1 auto;
+    min-width: 0;
   }
 
   .st-tb-right {
@@ -2392,47 +2411,47 @@ html.is-studio .sy1-shell::after {
   .st-tb-center {
     order: 3;
     width: 100%;
+    flex-wrap: nowrap;
     justify-content: space-between;
     gap: 4px;
-    padding-top: 3px;
+    padding-top: 4px;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .st-brand {
-    display: none;
-  }
-
   .st-name-input {
-    flex: 1 1 88px;
-    width: 96px;
-    min-width: 72px;
+    flex: 1 1 80px;
+    width: auto;
+    min-width: 64px;
     height: 32px;
+    font-size: 0.78rem;
   }
 
   .st-btn {
-    min-height: 34px;
+    min-height: 32px;
     padding: 0 7px;
     font-size: 0.69rem;
   }
 
   .st-clock {
     height: 32px;
-    min-width: 52px;
-    font-size: 0.74rem;
+    min-width: 46px;
+    padding: 0 5px;
+    font-size: 0.72rem;
+    flex-shrink: 0;
   }
 
-  .st-bpm-val {
-    min-width: 62px;
+  .st-tempo-seg {
+    flex-shrink: 0;
   }
 
-  .st-bar-btn {
+  .st-step-btn {
     min-width: 24px;
     padding: 0 4px;
   }
 
-  .st-bar-input {
-    width: 38px;
-    height: 32px;
+  .st-bpm-val {
+    min-width: 58px;
+    padding: 0 5px;
   }
 
   .st-tiny-btn,
@@ -2441,14 +2460,8 @@ html.is-studio .sy1-shell::after {
   }
 
   .st-mini-btn {
-    min-height: 28px;
-    min-width: 26px;
-  }
-
-  .st-pan-wrap,
-  .st-hdr-meter,
-  .st-ch-select {
-    display: none;
+    min-height: 26px;
+    min-width: 24px;
   }
 
   /* Overlay Instrument Browser on narrow portrait screens with dismissible backdrop */
@@ -2457,7 +2470,7 @@ html.is-studio .sy1-shell::after {
     top: 0;
     left: 0;
     bottom: 0;
-    width: min(286px, 84vw);
+    width: min(276px, 84vw);
     z-index: 45;
     box-shadow: 12px 0 32px rgba(0, 0, 0, 0.78);
   }
@@ -2479,8 +2492,7 @@ html.is-studio .sy1-shell::after {
   }
 }
 
-/* Compact instrument headers; MIDI routing remains in the secondary Mixer. */
-.st-track-focus { flex:0 0 28px !important; min-width:28px !important; text-align:center; }
+/* Secondary Mixer routing & click level */
 .st-mix-routing { display:flex; flex-direction:column; gap:4px; padding:6px; color:var(--st-ink-dim); font-size:0.7rem; }
 .st-click-level { display:flex; flex-direction:column; gap:4px; padding:8px; font-size:0.75rem; color:var(--st-ink-dim); }
 
@@ -2687,30 +2699,23 @@ html.is-studio .sy1-shell::after {
 
 .st-save-state {
   font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: #8adbb0;
-  background: rgba(85, 184, 132, 0.12);
-  border: 1px solid rgba(85, 184, 132, 0.25);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 0 4px;
+  color: var(--st-ink-muted);
   white-space: nowrap;
 }
 
 .st-save-state.is-dirty {
-  color: #ffd38a;
-  background: rgba(240, 162, 51, 0.14);
-  border-color: rgba(240, 162, 51, 0.4);
+  color: #f0b75a;
 }
 
 .st-save-state.is-error {
   color: #ff948d;
-  background: rgba(235, 92, 74, 0.14);
-  border-color: rgba(235, 92, 74, 0.45);
 }
 
 .st-btn.is-dirty {
-  border-color: rgba(240, 162, 51, 0.65);
+  border-color: rgba(240, 162, 51, 0.55);
   color: #ffe2b3;
 }
 
