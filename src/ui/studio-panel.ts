@@ -32,6 +32,7 @@ import {
 import {
   STUDIO_BAR_PRESETS,
   STUDIO_MAX_TRACKS,
+  STUDIO_REGION_SNAP_OPTIONS,
   STUDIO_TICKS_PER_BAR,
   StudioRecordingMode,
   StudioSavedProjectMeta
@@ -56,7 +57,7 @@ let activeDockTab: StudioDockTab = "piano-roll";
 let dockExpanded = false;
 let dockCollapsed = true;
 let dockPinnedOpen = false;
-let dockHeightPx = 300;
+let dockHeightPx = 326;
 let instrumentFocusMode = false;
 let preInstFocusState: {
   dockTab: StudioDockTab;
@@ -967,6 +968,15 @@ function renderStudioHtml(): string {
                   <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>↶</button>
                   <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>↷</button>
                 </div>
+                <label class="st-arr-snap-field" title="Arrangement region snap grid (independent from Piano Roll Snap)">
+                  <span class="st-arr-snap-lbl">Snap</span>
+                  <select class="st-select st-arr-snap-sel" id="st-arr-snap" aria-label="Arrangement region snap">
+                    ${STUDIO_REGION_SNAP_OPTIONS.map(
+                      (opt) =>
+                        `<option value="${opt.ticks}"${studioEngine.regions.grid === opt.ticks ? " selected" : ""}>${escapeHtml(opt.label)}</option>`
+                    ).join("")}
+                  </select>
+                </label>
                 ${
                   recMode !== "overdub" || tr.recording
                     ? `<span class="st-rec-mode-tag${recMode === "replace" ? " is-replace" : ""}" id="st-rec-mode-tag">${recMode === "replace" ? "Replace" : recMode === "takes" ? "New Take" : "Overdub"}</span>`
@@ -2402,6 +2412,11 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     }
     if (el.id === "st-bars-custom") {
       studioEngine.setBars(Number(el.value));
+      return;
+    }
+    if (el.id === "st-arr-snap") {
+      studioEngine.regions.grid = Math.max(0, Number(el.value) || 0);
+      renderStudioPanel();
       return;
     }
     if (el.id === "st-arr-zoom") {

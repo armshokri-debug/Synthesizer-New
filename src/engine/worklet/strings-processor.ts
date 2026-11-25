@@ -388,7 +388,7 @@ class SY1StringsProcessor extends AudioWorkletProcessor {
 
     const target = 440 * Math.pow(2, (e.midi - 69) / 12 + e.cents / 1200);
     const s = slot!;
-    const vel = Math.max(0.05, Math.min(1, e.vel));
+    const vel = Math.max(1 / 127, Math.min(1, e.vel));
     s.reset(e.id, ++this.counter, e.from > 0 ? e.from : target, vel, offset);
     if (e.from > 0 && e.glide > 0.004) {
       s.lfTarget = Math.log2(target);

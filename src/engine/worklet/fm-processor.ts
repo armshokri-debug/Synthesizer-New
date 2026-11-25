@@ -245,7 +245,7 @@ class SY1FmProcessor extends AudioWorkletProcessor {
     if (!slot) for (const v of this.voices) if (!slot || v.order < slot.order) slot = v;
     const target = 440 * Math.pow(2, (e.midi - 69) / 12 + e.cents / 1200);
     const s = slot!;
-    s.start(e.id, ++this.counter, e.from > 0 ? e.from : target, Math.max(0.05, Math.min(1, e.vel)), e.midi, offset);
+    s.start(e.id, ++this.counter, e.from > 0 ? e.from : target, Math.max(1 / 127, Math.min(1, e.vel)), e.midi, offset);
     if (e.from > 0 && e.glide > 0.004) {
       s.lfTarget = Math.log2(target);
       s.glideC = 1 - Math.exp(-1 / ((e.glide / 3) * sampleRate));

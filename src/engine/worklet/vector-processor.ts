@@ -473,7 +473,7 @@ class SY1VectorProcessor extends AudioWorkletProcessor {
     const target = 440 * Math.pow(2, (e.midi - 69) / 12 + e.cents / 1200);
     const s = slot!;
     const order = ++this.counter;
-    s.start(e.id, order, e.from > 0 ? e.from : target, Math.max(0.05, Math.min(1, e.vel)), e.midi, offset, order);
+    s.start(e.id, order, e.from > 0 ? e.from : target, Math.max(1 / 127, Math.min(1, e.vel)), e.midi, offset, order);
     if (e.from > 0 && e.glide > 0.004) {
       s.lfTarget = Math.log2(target);
       s.glideC = 1 - Math.exp(-1 / ((e.glide / 3) * sampleRate));

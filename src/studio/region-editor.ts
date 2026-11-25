@@ -16,6 +16,56 @@ interface TimelineHost {
   recording(): boolean;
 }
 
+function clampGridStart(tick: number, grid: number, totalLength: number): number {
+  const maxStart = grid > 0
+    ? Math.max(0, Math.floor(Math.max(0, totalLength - 1) / grid) * grid)
+    : Math.max(0, totalLength - 1);
+  return Math.max(0, Math.min(maxStart, snapRegionTick(tick, grid)));
+}
+
+export function previewMoveRegions(
+  regions: readonly Pick<MidiRegion, "startTick" | "length">[],
+  delta: number,
+  grid: number,
+  totalLength: number
+): { shift: number; guideTick: number } | null {
+  if (!regions.length) return null;
+  const first = Math.min(...regions.map(region => region.startTick));
+  const last = Math.max(...regions.map(region => region.startTick + region.length));
+  const targetFirst = clampGridStart(first + delta, grid, Math.max(1, totalLength - (last - first) + 1));
+  const shift = Math.max(-first, Math.min(Math.max(0, totalLength - last), targetFirst - first));
+  return { shift, guideTick: first + shift };
+}
+
+export function previewResizeRegion(
+  region: Pick<MidiRegion, "startTick" | "length" | "offset" | "loop">,
+  edge: "left" | "right" | "loop",
+  tick: number,
+  grid: number,
+  totalLength: number
+): { startTick: number; length: number; offset: number; loop: boolean; guideTick: number } {
+  const end = region.startTick + region.length;
+  const snapped = snapRegionTick(tick, grid);
+  if (edge === "left") {
+    const startTick = Math.max(0, region.startTick - region.offset, Math.min(end - 1, snapped));
+    return {
+      startTick,
+      length: end - startTick,
+      offset: region.offset + startTick - region.startTick,
+      loop: region.loop,
+      guideTick: startTick
+    };
+  }
+  const snappedEnd = Math.max(region.startTick + 1, Math.min(totalLength, snapped));
+  return {
+    startTick: region.startTick,
+    length: snappedEnd - region.startTick,
+    offset: region.offset,
+    loop: edge === "loop" || region.loop,
+    guideTick: snappedEnd
+  };
+}
+
 export class RegionEditor {
   private selected = new Set<string>();
   private history: History[] = [];
@@ -118,29 +168,17 @@ export class RegionEditor {
 
   move(delta: number): void {
     const regions = this.selectedRegions();
-    if (!regions.length) return;
-    const first = Math.min(...regions.map(region => region.startTick));
-    const last = Math.max(...regions.map(region => region.startTick + region.length));
-    const shift = Math.max(-first, Math.min(Math.max(0, this.host.length() - last), snapRegionTick(first + delta, this.grid) - first));
-    if (!shift) return;
-    this.change(regions.map(region => ({ ...region, startTick: region.startTick + shift })));
+    const preview = previewMoveRegions(regions, delta, this.grid, this.host.length());
+    if (!preview || !preview.shift) return;
+    this.change(regions.map(region => ({ ...region, startTick: region.startTick + preview.shift })));
   }
 
   resize(id: string, edge: "left" | "right" | "loop", tick: number): void {
     const region = this.all().find(item => item.id === id);
     if (!region) return;
-    const end = region.startTick + region.length;
-    const snapped = snapRegionTick(tick, this.grid);
-    if (edge === "left") {
-      const startTick = Math.max(0, region.startTick - region.offset, Math.min(end - 1, snapped));
-      if (startTick === region.startTick) return;
-      this.change([{ ...region, startTick, length: end - startTick, offset: region.offset + startTick - region.startTick }]);
-    } else {
-      const length = Math.max(1, Math.min(this.host.length(), snapped) - region.startTick);
-      const loop = edge === "loop" || region.loop;
-      if (length === region.length && loop === region.loop) return;
-      this.change([{ ...region, length, loop }]);
-    }
+    const next = previewResizeRegion(region, edge, tick, this.grid, this.host.length());
+    if (next.startTick === region.startTick && next.length === region.length && next.loop === region.loop) return;
+    this.change([{ ...region, startTick: next.startTick, length: next.length, offset: next.offset, loop: next.loop }]);
   }
 
   repeatToEnd(): void {
@@ -186,7 +224,7 @@ export class RegionEditor {
   }
 
   create(trackId: string, tick: number): void {
-    const startTick = Math.max(0, Math.min(this.host.length() - 1, snapRegionTick(tick, this.grid)));
+    const startTick = clampGridStart(tick, this.grid, this.host.length());
     const length = Math.min(STUDIO_TICKS_PER_BAR, this.host.length() - startTick);
     const region: MidiRegion = {
       id: regionId(), trackId, startTick, length, sourceLength: length, offset: 0, loop: false, events: []
@@ -223,7 +261,11 @@ export class RegionEditor {
     if (!this.clipboard.length) return;
     const machine = this.track(trackId).machineId;
     if (this.clipboard.some(item => item.machineId !== machine)) throw new Error("Paste onto a track with the same instrument.");
-    this.insert(this.clipboard.map(item => ({ ...item.region, trackId })), snapRegionTick(tick, this.grid));
+    const first = Math.min(...this.clipboard.map(item => item.region.startTick));
+    const maxEnd = Math.max(...this.clipboard.map(item => item.region.startTick + item.region.length));
+    const span = Math.max(1, maxEnd - first);
+    const targetStart = clampGridStart(tick, this.grid, Math.max(1, this.host.length() - span + 1));
+    this.insert(this.clipboard.map(item => ({ ...item.region, trackId })), targetStart);
     this.host.focus(trackId);
   }
 

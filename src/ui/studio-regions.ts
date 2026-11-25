@@ -1,9 +1,19 @@
-import { regionPlayback } from "../studio/midi-regions";
+import { regionPlayback, type MidiRegion } from "../studio/midi-regions";
+import { previewMoveRegions, previewResizeRegion } from "../studio/region-editor";
 import { extractNoteSpans } from "../studio/midi-io";
 import { studioEngine } from "../studio/studio-engine";
-import { STUDIO_SNAP_OPTIONS } from "../studio/types";
+import { STUDIO_PPQ, STUDIO_REGION_SNAP_OPTIONS, STUDIO_TICKS_PER_BAR } from "../studio/types";
 import type { SY1TrackEngine } from "../studio/track-engine";
 import { escapeHtml } from "../engine/params";
+
+function formatGuideTick(tick: number): string {
+  const safe = Math.max(0, Math.round(tick));
+  const bar = Math.floor(safe / STUDIO_TICKS_PER_BAR) + 1;
+  const remBar = safe % STUDIO_TICKS_PER_BAR;
+  const beat = Math.floor(remBar / STUDIO_PPQ) + 1;
+  const sub = remBar % STUDIO_PPQ;
+  return sub > 0 ? `${bar}.${beat}.${sub}` : `${bar}.${beat}`;
+}
 
 export function renderRegions(track: SY1TrackEngine, total: number, color: string, isFocused = true): string {
   const regions = studioEngine.regions.regions(track.id);
@@ -49,6 +59,47 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
   menu.setAttribute("role", "dialog");
   menu.setAttribute("aria-label", "Region actions");
   document.body.append(menu);
+
+  let snapGuideEl: HTMLElement | null = null;
+  function ensureSnapGuide(canvas: HTMLElement): HTMLElement {
+    if (!snapGuideEl || snapGuideEl.parentElement !== canvas) {
+      snapGuideEl?.remove();
+      snapGuideEl = document.createElement("div");
+      snapGuideEl.className = "st-snap-guide";
+      snapGuideEl.id = "st-snap-guide";
+      const badge = document.createElement("span");
+      badge.className = "st-snap-badge";
+      snapGuideEl.append(badge);
+      canvas.append(snapGuideEl);
+    }
+    return snapGuideEl;
+  }
+
+  function showSnapGuide(laneEl: HTMLElement, guideTick: number, totalTicks: number, grid: number): void {
+    const canvas = laneEl.closest<HTMLElement>(".st-arr-canvas");
+    if (!canvas) return;
+    const laneRect = laneEl.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    if (laneRect.width <= 0 || totalTicks <= 0) return;
+    const guide = ensureSnapGuide(canvas);
+    const ratio = Math.max(0, Math.min(1, guideTick / totalTicks));
+    const leftPx = laneRect.left - canvasRect.left + ratio * laneRect.width;
+    guide.style.left = `${leftPx.toFixed(1)}px`;
+    guide.classList.toggle("is-snapped", grid > 0);
+    guide.dataset.guideTick = String(Math.round(guideTick));
+    guide.hidden = false;
+    const badge = guide.firstElementChild as HTMLElement | null;
+    if (badge) {
+      badge.textContent = formatGuideTick(guideTick);
+    }
+  }
+
+  function hideSnapGuide(): void {
+    if (snapGuideEl) {
+      snapGuideEl.remove();
+      snapGuideEl = null;
+    }
+  }
 
   let multiSelect = false;
   function run(action: () => void) {
@@ -96,11 +147,11 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
       menu.append(button);
     }
     const label = document.createElement("label");
-    label.textContent = "Region grid";
+    label.textContent = "Region snap";
     const select = document.createElement("select");
     select.setAttribute("aria-label", "Region snap grid");
-    for (const option of STUDIO_SNAP_OPTIONS) select.add(new Option(option.label, String(option.ticks), false, editor.grid === option.ticks));
-    select.addEventListener("change", () => { editor.grid = Number(select.value); });
+    for (const option of STUDIO_REGION_SNAP_OPTIONS) select.add(new Option(option.label, String(option.ticks), false, editor.grid === option.ticks));
+    select.addEventListener("change", () => { editor.grid = Number(select.value); controls.render(); });
     label.append(select);
     menu.append(label);
     menu.hidden = false;
@@ -115,13 +166,41 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     const rect = lane.getBoundingClientRect();
     const total = studioEngine.getTotalTicks();
     const tick = Math.max(0, Math.min(total - 1, Math.round((x - rect.left) / rect.width * total)));
-    return { trackId: lane.dataset.trackId, tick, ticksPerPx: total / rect.width };
+    return { lane, trackId: lane.dataset.trackId, tick, ticksPerPx: total / rect.width };
   }
 
-  let drag: { element: HTMLElement; id: string; edge: "left" | "right" | "loop" | null;
-    start: number; end: number; pointer: number; tickScale: number; moved: boolean; timer: number } | null = null;
+  let drag: {
+    element: HTMLElement;
+    laneEl: HTMLElement;
+    id: string;
+    edge: "left" | "right" | "loop" | null;
+    start: number;
+    end: number;
+    pointer: number;
+    tickScale: number;
+    totalTicks: number;
+    moved: boolean;
+    timer: number;
+    origRegion: MidiRegion;
+    origLeftCss: string;
+    origWidthCss: string;
+    movingRegions: MidiRegion[];
+    movingElements: HTMLElement[];
+  } | null = null;
   let suppressClickUntil = 0;
   let lastTap: { id: string; at: number; x: number; y: number } | null = null;
+
+  function resetDragVisuals(activeDrag: NonNullable<typeof drag>) {
+    hideSnapGuide();
+    activeDrag.element.style.left = activeDrag.origLeftCss;
+    activeDrag.element.style.width = activeDrag.origWidthCss;
+    activeDrag.element.style.transform = "";
+    activeDrag.element.classList.remove("is-dragging");
+    for (const el of activeDrag.movingElements) {
+      el.style.transform = "";
+      el.classList.remove("is-dragging");
+    }
+  }
 
   container.addEventListener("pointerdown", event => {
     const target = event.target as HTMLElement;
@@ -132,8 +211,30 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     const region = position && editor.regions(position.trackId).find(item => item.id === id);
     if (!position || !region) return;
     const edge = target.closest<HTMLElement>("[data-region-edge]")?.dataset.regionEdge as "left" | "right" | "loop" | undefined;
-    drag = { element, id, edge: edge ?? null, start: event.clientX, end: event.clientX,
-      pointer: event.pointerId, tickScale: position.ticksPerPx, moved: false, timer: 0 };
+    const movingRegions = !edge && editor.has(id) && editor.selectedRegions().length > 0
+      ? editor.selectedRegions()
+      : [region];
+    const movingIdSet = new Set(movingRegions.map(r => r.id));
+    const movingElements = Array.from(container.querySelectorAll<HTMLElement>("[data-region-id]"))
+      .filter(el => movingIdSet.has(el.dataset.regionId || ""));
+    drag = {
+      element,
+      laneEl: position.lane,
+      id,
+      edge: edge ?? null,
+      start: event.clientX,
+      end: event.clientX,
+      pointer: event.pointerId,
+      tickScale: position.ticksPerPx,
+      totalTicks: studioEngine.getTotalTicks(),
+      moved: false,
+      timer: 0,
+      origRegion: region,
+      origLeftCss: element.style.left,
+      origWidthCss: element.style.width,
+      movingRegions,
+      movingElements
+    };
     if (event.pointerType === "touch" && !edge) drag.timer = window.setTimeout(() => {
       if (!drag || drag.moved) return;
       drag = null;
@@ -154,8 +255,30 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
       clearTimeout(drag.timer);
       try { container.setPointerCapture(event.pointerId); } catch {}
     }
-    drag.element.style.transform = drag.edge ? "" : `translateX(${dx}px)`;
-    drag.element.classList.add("is-dragging");
+    const deltaTicks = dx * drag.tickScale;
+    const total = drag.totalTicks;
+    if (drag.edge) {
+      const baseEdgeTick = drag.edge === "left"
+        ? drag.origRegion.startTick
+        : drag.origRegion.startTick + drag.origRegion.length;
+      const preview = previewResizeRegion(drag.origRegion, drag.edge, baseEdgeTick + deltaTicks, editor.grid, total);
+      const widthPct = Math.min(preview.length, total - preview.startTick) / total * 100;
+      drag.element.style.left = `${(preview.startTick / total * 100).toFixed(4)}%`;
+      drag.element.style.width = `${widthPct.toFixed(4)}%`;
+      drag.element.classList.add("is-dragging");
+      showSnapGuide(drag.laneEl, preview.guideTick, total, editor.grid);
+    } else {
+      const preview = previewMoveRegions(drag.movingRegions, deltaTicks, editor.grid, total);
+      const shiftPx = preview ? preview.shift / drag.tickScale : dx;
+      const tx = `translateX(${shiftPx.toFixed(1)}px)`;
+      for (const el of drag.movingElements) {
+        el.style.transform = tx;
+        el.classList.add("is-dragging");
+      }
+      if (preview) {
+        showSnapGuide(drag.laneEl, preview.guideTick, total, editor.grid);
+      }
+    }
   }, true);
 
   function finish(event: PointerEvent, commit: boolean) {
@@ -163,8 +286,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     const change = drag;
     drag = null;
     clearTimeout(change.timer);
-    change.element.style.transform = "";
-    change.element.classList.remove("is-dragging");
+    resetDragVisuals(change);
     if (!change.moved || !commit) return;
     suppressClickUntil = performance.now() + 300;
     const delta = (event.clientX - change.start) * change.tickScale;
@@ -182,8 +304,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
   window.addEventListener("blur", () => {
     if (drag) {
       clearTimeout(drag.timer);
-      drag.element.style.transform = "";
-      drag.element.classList.remove("is-dragging");
+      resetDragVisuals(drag);
       drag = null;
     }
   });

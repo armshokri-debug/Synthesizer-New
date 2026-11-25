@@ -22,6 +22,7 @@ import { studioEngine } from "../studio/studio-engine";
 import { getDrumLabelsForTrack, getStudioMachineDef } from "../studio/track-engine";
 import {
   STUDIO_PPQ,
+  STUDIO_QUANTIZE_OPTIONS,
   STUDIO_SNAP_OPTIONS,
   STUDIO_TICKS_PER_BAR,
   StudioNoteSpan
@@ -160,8 +161,10 @@ function clientYToMidiVelocity(clientY: number, rect: DOMRect): number {
 
 export interface PianoRollState {
   snapTicks: number;
+  quantizeTicks: number;
   zoom: number;
   selectedIndices: Set<number>;
+  multiSelectMode: boolean;
   audition: boolean;
   velMode: boolean;
   defaultVelocityMidi: number;
@@ -172,8 +175,10 @@ export interface PianoRollState {
 
 const state: PianoRollState = {
   snapTicks: 120, // default 1/16
+  quantizeTicks: 120, // default 1/16 (independent from snapTicks)
   zoom: 1,
   selectedIndices: new Set<number>(),
+  multiSelectMode: false,
   audition: true,
   velMode: false,
   defaultVelocityMidi: DEFAULT_MIDI_VELOCITY,
@@ -193,6 +198,10 @@ export function setPianoRollSnap(snapTicks: number): void {
   state.snapTicks = Math.max(0, Math.round(snapTicks));
 }
 
+export function setPianoRollQuantize(quantizeTicks: number): void {
+  state.quantizeTicks = Math.max(1, Math.round(quantizeTicks));
+}
+
 export function setPianoRollZoom(zoom: number): void {
   state.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(zoom * 100) / 100));
 }
@@ -201,8 +210,89 @@ export function setPianoRollVelocityMode(enabled: boolean): void {
   state.velMode = !!enabled;
 }
 
+export function setPianoRollMultiSelectMode(enabled: boolean): void {
+  state.multiSelectMode = !!enabled;
+}
+
 export function clearPianoRollSelection(): void {
   state.selectedIndices.clear();
+}
+
+export function selectAllPianoRollNotes(trackId = studioEngine.getFocusedTrack().id): number {
+  const spans = editorNotes(trackId);
+  state.selectedIndices.clear();
+  for (let i = 0; i < spans.length; i++) state.selectedIndices.add(i);
+  return spans.length;
+}
+
+export interface MarqueeBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export function findNotesInMarquee(
+  spans: readonly StudioNoteSpan[],
+  midiToRowIndex: ReadonlyMap<number, number>,
+  totalTicks: number,
+  gridWidth: number,
+  rowHeight: number,
+  box: MarqueeBox
+): Set<number> {
+  const hits = new Set<number>();
+  if (totalTicks <= 0 || gridWidth <= 0 || rowHeight <= 0) return hits;
+  const x0 = Math.min(box.left, box.right);
+  const x1 = Math.max(box.left, box.right);
+  const y0 = Math.min(box.top, box.bottom);
+  const y1 = Math.max(box.top, box.bottom);
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i];
+    const rowIdx = midiToRowIndex.get(s.midi);
+    if (rowIdx === undefined) continue;
+    const nLeft = (s.startTick / totalTicks) * gridWidth;
+    const nWidth = Math.max(10, ((s.endTick - s.startTick) / totalTicks) * gridWidth);
+    const nRight = nLeft + nWidth;
+    const nTop = rowIdx * rowHeight + 2;
+    const nBottom = nTop + Math.max(4, rowHeight - 4);
+    if (nRight >= x0 && nLeft <= x1 && nBottom >= y0 && nTop <= y1) {
+      hits.add(i);
+    }
+  }
+  return hits;
+}
+
+export function computeQuantizedSelectionRemap(
+  prevSpans: readonly StudioNoteSpan[],
+  selectedIndices: ReadonlySet<number>,
+  nextSpans: readonly StudioNoteSpan[],
+  gridTicks: number,
+  limitTicks: number
+): Set<number> {
+  const remapped = new Set<number>();
+  if (selectedIndices.size === 0 || nextSpans.length === 0) return remapped;
+  const grid = Math.max(1, Math.round(gridTicks));
+  const limit = Math.max(1, Math.round(limitTicks));
+  const maxStart = Math.max(0, Math.floor((limit - 1) / grid) * grid);
+  const used = new Set<number>();
+  selectedIndices.forEach((idx) => {
+    const prev = prevSpans[idx];
+    if (!prev) return;
+    const targetStart = Math.max(0, Math.min(maxStart, Math.round(prev.startTick / grid) * grid));
+    const targetEnd = Math.min(limit, targetStart + Math.max(1, prev.endTick - prev.startTick));
+    const matchIdx = nextSpans.findIndex(
+      (candidate, cIdx) =>
+        !used.has(cIdx) &&
+        candidate.midi === prev.midi &&
+        candidate.startTick === targetStart &&
+        candidate.endTick === targetEnd
+    );
+    if (matchIdx >= 0) {
+      used.add(matchIdx);
+      remapped.add(matchIdx);
+    }
+  });
+  return remapped;
 }
 
 export function midiNoteLabel(midi: number): string {
@@ -215,6 +305,39 @@ export function snapTickValue(tick: number, snapTicks: number, mode: "round" | "
   if (snapTicks <= 0) return Math.max(0, Math.round(tick));
   const fn = mode === "floor" ? Math.floor : Math.round;
   return Math.max(0, fn(tick / snapTicks) * snapTicks);
+}
+
+/** Clamp a group as one unit so neither its note lengths nor its spacing changes. */
+export function boundedNoteMove(
+  spans: readonly StudioNoteSpan[], selected: readonly number[], anchorIndex: number,
+  rowIndices: ReadonlyMap<number, number>, rowCount: number,
+  rawDelta: number, rawRows: number, snap: number, totalTicks: number
+): { tickShift: number; rowShift: number } {
+  const anchor = spans[anchorIndex];
+  const group = selected.map(i => spans[i]).filter(Boolean);
+  if (!anchor || !group.length) return { tickShift: 0, rowShift: 0 };
+  const minStart = Math.min(...group.map(n => n.startTick));
+  const maxEnd = Math.max(...group.map(n => n.endTick));
+  const wanted = snapTickValue(anchor.startTick + rawDelta, snap) - anchor.startTick;
+  const tickShift = Math.max(-minStart, Math.min(totalTicks - maxEnd, wanted));
+  const rows = selected.map(i => rowIndices.get(i)).filter((r): r is number => r !== undefined);
+  const rowShift = rows.length ? Math.max(-Math.min(...rows), Math.min(rowCount - 1 - Math.max(...rows), rawRows)) : 0;
+  return { tickShift, rowShift };
+}
+
+/** Re-select moved notes after the event layer sorts notes into time order. */
+export function remapEditedSelection(
+  edited: readonly StudioNoteSpan[], selected: ReadonlySet<number>, actual: readonly StudioNoteSpan[]
+): Set<number> {
+  const result = new Set<number>();
+  for (const i of selected) {
+    const n = edited[i];
+    if (!n) continue;
+    const index = actual.findIndex((a, j) => !result.has(j) && a.midi === n.midi &&
+      a.startTick === n.startTick && a.endTick === n.endTick && Math.abs(a.velocity - n.velocity) < 1e-8);
+    if (index >= 0) result.add(index);
+  }
+  return result;
 }
 
 function computePitchRange(spans: StudioNoteSpan[]): { minMidi: number; maxMidi: number } {
@@ -425,14 +548,22 @@ export function renderPianoRollHtml(): string {
   const snapOptionsHtml = STUDIO_SNAP_OPTIONS.map(
     (opt) => `<option value="${opt.ticks}"${state.snapTicks === opt.ticks ? " selected" : ""}>${escapeHtml(opt.label)}</option>`
   ).join("");
+  const quantizeOptionsHtml = STUDIO_QUANTIZE_OPTIONS.map(
+    (opt) => `<option value="${opt.ticks}"${state.quantizeTicks === opt.ticks ? " selected" : ""}>${escapeHtml(opt.label)}</option>`
+  ).join("");
   const rowMidiAttr = rows.map((r) => r.midi).join(",");
 
   return `
-    <div class="st-pr${isDrum ? " is-drum-mode" : ""}${state.velMode ? " is-vel-mode" : ""}" id="st-piano-roll" data-pr-mode="${isDrum ? "drums" : "synth"}" data-pr-vel-mode="${state.velMode ? "1" : "0"}" data-pr-rows="${rowMidiAttr}" data-pr-row-h="${rowHeight}" data-pr-width="${gridWidth}" data-pr-total-ticks="${totalTicks}"${region ? ` data-pr-origin="${region.startTick}"` : ""}>
+    <div class="st-pr${isDrum ? " is-drum-mode" : ""}${state.velMode ? " is-vel-mode" : ""}${state.multiSelectMode ? " is-select-mode" : ""}" id="st-piano-roll" data-pr-mode="${isDrum ? "drums" : "synth"}" data-pr-vel-mode="${state.velMode ? "1" : "0"}" data-pr-select-mode="${state.multiSelectMode ? "1" : "0"}" data-pr-rows="${rowMidiAttr}" data-pr-row-h="${rowHeight}" data-pr-width="${gridWidth}" data-pr-total-ticks="${totalTicks}"${region ? ` data-pr-origin="${region.startTick}"` : ""}>
       <div class="st-pr-toolbar">
         <div class="st-pr-tb-group">
           <span class="st-pr-track-badge">${escapeHtml(mDef.name)}${region ? (region.loop ? " · Loop source" : " · Region") : ""}</span>
           <span class="st-pr-meta">${spans.length} ${isDrum ? (spans.length === 1 ? "hit" : "hits") : spans.length === 1 ? "note" : "notes"}${state.selectedIndices.size > 0 ? ` · ${state.selectedIndices.size} sel` : ""}</span>
+          <div class="st-pr-sel-grp" role="group" aria-label="Note selection">
+            <button type="button" class="st-btn st-pr-btn${state.multiSelectMode ? " is-active" : ""}" id="st-pr-select-mode" data-pr-action="toggle-select-mode" aria-pressed="${state.multiSelectMode}" title="Multi-select touch mode: tap notes to add/remove, or long-press and drag on grid for marquee selection">Select</button>
+            <button type="button" class="st-btn st-pr-btn" id="st-pr-select-all" data-pr-action="select-all"${spans.length === 0 ? " disabled" : ""} title="Select all notes in region (Cmd/Ctrl+A)">All</button>
+            <button type="button" class="st-btn st-pr-btn" id="st-pr-deselect-all" data-pr-action="deselect-all"${state.selectedIndices.size === 0 ? " disabled" : ""} title="Clear note selection (Esc)">None</button>
+          </div>
         </div>
         <div class="st-pr-tb-group">
           <button type="button" class="st-btn st-pr-btn st-pr-vel-mode-btn${state.velMode ? " is-active" : ""}" id="st-pr-vel-mode" data-pr-action="toggle-vel-mode" aria-pressed="${state.velMode}" title="Velocity mode — drag up/down directly on notes to adjust velocity (1–127) without changing pitch or timing">Velocity</button>
@@ -441,15 +572,24 @@ export function renderPianoRollHtml(): string {
             <button type="button" class="st-btn st-pr-btn st-pr-vel-step" id="st-pr-vel-dec" data-pr-action="vel-dec" aria-label="Decrease velocity" title="Decrease velocity (−1, Shift −5)">−</button>
             <input type="number" class="st-pr-vel-input" id="st-pr-vel-input" min="${MIN_MIDI_VELOCITY}" max="${MAX_MIDI_VELOCITY}" step="1" inputmode="numeric" value="${velSum.avg}" aria-label="Note velocity (1 to 127)" title="${escapeHtml(velInputTitle)}" />
             <button type="button" class="st-btn st-pr-btn st-pr-vel-step" id="st-pr-vel-inc" data-pr-action="vel-inc" aria-label="Increase velocity" title="Increase velocity (+1, Shift +5)">+</button>
+            <div class="st-pr-vel-slider-wrap" id="st-pr-vel-slider-wrap"${velSum.count === 0 ? " hidden" : ""}>
+              <input type="range" class="st-range st-pr-vel-slider" id="st-pr-vel-slider" min="${MIN_MIDI_VELOCITY}" max="${MAX_MIDI_VELOCITY}" step="1" value="${velSum.avg}"${velSum.count === 0 ? " disabled" : ""} aria-label="Selected notes velocity slider" title="Drag to shift velocity of selected notes while keeping relative dynamics" />
+            </div>
             <span class="st-pr-meta st-pr-vel-readout" id="st-pr-vel-readout">${velSum.count > 0 ? escapeHtml(velSum.text) : "—"}</span>
           </div>
-          <label class="st-pr-field">
+          <label class="st-pr-field" title="Piano Roll note creation & move snap grid (independent from Arrangement Snap and Quantize)">
             <span>Snap</span>
             <select class="st-select st-pr-select" id="st-pr-snap" aria-label="Piano roll snap grid">
               ${snapOptionsHtml}
             </select>
           </label>
-          <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize" data-pr-action="quantize"${spans.length === 0 ? " disabled" : ""} title="Quantize selected notes (or all notes) to Snap grid">Quantize</button>
+          <div class="st-pr-quantize-grp" role="group" aria-label="Note quantization">
+            <select class="st-select st-pr-select" id="st-pr-quantize-div" aria-label="Quantize subdivision" title="Quantize grid subdivision (independent from Snap)">
+              ${quantizeOptionsHtml}
+            </select>
+            <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize" data-pr-action="quantize"${spans.length === 0 ? " disabled" : ""} title="Quantize selected notes (or all notes when none selected) to Quantize subdivision">Quantize</button>
+            <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize-all" data-pr-action="quantize-all"${spans.length === 0 ? " disabled" : ""} title="Explicitly quantize all notes in the current region">Q All</button>
+          </div>
           <button type="button" class="st-btn st-pr-btn" id="st-pr-delete" data-pr-action="delete-selected"${state.selectedIndices.size === 0 ? " disabled" : ""} title="Delete selected notes (Delete / Backspace)">Delete</button>
           <button type="button" class="st-btn st-pr-btn${state.audition ? " is-active" : ""}" id="st-pr-audition" data-pr-action="toggle-audition" aria-pressed="${state.audition}" title="Audition notes while editing">Audition</button>
         </div>
@@ -515,16 +655,29 @@ export function syncPianoRollScroll(container: HTMLElement): void {
     } else {
       const rows = parseRowMidis(prRoot);
       const rowH = Number(prRoot.dataset.prRowH || PR_ROW_HEIGHT);
+      const rulerH = prRoot.querySelector<HTMLElement>(".st-pr-ruler-row")?.offsetHeight || 22;
+      const visibleGridH = Math.max(rowH, scrollEl.clientHeight - rulerH);
       const track = studioEngine.getFocusedTrack();
       const spans = editorNotes(track.id);
-      let targetMidi = 60; // Default C4
+      let midRow = Math.floor(rows.length / 2);
       if (spans.length > 0) {
-        const sorted = spans.map((s) => s.midi).sort((a, b) => a - b);
-        targetMidi = sorted[Math.floor(sorted.length / 2)];
+        let minRow = Infinity;
+        let maxRow = -Infinity;
+        for (const s of spans) {
+          const rIdx = rows.indexOf(s.midi);
+          if (rIdx >= 0) {
+            if (rIdx < minRow) minRow = rIdx;
+            if (rIdx > maxRow) maxRow = rIdx;
+          }
+        }
+        if (Number.isFinite(minRow) && Number.isFinite(maxRow)) {
+          midRow = (minRow + maxRow) * 0.5;
+        }
+      } else {
+        const c4Idx = rows.indexOf(60);
+        if (c4Idx >= 0) midRow = c4Idx;
       }
-      const targetIdxRaw = rows.indexOf(targetMidi);
-      const targetIdx = targetIdxRaw >= 0 ? targetIdxRaw : Math.floor(rows.length / 2);
-      state.scrollTop = Math.max(0, targetIdx * rowH - scrollEl.clientHeight * 0.45);
+      state.scrollTop = Math.max(0, (midRow + 0.5) * rowH - visibleGridH * 0.5);
     }
     state.hasInitialScroll = true;
   }
@@ -564,6 +717,8 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     rowHeight: number;
     origRowIndices: Map<number, number>;
     moved: boolean;
+    toggleOffOnTapUp: number | null;
+    collapseToIndexOnTapUp: number | null;
     lastAuditionMidi: number;
     lastDeltaMidi: number;
     el: HTMLElement;
@@ -579,11 +734,101 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     anchorOrigMidi: number;
     changed: boolean;
   } | null = null;
+  let sliderDrag: {
+    origSpans: StudioNoteSpan[];
+    workingSpans: StudioNoteSpan[];
+    selectedSet: Set<number>;
+    origMidis: Map<number, number>;
+    startAvg: number;
+  } | null = null;
+  let longPressPending: {
+    pointerId: number;
+    pointerType: string;
+    startClientX: number;
+    startClientY: number;
+    gridEl: HTMLElement;
+    prRoot: HTMLElement;
+    addMode: boolean;
+    timer: number;
+  } | null = null;
+  let marqueeDrag: {
+    pointerId: number;
+    gridEl: HTMLElement;
+    marqueeEl: HTMLElement;
+    startX: number;
+    startY: number;
+    curX: number;
+    curY: number;
+    addMode: boolean;
+    baseSelection: Set<number>;
+    spans: StudioNoteSpan[];
+    midiToRowIndex: Map<number, number>;
+    gridWidth: number;
+    totalTicks: number;
+    rowHeight: number;
+    moved: boolean;
+  } | null = null;
+  const activeTouchPointers = new Map<number, { x: number; y: number }>();
+  let touchPan: {
+    pointerId: number;
+    scrollEl: HTMLElement;
+    startX: number;
+    startY: number;
+    startScrollLeft: number;
+    startScrollTop: number;
+    scrolling: boolean;
+  } | null = null;
+  let pinchZoom: {
+    scrollEl: HTMLElement;
+    startDist: number;
+    startZoom: number;
+    lastRenderedZoom: number;
+    anchorContentX: number;
+    localMidX: number;
+  } | null = null;
+  let suppressGridClickUntil = 0;
 
-  const commitSpans = (spans: StudioNoteSpan[]) => {
+  const commitSpans = (spans: StudioNoteSpan[], remap = false) => {
     const track = studioEngine.getFocusedTrack();
     try {
+      const selected = new Set(state.selectedIndices);
       studioEngine.replaceTrackNotes(track.id, spans);
+      if (remap) {
+        state.selectedIndices = remapEditedSelection(spans, selected, editorNotes(track.id));
+        requestRender();
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+      requestRender();
+    }
+  };
+
+  const runQuantize = (allNotes: boolean) => {
+    const grid = Math.max(1, state.quantizeTicks || 120);
+    const track = studioEngine.getFocusedTrack();
+    const prevSpans = editorNotes(track.id);
+    if (prevSpans.length === 0) return;
+    const limit = studioEngine.regions.editorLength(track.id);
+    const targetSelection = !allNotes && state.selectedIndices.size > 0
+      ? new Set(state.selectedIndices)
+      : undefined;
+    try {
+      const changed = studioEngine.quantizeTrackNotes(
+        track.id,
+        grid,
+        targetSelection ? Array.from(targetSelection) : undefined
+      );
+      if (changed > 0 && state.selectedIndices.size > 0) {
+        const nextSpans = editorNotes(track.id);
+        state.selectedIndices = computeQuantizedSelectionRemap(
+          prevSpans,
+          state.selectedIndices,
+          nextSpans,
+          grid,
+          limit
+        );
+        requestRender();
+      }
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
       requestRender();
@@ -641,10 +886,67 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     if (inputEl && document.activeElement !== inputEl) {
       inputEl.value = String(summary.avg);
     }
+    const sliderEl = container.querySelector<HTMLInputElement>("#st-pr-vel-slider");
+    if (sliderEl && document.activeElement !== sliderEl && !sliderDrag) {
+      sliderEl.value = String(summary.avg);
+    }
     const readout = container.querySelector<HTMLElement>("#st-pr-vel-readout");
     if (readout) {
       readout.textContent = summary.count > 0 ? summary.text : "—";
     }
+  };
+
+  const syncSelectionDOM = (spans: readonly StudioNoteSpan[]) => {
+    const notesRoot = container.querySelector<HTMLElement>("#st-pr-notes");
+    const laneEl = container.querySelector<HTMLElement>("#st-pr-vel-lane");
+    if (notesRoot) {
+      notesRoot.querySelectorAll<HTMLElement>("[data-pr-note-idx]").forEach((el) => {
+        const idx = Number(el.getAttribute("data-pr-note-idx"));
+        el.classList.toggle("is-selected", state.selectedIndices.has(idx));
+      });
+    }
+    if (laneEl) {
+      laneEl.querySelectorAll<HTMLElement>("[data-pr-vel-idx]").forEach((el) => {
+        const idx = Number(el.getAttribute("data-pr-vel-idx"));
+        el.classList.toggle("is-selected", state.selectedIndices.has(idx));
+      });
+    }
+    const summary = velocitySummary(spans, state.selectedIndices);
+    const metaEl = container.querySelector<HTMLElement>(".st-pr-toolbar .st-pr-meta");
+    if (metaEl) {
+      const prRoot = container.querySelector<HTMLElement>("#st-piano-roll");
+      const isDrum = prRoot?.dataset.prMode === "drums";
+      const unit = isDrum ? (spans.length === 1 ? "hit" : "hits") : spans.length === 1 ? "note" : "notes";
+      metaEl.textContent = `${spans.length} ${unit}${state.selectedIndices.size > 0 ? ` · ${state.selectedIndices.size} sel` : ""}`;
+    }
+    const delBtn = container.querySelector<HTMLButtonElement>("#st-pr-delete");
+    if (delBtn) delBtn.disabled = state.selectedIndices.size === 0;
+    const noneBtn = container.querySelector<HTMLButtonElement>("#st-pr-deselect-all");
+    if (noneBtn) noneBtn.disabled = state.selectedIndices.size === 0;
+    const sliderWrap = container.querySelector<HTMLElement>("#st-pr-vel-slider-wrap");
+    if (sliderWrap) sliderWrap.hidden = summary.count === 0;
+    const sliderEl = container.querySelector<HTMLInputElement>("#st-pr-vel-slider");
+    if (sliderEl) {
+      sliderEl.disabled = summary.count === 0;
+      sliderEl.value = String(summary.avg);
+    }
+    const inputEl = container.querySelector<HTMLInputElement>("#st-pr-vel-input");
+    if (inputEl && document.activeElement !== inputEl) inputEl.value = String(summary.avg);
+    const readout = container.querySelector<HTMLElement>("#st-pr-vel-readout");
+    if (readout) readout.textContent = summary.count > 0 ? summary.text : "—";
+  };
+
+  const clearLongPress = () => {
+    if (!longPressPending) return;
+    clearTimeout(longPressPending.timer);
+    longPressPending = null;
+  };
+
+  const abortMarquee = () => {
+    if (!marqueeDrag) return;
+    marqueeDrag.marqueeEl.remove();
+    marqueeDrag.gridEl.classList.remove("is-marquee-active");
+    marqueeDrag = null;
   };
 
   const commitNumericVelocityInput = (rawValue: string) => {
@@ -737,12 +1039,74 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     true
   );
 
+  const beginSliderSession = (): NonNullable<typeof sliderDrag> | null => {
+    if (state.selectedIndices.size === 0) return null;
+    const track = studioEngine.getFocusedTrack();
+    const origSpans = editorNotes(track.id);
+    const selectedSet = new Set<number>(state.selectedIndices);
+    const origMidis = new Map<number, number>();
+    selectedSet.forEach((idx) => {
+      if (origSpans[idx]) origMidis.set(idx, velocityToMidi(origSpans[idx].velocity));
+    });
+    if (origMidis.size === 0) return null;
+    const summary = velocitySummary(origSpans, selectedSet);
+    sliderDrag = {
+      origSpans,
+      workingSpans: origSpans.map((s) => ({ ...s })),
+      selectedSet,
+      origMidis,
+      startAvg: summary.avg
+    };
+    return sliderDrag;
+  };
+
+  container.addEventListener("input", (e) => {
+    const el = e.target as HTMLInputElement | null;
+    if (!el || el.id !== "st-pr-vel-slider") return;
+    if (state.selectedIndices.size === 0) return;
+    const session = sliderDrag ?? beginSliderSession();
+    if (!session) return;
+    const targetVal = clampMidiVelocity(Number(el.value));
+    const delta = targetVal - session.startAvg;
+    session.workingSpans = applyRelativeVelocityDelta(
+      session.origSpans,
+      session.selectedSet,
+      session.origMidis,
+      delta
+    );
+    syncVelocityDOM(session.workingSpans, session.selectedSet);
+  });
+
   container.addEventListener("change", (e) => {
     const el = e.target as HTMLInputElement | HTMLSelectElement | null;
     if (!el) return;
     if (el.id === "st-pr-snap") {
       setPianoRollSnap(Number(el.value));
       requestRender();
+      return;
+    }
+    if (el.id === "st-pr-quantize-div") {
+      setPianoRollQuantize(Number(el.value));
+      requestRender();
+      return;
+    }
+    if (el.id === "st-pr-vel-slider") {
+      const session = sliderDrag ?? beginSliderSession();
+      sliderDrag = null;
+      if (!session) return;
+      const targetVal = clampMidiVelocity(Number(el.value));
+      const delta = targetVal - session.startAvg;
+      const updated = applyRelativeVelocityDelta(
+        session.origSpans,
+        session.selectedSet,
+        session.origMidis,
+        delta
+      );
+      const firstSel = Array.from(session.selectedSet)[0];
+      if (firstSel !== undefined && updated[firstSel]) {
+        previewNote(updated[firstSel].midi, updated[firstSel].velocity, 160);
+      }
+      commitSpans(updated);
       return;
     }
     if (el.id === "st-pr-vel-input") {
@@ -773,6 +1137,18 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     if (btn) {
       const action = btn.getAttribute("data-pr-action");
       switch (action) {
+        case "toggle-select-mode":
+          state.multiSelectMode = !state.multiSelectMode;
+          requestRender();
+          break;
+        case "select-all":
+          selectAllPianoRollNotes();
+          requestRender();
+          break;
+        case "deselect-all":
+          state.selectedIndices.clear();
+          requestRender();
+          break;
         case "toggle-vel-mode":
           state.velMode = !state.velMode;
           requestRender();
@@ -783,18 +1159,12 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
         case "vel-inc":
           nudgeSelectedVelocity(e.shiftKey ? 5 : 1);
           break;
-        case "quantize": {
-          const grid = state.snapTicks > 0 ? state.snapTicks : 120;
-          const track = studioEngine.getFocusedTrack();
-          const sel = state.selectedIndices.size > 0 ? Array.from(state.selectedIndices) : undefined;
-          try {
-            studioEngine.quantizeTrackNotes(track.id, grid, sel);
-          } catch (error) {
-            onError(error instanceof Error ? error.message : String(error));
-            requestRender();
-          }
+        case "quantize":
+          runQuantize(false);
           break;
-        }
+        case "quantize-all":
+          runQuantize(true);
+          break;
         case "delete-selected":
           deleteSelectedNotes();
           break;
@@ -814,11 +1184,12 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       return;
     }
 
-    // Clicking empty Piano Roll / Drum Grid creates a new snapped MIDI note (in Velocity Mode, clears selection instead)
+    // Clicking empty Piano Roll / Drum Grid creates a new snapped MIDI note (or clears selection in Velocity / Select modes)
     const grid = target.closest<HTMLElement>("#st-pr-grid");
     if (grid && !target.closest(".st-pr-note")) {
+      if (performance.now() < suppressGridClickUntil) return;
       grid.focus({ preventScroll: true });
-      if (state.velMode) {
+      if (state.velMode || state.multiSelectMode) {
         if (state.selectedIndices.size > 0) {
           state.selectedIndices.clear();
           requestRender();
@@ -861,7 +1232,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
 
   // Double-click a note to delete it quickly (disabled in Velocity Mode so touch taps never delete notes)
   container.addEventListener("dblclick", (e) => {
-    if (state.velMode) return;
+    if (state.velMode || state.multiSelectMode) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
     const noteEl = target.closest<HTMLElement>(".st-pr-note");
@@ -892,11 +1263,124 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     commitSpans(spans);
   });
 
-  // Pointerdown: piano/drum key audition, velocity lane drag, note move/resize/velocity drag
+  const activateMarquee = (
+    pointerId: number,
+    gridEl: HTMLElement,
+    prRoot: HTMLElement,
+    clientX: number,
+    clientY: number,
+    addMode: boolean
+  ) => {
+    const rect = gridEl.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    const track = studioEngine.getFocusedTrack();
+    const spans = editorNotes(track.id);
+    const rowMidis = parseRowMidis(prRoot);
+    const midiToRowIndex = new Map<number, number>();
+    rowMidis.forEach((m, i) => midiToRowIndex.set(m, i));
+    const marqueeEl = document.createElement("div");
+    marqueeEl.className = "st-pr-marquee";
+    marqueeEl.id = "st-pr-marquee";
+    marqueeEl.style.left = `${x.toFixed(1)}px`;
+    marqueeEl.style.top = `${y.toFixed(1)}px`;
+    marqueeEl.style.width = "10px";
+    marqueeEl.style.height = "10px";
+    gridEl.append(marqueeEl);
+    gridEl.classList.add("is-marquee-active");
+    try { gridEl.setPointerCapture(pointerId); } catch {}
+    marqueeDrag = {
+      pointerId,
+      gridEl,
+      marqueeEl,
+      startX: x,
+      startY: y,
+      curX: x,
+      curY: y,
+      addMode,
+      baseSelection: addMode ? new Set(state.selectedIndices) : new Set<number>(),
+      spans,
+      midiToRowIndex,
+      gridWidth: Number(prRoot.dataset.prWidth || rect.width),
+      totalTicks: Number(prRoot.dataset.prTotalTicks || studioEngine.getTotalTicks()),
+      rowHeight: Number(prRoot.dataset.prRowH || PR_ROW_HEIGHT),
+      moved: false
+    };
+  };
+
+  const updateMarquee = (clientX: number, clientY: number) => {
+    if (!marqueeDrag) return;
+    const rect = marqueeDrag.gridEl.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    marqueeDrag.curX = x;
+    marqueeDrag.curY = y;
+    const left = Math.min(marqueeDrag.startX, x);
+    const top = Math.min(marqueeDrag.startY, y);
+    const width = Math.max(2, Math.abs(x - marqueeDrag.startX));
+    const height = Math.max(2, Math.abs(y - marqueeDrag.startY));
+    if (width > 4 || height > 4) marqueeDrag.moved = true;
+    marqueeDrag.marqueeEl.style.left = `${left.toFixed(1)}px`;
+    marqueeDrag.marqueeEl.style.top = `${top.toFixed(1)}px`;
+    marqueeDrag.marqueeEl.style.width = `${width.toFixed(1)}px`;
+    marqueeDrag.marqueeEl.style.height = `${height.toFixed(1)}px`;
+
+    const hits = findNotesInMarquee(
+      marqueeDrag.spans,
+      marqueeDrag.midiToRowIndex,
+      marqueeDrag.totalTicks,
+      marqueeDrag.gridWidth,
+      marqueeDrag.rowHeight,
+      { left, top, right: left + width, bottom: top + height }
+    );
+    const nextSel = new Set(marqueeDrag.baseSelection);
+    hits.forEach((idx) => nextSel.add(idx));
+    state.selectedIndices = nextSel;
+    syncSelectionDOM(marqueeDrag.spans);
+  };
+
+  // Pointerdown: piano/drum key audition, contextual slider, velocity lane drag, note move/resize/velocity drag, long-press marquee & pinch guard
   container.addEventListener("pointerdown", (e) => {
     if (e.button === 2) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
+
+    if (target.id === "st-pr-vel-slider") {
+      beginSliderSession();
+      return;
+    }
+
+    if (e.pointerType === "touch" && target.closest("#st-pr-scroll")) {
+      activeTouchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activeTouchPointers.size >= 2) {
+        clearLongPress();
+        abortMarquee();
+        touchPan = null;
+        if (noteDrag) {
+          noteDrag.el.classList.remove("is-dragging");
+          noteDrag = null;
+        }
+        const pts = Array.from(activeTouchPointers.values());
+        const scrollEl = container.querySelector<HTMLElement>("#st-pr-scroll");
+        const prRoot = container.querySelector<HTMLElement>("#st-piano-roll");
+        if (scrollEl && prRoot) {
+          const rect = scrollEl.getBoundingClientRect();
+          const midClientX = (pts[0].x + pts[1].x) * 0.5;
+          const localMidX = Math.max(0, midClientX - rect.left);
+          pinchZoom = {
+            scrollEl,
+            startDist: Math.max(20, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)),
+            startZoom: state.zoom,
+            lastRenderedZoom: state.zoom,
+            anchorContentX: scrollEl.scrollLeft + localMidX,
+            localMidX
+          };
+          suppressGridClickUntil = performance.now() + 450;
+        }
+        return;
+      }
+    }
 
     const keyBtn = target.closest<HTMLElement>("[data-pr-key]");
     if (keyBtn) {
@@ -927,9 +1411,8 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const origSpans = editorNotes(track.id);
       if (idx >= origSpans.length) return;
 
-      if (e.shiftKey) {
-        if (state.selectedIndices.has(idx)) state.selectedIndices.delete(idx);
-        else state.selectedIndices.add(idx);
+      if (e.shiftKey || state.multiSelectMode) {
+        if (!state.selectedIndices.has(idx)) state.selectedIndices.add(idx);
       } else if (!state.selectedIndices.has(idx)) {
         state.selectedIndices.clear();
         state.selectedIndices.add(idx);
@@ -975,12 +1458,23 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const origSpans = editorNotes(track.id);
       if (idx < 0 || idx >= origSpans.length || rowMidis.length === 0) return;
 
-      if (e.shiftKey) {
-        if (state.selectedIndices.has(idx)) state.selectedIndices.delete(idx);
-        else state.selectedIndices.add(idx);
-      } else if (!state.selectedIndices.has(idx)) {
+      const origSelectedSize = state.selectedIndices.size;
+      const wasSelected = state.selectedIndices.has(idx);
+      const additive = e.shiftKey || state.multiSelectMode;
+      let toggleOffOnTapUp: number | null = null;
+      let collapseToIndexOnTapUp: number | null = null;
+
+      if (additive) {
+        if (wasSelected) {
+          toggleOffOnTapUp = idx;
+        } else {
+          state.selectedIndices.add(idx);
+        }
+      } else if (!wasSelected) {
         state.selectedIndices.clear();
         state.selectedIndices.add(idx);
+      } else if (origSelectedSize > 1 && !resizeEl && !state.velMode) {
+        collapseToIndexOnTapUp = idx;
       }
 
       const selectedList = state.selectedIndices.size > 0 ? Array.from(state.selectedIndices) : [idx];
@@ -1012,13 +1506,82 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
         rowHeight,
         origRowIndices,
         moved: false,
+        toggleOffOnTapUp,
+        collapseToIndexOnTapUp,
         lastAuditionMidi: origSpans[idx].midi,
         lastDeltaMidi: 0,
         el: noteEl
       };
       noteEl.classList.add("is-dragging");
+      syncSelectionDOM(origSpans);
       try { noteEl.setPointerCapture(e.pointerId); } catch (err) {}
       if (!resizeEl) previewNote(origSpans[idx].midi, origSpans[idx].velocity, 160);
+      return;
+    }
+
+    // Empty grid press: long-press (touch/pen/mouse) or Shift/Select-mode drag starts rectangular marquee selection
+    const gridEl = target.closest<HTMLElement>("#st-pr-grid");
+    const prRoot = container.querySelector<HTMLElement>("#st-piano-roll");
+    if (gridEl && prRoot) {
+      if (e.pointerType === "touch" && !state.multiSelectMode) {
+        const scrollEl = container.querySelector<HTMLElement>("#st-pr-scroll");
+        if (scrollEl) {
+          touchPan = {
+            pointerId: e.pointerId,
+            scrollEl,
+            startX: e.clientX,
+            startY: e.clientY,
+            startScrollLeft: scrollEl.scrollLeft,
+            startScrollTop: scrollEl.scrollTop,
+            scrolling: false
+          };
+        }
+      }
+      if (!state.velMode) {
+        const addMode = e.shiftKey || state.multiSelectMode;
+        if (e.pointerType !== "touch" && (e.shiftKey || state.multiSelectMode)) {
+          e.preventDefault();
+          longPressPending = {
+            pointerId: e.pointerId,
+            pointerType: e.pointerType,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            gridEl,
+            prRoot,
+            addMode,
+            timer: window.setTimeout(() => {
+              if (!longPressPending || longPressPending.pointerId !== e.pointerId) return;
+              const pending = longPressPending;
+              longPressPending = null;
+              touchPan = null;
+              activateMarquee(pending.pointerId, pending.gridEl, pending.prRoot, pending.startClientX, pending.startClientY, pending.addMode);
+            }, 160)
+          };
+        } else if (e.pointerType === "touch" && state.multiSelectMode) {
+          e.preventDefault();
+          activateMarquee(e.pointerId, gridEl, prRoot, e.clientX, e.clientY, true);
+          suppressGridClickUntil = performance.now() + 450;
+        } else {
+          // Stationary long-press (~300ms) allows 1-finger touch scroll if finger moves > 7px before threshold
+          longPressPending = {
+            pointerId: e.pointerId,
+            pointerType: e.pointerType,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            gridEl,
+            prRoot,
+            addMode,
+            timer: window.setTimeout(() => {
+              if (!longPressPending || longPressPending.pointerId !== e.pointerId) return;
+              const pending = longPressPending;
+              longPressPending = null;
+              touchPan = null;
+              activateMarquee(pending.pointerId, pending.gridEl, pending.prRoot, pending.startClientX, pending.startClientY, pending.addMode);
+              suppressGridClickUntil = performance.now() + 600;
+            }, 300)
+          };
+        }
+      }
     }
   });
 
@@ -1039,6 +1602,61 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
   };
 
   container.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "touch" && activeTouchPointers.has(e.pointerId)) {
+      activeTouchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinchZoom && activeTouchPointers.size >= 2) {
+        e.preventDefault();
+        const pts = Array.from(activeTouchPointers.values());
+        const dist = Math.max(20, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+        const ratio = dist / pinchZoom.startDist;
+        const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(pinchZoom.startZoom * ratio * 100) / 100));
+        if (Math.abs(nextZoom - pinchZoom.lastRenderedZoom) >= 0.06) {
+          const prevZoom = pinchZoom.lastRenderedZoom;
+          state.zoom = nextZoom;
+          pinchZoom.lastRenderedZoom = nextZoom;
+          state.scrollLeft = Math.max(0, pinchZoom.anchorContentX * (nextZoom / prevZoom) - pinchZoom.localMidX);
+          pinchZoom.anchorContentX = state.scrollLeft + pinchZoom.localMidX;
+          requestRender();
+        }
+        return;
+      }
+    }
+
+    if (longPressPending && e.pointerId === longPressPending.pointerId) {
+      const dist = Math.hypot(e.clientX - longPressPending.startClientX, e.clientY - longPressPending.startClientY);
+      if (longPressPending.pointerType !== "touch" && longPressPending.addMode && dist > 4) {
+        const pending = longPressPending;
+        clearLongPress();
+        activateMarquee(pending.pointerId, pending.gridEl, pending.prRoot, pending.startClientX, pending.startClientY, pending.addMode);
+        updateMarquee(e.clientX, e.clientY);
+        return;
+      }
+      if (dist > 7) {
+        clearLongPress();
+      }
+    }
+
+    if (touchPan && e.pointerId === touchPan.pointerId && !marqueeDrag) {
+      const dx = e.clientX - touchPan.startX;
+      const dy = e.clientY - touchPan.startY;
+      if (!touchPan.scrolling && Math.hypot(dx, dy) > 7) {
+        touchPan.scrolling = true;
+        suppressGridClickUntil = performance.now() + 350;
+      }
+      if (touchPan.scrolling) {
+        e.preventDefault();
+        touchPan.scrollEl.scrollLeft = Math.max(0, touchPan.startScrollLeft - dx);
+        touchPan.scrollEl.scrollTop = Math.max(0, touchPan.startScrollTop - dy);
+        return;
+      }
+    }
+
+    if (marqueeDrag && e.pointerId === marqueeDrag.pointerId) {
+      e.preventDefault();
+      updateMarquee(e.clientX, e.clientY);
+      return;
+    }
+
     if (velDrag && e.pointerId === velDrag.pointerId) {
       e.preventDefault();
       updateVelocityFromLanePointer(e.clientY);
@@ -1049,7 +1667,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
 
     const dx = e.clientX - noteDrag.startClientX;
     const dy = e.clientY - noteDrag.startClientY;
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) noteDrag.moved = true;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) noteDrag.moved = true;
     if (!noteDrag.moved) return;
 
     if (noteDrag.mode === "velocity") {
@@ -1069,38 +1687,91 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     }
 
     const deltaTicksRaw = (dx / noteDrag.gridWidth) * noteDrag.totalTicks;
-    const snap = state.snapTicks > 0 ? state.snapTicks : 15;
+    const snap = state.snapTicks;
+    const notesRoot = container.querySelector<HTMLElement>("#st-pr-notes");
+    const velLane = container.querySelector<HTMLElement>("#st-pr-vel-lane");
 
     if (noteDrag.mode === "resize") {
-      const base = noteDrag.origSpans[noteDrag.index];
-      const snappedEnd = Math.max(
-        base.startTick + Math.max(30, state.snapTicks > 0 ? state.snapTicks : 60),
-        Math.min(noteDrag.totalTicks, snapTickValue(base.endTick + deltaTicksRaw, snap, "round"))
-      );
-      const widthPx = Math.max(10, ((snappedEnd - base.startTick) / noteDrag.totalTicks) * noteDrag.gridWidth);
-      noteDrag.el.style.width = `${widthPx.toFixed(1)}px`;
+      const minDur = Math.max(1, snap);
+      for (const si of noteDrag.selectedList) {
+        const s = noteDrag.origSpans[si];
+        if (!s) continue;
+        const snappedEnd = Math.max(
+          Math.min(noteDrag.totalTicks, s.startTick + minDur),
+          Math.min(noteDrag.totalTicks, snapTickValue(s.endTick + deltaTicksRaw, snap, "round"))
+        );
+        const widthPx = Math.max(10, ((snappedEnd - s.startTick) / noteDrag.totalTicks) * noteDrag.gridWidth);
+        const el = si === noteDrag.index ? noteDrag.el : notesRoot?.querySelector<HTMLElement>(`[data-pr-note-idx="${si}"]`);
+        if (el) el.style.width = `${widthPx.toFixed(1)}px`;
+      }
     } else {
-      const deltaRows = Math.round(dy / noteDrag.rowHeight);
-      const base = noteDrag.origSpans[noteDrag.index];
-      const baseRow = noteDrag.origRowIndices.get(noteDrag.index) ?? 0;
-      const nextRow = Math.max(0, Math.min(noteDrag.rowMidis.length - 1, baseRow + deltaRows));
-      const nextMidi = noteDrag.rowMidis[nextRow];
-      const nextStart = Math.max(
-        0,
-        Math.min(noteDrag.totalTicks - 30, snapTickValue(base.startTick + deltaTicksRaw, snap, "round"))
+      const { tickShift, rowShift: deltaRows } = boundedNoteMove(
+        noteDrag.origSpans, noteDrag.selectedList, noteDrag.index, noteDrag.origRowIndices,
+        noteDrag.rowMidis.length, deltaTicksRaw, Math.round(dy / noteDrag.rowHeight), snap, noteDrag.totalTicks
       );
-      const leftPx = (nextStart / noteDrag.totalTicks) * noteDrag.gridWidth;
-      const topPx = nextRow * noteDrag.rowHeight + 2;
-      noteDrag.el.style.left = `${leftPx.toFixed(1)}px`;
-      noteDrag.el.style.top = `${topPx}px`;
-      if (nextMidi !== noteDrag.lastAuditionMidi) {
-        noteDrag.lastAuditionMidi = nextMidi;
-        previewNote(nextMidi, base.velocity, 120);
+
+      for (const si of noteDrag.selectedList) {
+        const s = noteDrag.origSpans[si];
+        if (!s) continue;
+        const nextStart = s.startTick + tickShift;
+        const origRow = noteDrag.origRowIndices.get(si) ?? 0;
+        const nextRow = Math.max(0, Math.min(noteDrag.rowMidis.length - 1, origRow + deltaRows));
+        const leftPx = (nextStart / noteDrag.totalTicks) * noteDrag.gridWidth;
+        const topPx = nextRow * noteDrag.rowHeight + 2;
+        const el = si === noteDrag.index ? noteDrag.el : notesRoot?.querySelector<HTMLElement>(`[data-pr-note-idx="${si}"]`);
+        if (el) {
+          el.style.left = `${leftPx.toFixed(1)}px`;
+          el.style.top = `${topPx}px`;
+        }
+        const stemEl = velLane?.querySelector<HTMLElement>(`[data-pr-vel-idx="${si}"]`);
+        if (stemEl) {
+          stemEl.style.left = `${leftPx.toFixed(1)}px`;
+        }
+        if (si === noteDrag.index) {
+          const nextMidi = noteDrag.rowMidis[nextRow];
+          if (nextMidi !== noteDrag.lastAuditionMidi) {
+            noteDrag.lastAuditionMidi = nextMidi;
+            previewNote(nextMidi, s.velocity, 120);
+          }
+        }
       }
     }
   });
 
   const endPointerOps = (e?: PointerEvent) => {
+    if (e && e.pointerType === "touch") {
+      activeTouchPointers.delete(e.pointerId);
+      if (activeTouchPointers.size < 2 && pinchZoom) {
+        pinchZoom = null;
+        suppressGridClickUntil = performance.now() + 350;
+      }
+    } else if (!e) {
+      activeTouchPointers.clear();
+      pinchZoom = null;
+    }
+
+    if (longPressPending && (!e || e.pointerId === longPressPending.pointerId)) {
+      clearLongPress();
+    }
+
+    if (touchPan && (!e || e.pointerId === touchPan.pointerId)) {
+      if (touchPan.scrolling) suppressGridClickUntil = performance.now() + 260;
+      touchPan = null;
+    }
+
+    if (marqueeDrag && (!e || e.pointerId === marqueeDrag.pointerId)) {
+      const m = marqueeDrag;
+      abortMarquee();
+      suppressGridClickUntil = performance.now() + 380;
+      if (e && e.type !== "pointercancel") {
+        updateMarqueeStateAfterDrop(m);
+      } else {
+        state.selectedIndices = new Set(m.baseSelection);
+      }
+      requestRender();
+      return;
+    }
+
     if (heldAuditionKey && (!e || e.pointerId === heldAuditionKey.pointerId)) {
       studioEngine.getFocusedTrack().noteOff(heldAuditionKey.midi);
       heldAuditionKey.el.classList.remove("is-pressed");
@@ -1110,6 +1781,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     if (velDrag && (!e || e.pointerId === velDrag.pointerId)) {
       const drag = velDrag;
       velDrag = null;
+      if (!e || e.type === "pointercancel") { requestRender(); return; }
       const updated = drag.workingSpans.map((s) => ({ ...s }));
       const anchor = updated[drag.index];
       if (anchor) previewNote(anchor.midi, anchor.velocity, 160);
@@ -1120,9 +1792,13 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const drag = noteDrag;
       noteDrag = null;
       drag.el.classList.remove("is-dragging");
+      if (!e || e.type === "pointercancel") { requestRender(); return; }
 
       if (drag.mode === "velocity") {
         if (!drag.moved || drag.lastDeltaMidi === 0) {
+          if (drag.toggleOffOnTapUp !== null) {
+            state.selectedIndices.delete(drag.toggleOffOnTapUp);
+          }
           requestRender();
           return;
         }
@@ -1134,6 +1810,12 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       }
 
       if (!drag.moved) {
+        if (drag.toggleOffOnTapUp !== null) {
+          state.selectedIndices.delete(drag.toggleOffOnTapUp);
+        } else if (drag.collapseToIndexOnTapUp !== null) {
+          state.selectedIndices.clear();
+          state.selectedIndices.add(drag.collapseToIndexOnTapUp);
+        }
         requestRender();
         return;
       }
@@ -1141,36 +1823,31 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const dx = (e ? e.clientX : drag.startClientX) - drag.startClientX;
       const dy = (e ? e.clientY : drag.startClientY) - drag.startClientY;
       const deltaTicksRaw = (dx / drag.gridWidth) * drag.totalTicks;
-      const snap = state.snapTicks > 0 ? state.snapTicks : 15;
+      const snap = state.snapTicks;
       const nextSpans = drag.origSpans.map((s) => ({ ...s }));
 
       if (drag.mode === "resize") {
-        const minDur = Math.max(30, state.snapTicks > 0 ? state.snapTicks : 60);
+        const minDur = Math.max(1, snap);
         for (const i of drag.selectedList) {
           const s = nextSpans[i];
           if (!s) continue;
           const nextEnd = Math.max(
-            s.startTick + minDur,
+            Math.min(drag.totalTicks, s.startTick + minDur),
             Math.min(drag.totalTicks, snapTickValue(s.endTick + deltaTicksRaw, snap, "round"))
           );
           s.endTick = nextEnd;
         }
       } else {
-        const deltaRows = Math.round(dy / drag.rowHeight);
-        const anchor = drag.origSpans[drag.index];
-        const snappedAnchor = Math.max(
-          0,
-          Math.min(drag.totalTicks - 30, snapTickValue(anchor.startTick + deltaTicksRaw, snap, "round"))
+        const { tickShift, rowShift: deltaRows } = boundedNoteMove(
+          drag.origSpans, drag.selectedList, drag.index, drag.origRowIndices,
+          drag.rowMidis.length, deltaTicksRaw, Math.round(dy / drag.rowHeight), snap, drag.totalTicks
         );
-        const tickShift = snappedAnchor - anchor.startTick;
 
         for (const i of drag.selectedList) {
           const s = nextSpans[i];
           if (!s) continue;
-          const dur = Math.max(30, s.endTick - s.startTick);
-          const nextStart = Math.max(0, Math.min(drag.totalTicks - 30, s.startTick + tickShift));
-          s.startTick = nextStart;
-          s.endTick = Math.min(drag.totalTicks, nextStart + dur);
+          s.startTick += tickShift;
+          s.endTick += tickShift;
           const origRow = drag.origRowIndices.get(i);
           if (origRow !== undefined) {
             const nextRow = Math.max(0, Math.min(drag.rowMidis.length - 1, origRow + deltaRows));
@@ -1179,9 +1856,37 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
         }
       }
 
-      commitSpans(nextSpans);
+      commitSpans(nextSpans, true);
     }
   };
+
+  const updateMarqueeStateAfterDrop = (m: NonNullable<typeof marqueeDrag>) => {
+    const left = Math.min(m.startX, m.curX);
+    const top = Math.min(m.startY, m.curY);
+    const right = Math.max(m.startX, m.curX);
+    const bottom = Math.max(m.startY, m.curY);
+    const hits = findNotesInMarquee(
+      m.spans,
+      m.midiToRowIndex,
+      m.totalTicks,
+      m.gridWidth,
+      m.rowHeight,
+      { left, top, right, bottom }
+    );
+    const nextSel = new Set(m.baseSelection);
+    hits.forEach((idx) => nextSel.add(idx));
+    state.selectedIndices = nextSel;
+  };
+
+  container.addEventListener(
+    "touchmove",
+    (e) => {
+      if (marqueeDrag || pinchZoom || activeTouchPointers.size >= 2 || noteDrag || velDrag) {
+        if (e.cancelable) e.preventDefault();
+      }
+    },
+    { passive: false }
+  );
 
   container.addEventListener("pointerup", endPointerOps);
   container.addEventListener("pointercancel", endPointerOps);
@@ -1189,10 +1894,25 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
 
   document.addEventListener("keydown", (e) => {
     if (!studioEngine.isActive() || container.hidden) return;
-    if (state.selectedIndices.size === 0) return;
-    if (e.key !== "Delete" && e.key !== "Backspace") return;
     const active = document.activeElement as HTMLElement | null;
     if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
+    const mod = e.metaKey || e.ctrlKey;
+    const key = e.key.toLowerCase();
+    if (mod && key === "a" && active?.closest("#st-piano-roll")) {
+      e.preventDefault();
+      selectAllPianoRollNotes();
+      requestRender();
+      return;
+    }
+    if (e.key === "Escape" && (state.selectedIndices.size > 0 || state.multiSelectMode) && active?.closest("#st-piano-roll")) {
+      e.preventDefault();
+      state.selectedIndices.clear();
+      state.multiSelectMode = false;
+      requestRender();
+      return;
+    }
+    if (state.selectedIndices.size === 0) return;
+    if (e.key !== "Delete" && e.key !== "Backspace") return;
     e.preventDefault();
     deleteSelectedNotes();
   });

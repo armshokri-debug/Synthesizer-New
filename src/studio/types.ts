@@ -23,6 +23,26 @@ export const STUDIO_SNAP_OPTIONS = [
   { id: "1/32", label: "1/32", ticks: STUDIO_PPQ / 8 }
 ] as const;
 
+export const STUDIO_REGION_SNAP_OPTIONS = [
+  { id: "off", label: "Off", ticks: 0 },
+  { id: "bar", label: "Bar", ticks: STUDIO_TICKS_PER_BAR },
+  { id: "1/4", label: "1/4", ticks: STUDIO_PPQ },
+  { id: "1/8", label: "1/8", ticks: STUDIO_PPQ / 2 },
+  { id: "1/16", label: "1/16", ticks: STUDIO_PPQ / 4 },
+  { id: "1/32", label: "1/32", ticks: STUDIO_PPQ / 8 }
+] as const;
+
+export const STUDIO_QUANTIZE_OPTIONS = [
+  { id: "1/4", label: "1/4", ticks: STUDIO_PPQ },
+  { id: "1/4T", label: "1/4T", ticks: Math.round((STUDIO_PPQ * 2) / 3) }, // 320
+  { id: "1/8", label: "1/8", ticks: STUDIO_PPQ / 2 },                    // 240
+  { id: "1/8T", label: "1/8T", ticks: Math.round(STUDIO_PPQ / 3) },      // 160
+  { id: "1/16", label: "1/16", ticks: STUDIO_PPQ / 4 },                  // 120
+  { id: "1/16T", label: "1/16T", ticks: Math.round(STUDIO_PPQ / 6) },    // 80
+  { id: "1/32", label: "1/32", ticks: STUDIO_PPQ / 8 },                  // 60
+  { id: "1/32T", label: "1/32T", ticks: Math.round(STUDIO_PPQ / 12) }    // 40
+] as const;
+
 export type StudioMidiEvent =
   | { type: "noteOn"; tick: number; midi: number; velocity: number }
   | { type: "noteOff"; tick: number; midi: number }

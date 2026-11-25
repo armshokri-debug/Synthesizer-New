@@ -670,15 +670,18 @@ export class SY1StudioEngine {
     const t = this.getTrack(id);
     if (!t) return 0;
     const selected = selectedIndices ? new Set(selectedIndices) : null;
-    const limit = this.regions.editorLength(id);
+    const limit = Math.max(1, this.regions.editorLength(id));
     const spans = this.regions.editorNotes(id);
+    const grid = Math.max(1, Math.round(gridTicks));
+    const maxStart = Math.max(0, Math.floor((limit - 1) / grid) * grid);
     let changed = 0;
     const next = spans.map((span, index) => {
-      if (selected?.size && !selected.has(index)) return span;
-      const grid = Math.max(1, gridTicks);
-      const startTick = Math.min(limit - 1, Math.round(span.startTick / grid) * grid);
-      if (startTick !== span.startTick) changed++;
-      return { ...span, startTick, endTick: Math.min(limit, startTick + span.endTick - span.startTick) };
+      if (selected !== null && !selected.has(index)) return span;
+      const startTick = Math.max(0, Math.min(maxStart, Math.round(span.startTick / grid) * grid));
+      const dur = Math.max(1, span.endTick - span.startTick);
+      const endTick = Math.min(limit, startTick + dur);
+      if (startTick !== span.startTick || endTick !== span.endTick) changed++;
+      return { ...span, startTick, endTick };
     });
     if (changed) this.regions.editNotes(id, next);
     return changed;
