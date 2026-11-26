@@ -840,16 +840,29 @@ export class SY1StudioEngine {
     }
     if (this.playing) {
       const curTick = this.getCurrentTick(now);
-      this.anchorAudioTime = now;
-      this.anchorTick = curTick;
+      const wrap = this.pendingLoopWrap;
+      const secPerTick = this.secondsPerTick(nextBpm);
       this.anchorBpm = nextBpm;
-      // Re-align scheduler cursor time to the new tempo so future lookahead stays exact
-      const deltaTicks = this.cursorTick - curTick;
-      if (deltaTicks >= 0) {
-        this.cursorAudioTime = now + deltaTicks * this.secondsPerTick(nextBpm);
+      if (wrap && now < wrap.at) {
+        // The scheduler has already visited the next loop, but the listener
+        // is still on the previous pass. Preserve both sides of the seam.
+        const seamAt = now + (wrap.end - curTick) * secPerTick;
+        this.pendingLoopWrap = { ...wrap, at: seamAt };
+        this.anchorAudioTime = seamAt;
+        this.anchorTick = wrap.start;
+        this.cursorAudioTime = seamAt + (this.cursorTick - wrap.start) * secPerTick;
       } else {
-        this.cursorAudioTime = now;
-        this.cursorTick = curTick;
+        this.finishRecordingLoopBoundary(now);
+        const anchor = Math.max(now, this.anchorAudioTime);
+        this.anchorAudioTime = anchor;
+        this.anchorTick = curTick;
+        const deltaTicks = this.cursorTick - curTick;
+        if (deltaTicks >= 0) {
+          this.cursorAudioTime = anchor + deltaTicks * secPerTick;
+        } else {
+          this.cursorAudioTime = anchor;
+          this.cursorTick = curTick;
+        }
       }
     } else {
       this.anchorBpm = nextBpm;
