@@ -541,6 +541,7 @@ function setConnOpen(v: boolean): void {
 }
 
 function applyPageVisibility(): void {
+  if (document.getElementById("sy1-panel")?.dataset.studioInstrument) return;
   const m = getMachine();
   const panel = document.querySelector<HTMLElement>("#sy1-panel .synth-panel");
   const shell = document.querySelector<HTMLElement>(".sy1-shell");
@@ -794,7 +795,7 @@ export function setStudioOpenHandler(fn: (() => void) | null): void {
 
 export function renderPanel(): void {
   const container = document.getElementById("sy1-panel");
-  if (!container) return;
+  if (!container || container.dataset.studioInstrument) return;
   container.innerHTML = renderSynthPanelHtml();
   bindPanelElements();
   let page = "";
@@ -813,6 +814,7 @@ export function renderPanel(): void {
  * on any screen size, so nothing overflows and the keys never shrink.
  */
 export function fitPanel(): void {
+  if (document.getElementById("sy1-panel")?.dataset.studioInstrument) return;
   const shell = document.querySelector<HTMLElement>(".sy1-shell");
   const panel = document.querySelector<HTMLElement>("#sy1-panel .synth-panel");
   if (!shell || !panel) return;
@@ -902,6 +904,7 @@ export function initPanelInteractions(): void {
     queueVisualUpdate("drum-steps", () => refreshCustom("drum-steps"));
   });
   onDrumStep((s) => {
+    if (document.getElementById("sy1-panel")?.dataset.studioInstrument) return;
     document.querySelectorAll(".drum-step.playing").forEach((el) => el.classList.remove("playing"));
     if (s >= 0) {
       const el = document.querySelector(`.drum-step[data-index="${s}"]`);
