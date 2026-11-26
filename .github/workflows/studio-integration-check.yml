@@ -16,7 +16,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: npm ci
       - run: npm run lint
-      - run: bun test tests
+      - run: bun test --preload ./tests/vite-worklet-preload.js tests
       - run: npm run build
       - name: Verify original instrument Edit and existing drum integration
         shell: bash
