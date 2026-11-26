@@ -2028,7 +2028,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         case "track-drum-insert": {
           const ft = resolveInstrumentTrack(btn);
           if (!ft.isDrumTrack()) break;
-          if (studioEngine.getTransportSnapshot().recording) { setStatus("Stop recording before editing the pattern.","error"); renderStudioPanel(); break; }
+          if (action === "track-drum-insert" && studioEngine.getTransportSnapshot().recording) { setStatus("Stop recording before inserting a MIDI region.","error"); renderStudioPanel(); break; }
           const bank = ft.getTrackDrumBank(), pat = bank.patterns[bank.selected];
           if (action === "track-drum-edit") {
             setTrackDrumEdit(ft, STEP_EDITS[(STEP_EDITS.indexOf(getTrackDrumEdit(ft))+1)%STEP_EDITS.length]);
