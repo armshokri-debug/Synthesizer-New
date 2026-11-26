@@ -112,4 +112,31 @@ describe("DAW acceptance contract",()=>{
       expect(engine.getCurrentTick()).toBeCloseTo(24,5);
     }finally{engine.dispose();}
   });
+  test("A15: pause retains musical position, resume continues, explicit Stop rewinds",async()=>{
+    const {engine,advance}=fixture();
+    try {
+      await engine.play();advance(10.75);
+      await engine.pause();
+      expect(engine.getTransportSnapshot().playing).toBe(false);
+      expect(engine.getCurrentTick()).toBe(720);
+      advance(11.5);expect(engine.getCurrentTick()).toBe(720);
+      await engine.play();advance(12);
+      expect(engine.getCurrentTick()).toBeCloseTo(1200,5);
+      await engine.stop();expect(engine.getCurrentTick()).toBe(0);
+    }finally{engine.dispose();}
+  });
+  test("A16: instrument Record arms selected drum track even when another track is armed",async()=>{
+    const {engine,track,advance}=fixture();
+    try{
+      const other=engine.getTracks().find(t=>t.id!==track.id)!;
+      engine.setTrackArmed(track.id,false);engine.setTrackArmed(other.id,true);
+      const original=other.events.slice();
+      await engine.record({midiOnly:true,patternTrackId:track.id});advance(10.65);
+      await engine.pause();
+      expect(track.events.filter(e=>e.type==="noteOn").map(e=>e.tick)).toEqual([0,STUDIO_PPQ]);
+      expect(other.events).toEqual(original);
+      expect(engine.getCurrentTick()).toBe(624);
+      expect(engine.getTransportSnapshot().recording).toBe(false);
+    }finally{engine.dispose();}
+  });
 });
