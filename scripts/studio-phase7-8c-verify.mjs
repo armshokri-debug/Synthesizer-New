@@ -82,6 +82,41 @@ try {
   assert(slower.length >= 2 && slower.every(hit => hit.source === "drum-preview"));
   assert(Math.abs(slower[1].audioTime - slower[0].audioTime - 2/3) < 0.005);
   await click("track-drum-preview");
+  // Change the project tempo while a preview is actually sounding.
+  const dynamic = await cdp.evaluate(`(async()=>{
+    const e=SY1_STUDIO.engine;
+    e.setBpm(120);window.__drumDispatch.length=0;
+    const track=e.getFocusedTrack(), ctx=e.prepareAudioSync();
+    e.startDrumPreview(track.id);
+    const until=async(test,ms=2500)=>{
+      const end=performance.now()+ms;
+      while(!test()){
+        if(performance.now()>end)throw Error("Timed out waiting for audio dispatch");
+        await new Promise(r=>setTimeout(r,5));
+      }
+    };
+    await until(()=>window.__drumDispatch.length>=1);
+    const first=window.__drumDispatch[0].audioTime;
+    await until(()=>ctx.currentTime>=first+.15);
+    const before=ctx.currentTime;
+    e.setBpm(60);
+    const after=ctx.currentTime;
+    await until(()=>window.__drumDispatch.length>=2);
+    const second=window.__drumDispatch[1];
+    const active=e.isDrumPreviewEnabled(track.id);
+    const shown=Number(document.querySelector("#sy1-panel [data-st-project-bpm]").textContent);
+    e.stopDrumPreview();
+    return {first,before,after,second,active,shown};
+  })()`);
+  assert(dynamic.active);
+  assert.equal(dynamic.shown,60);
+  assert.equal(dynamic.second.source,"drum-preview");
+  assert.equal(dynamic.second.event.tick,480);
+  // At 120 BPM the first quarter note lasts .5s. At 60 BPM the
+  // remaining fraction lasts twice as long, without restarting the pattern.
+  const expected=dynamic.first+1-(dynamic.before-dynamic.first);
+  assert(Math.abs(dynamic.second.audioTime-expected)<.04+dynamic.after-dynamic.before,
+    "Live BPM change should preserve beat phase");
   await cdp.evaluate("SY1_STUDIO.engine.setBpm(120)");
   await click("track-drum-preview");
   await cdp.evaluate("window.__drumDispatch.length = 0; window.SY1_STUDIO.engine.play()");
@@ -92,13 +127,26 @@ try {
   assert(hits.every(hit => hit.source === undefined));
   await cdp.evaluate("SY1_STUDIO.engine.stop()");
 
+  await click("track-drum-preview");
+  await cdp.evaluate("window.__drumDispatch.length=0; SY1_STUDIO.engine.setRecordingSettings({countIn:false,mode:'overdub'}); SY1_STUDIO.engine.record({midiOnly:true})");
+  await sleep(680);
+  const recordHandoff=await cdp.evaluate(`(()=>{
+    const e=SY1_STUDIO.engine;
+    return {recording:e.getTransportSnapshot().recording,preview:e.isDrumPreviewEnabled(e.getFocusedTrack().id),
+      hits:window.__drumDispatch.filter(h=>h.event.type==="noteOn")};
+  })()`);
+  assert(recordHandoff.recording && !recordHandoff.preview);
+  assert.deepEqual(recordHandoff.hits.map(h=>h.event.tick),[0,480]);
+  assert(recordHandoff.hits.every(h=>h.source===undefined));
+  await cdp.evaluate("SY1_STUDIO.engine.stop()");
+  assert.deepEqual(await regions(),before);
   await click("track-drum-insert");
   const after = await regions();
   assert.deepEqual(after[0], before[0]);
   assert.equal(after.length, 2);
   assert.equal(after[1].startTick, 1920);
   assert.deepEqual(errors, []);
-  console.log("PASS: occupied-track Preview signal and tempo, exclusive Play handoff, + MIDI preserves old region, zero browser exceptions");
+  console.log("PASS: occupied-track Preview, live tempo change, exclusive Play/Record handoff, + MIDI preserves old region, zero browser exceptions");
 } finally {
   cdp?.close();
   chrome.kill();
