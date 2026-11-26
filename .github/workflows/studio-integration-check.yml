@@ -23,9 +23,11 @@ jobs:
         run: |
           set -euo pipefail
           export SY1_CHROME_BIN="$(command -v google-chrome || command -v chromium)"
+          "$SY1_CHROME_BIN" --version
+          export CHROME_LOG_FILE=/tmp/sy1-chromium.log
           npm run preview -- --host 127.0.0.1 --port 4178 > /tmp/sy1-preview.log 2>&1 &
           pid=$!
-          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          trap 'code=$?; kill "$pid" 2>/dev/null || true; if [ "$code" -ne 0 ]; then cat /tmp/sy1-preview.log; tail -100 /tmp/sy1-chromium.log 2>/dev/null || true; fi' EXIT
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:4178/ >/dev/null; then break; fi
             sleep 1
