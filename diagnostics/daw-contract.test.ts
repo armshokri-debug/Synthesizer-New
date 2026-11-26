@@ -150,4 +150,21 @@ describe("DAW acceptance contract",()=>{
     expect(result.chunks[1].flatMap(a=>Array.from(a))).toEqual([-4,-5,-6]);
     expect(trimCaptureWindow([l,r],100,98,110).missingFrames).toBe(4);
   });
+  test("A18: second pattern overdubs existing regions without duplicating matching drum hits",async()=>{
+    const {engine,track,hits,advance}=fixture();
+    try{
+      engine.insertDrumPattern(track.id,0);
+      const bank=track.getTrackDrumBank();
+      bank.patterns[bank.selected].steps.snare[2]=1;
+      track.setTrackDrumBank(bank);
+      await engine.record({midiOnly:true,patternTrackId:track.id});
+      advance(10.7);await engine.stop();
+      const expected=[[0,DRUM_NOTES.kick],[240,DRUM_NOTES.snare],[480,DRUM_NOTES.kick]];
+      const pairs=events=>events.filter(e=>e.type==="noteOn").map(e=>[e.tick,e.midi]).sort((a,b)=>a[0]-b[0]);
+      expect(pairs(track.events)).toEqual(expected);
+      expect(pairs(hits.map(h=>h.event))).toEqual(expected);
+      hits.length=0;await engine.play();advance(11.4);await engine.stop();
+      expect(pairs(hits.map(h=>h.event))).toEqual(expected);
+    }finally{engine.dispose();}
+  });
 });
