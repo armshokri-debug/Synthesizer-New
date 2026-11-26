@@ -922,6 +922,15 @@ export class SY1StudioEngine {
         this.getFocusedTrack().armed = true;
       }
       const total = this.getTotalTicks();
+      // Direct instrument recording: an armed, focused empty drum track plays
+      // its selected pattern without a second Live command. External producers
+      // own their own MIDI and existing regions remain the playback source.
+      const focused = this.getFocusedTrack();
+      if (!options.onStart && focused.armed && focused.isDrumTrack() &&
+          !focused.events.length && !focused.getRegions(total).length &&
+          !this.liveDrums.has(focused.id)) {
+        this.liveDrums.set(focused.id, new LiveDrumSequence());
+      }
       for (const track of this.tracks) {
         track.beginRegionTake(total, track.armed ? this.recordingMode : "overdub");
       }
