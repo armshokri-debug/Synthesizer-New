@@ -904,12 +904,13 @@ export class SY1StudioEngine {
     this.notify();
   }
 
-  async record(options: { midiOnly?: boolean; onStart?: (at: number) => void } = {}): Promise<void> {
+  async record(options: { midiOnly?: boolean; patternTrackId?: string; onStart?: (at: number) => void } = {}): Promise<void> {
     if (this.recording || this.preparingRecord) return;
     this.recordedDrumHits.clear();
     // Keep already scheduled live hits so punch-in captures those that sound
     // after the recording boundary, not just hits scheduled after Record.
     this.preparingRecord = true;
+    const patternTrackId = options.patternTrackId ?? this.drumPreview?.track.id;
     this.stopDrumPreview();
     const epoch = this.transportEpoch;
     try {
@@ -925,8 +926,8 @@ export class SY1StudioEngine {
       // Direct instrument recording: an armed, focused empty drum track plays
       // its selected pattern without a second Live command. External producers
       // own their own MIDI and existing regions remain the playback source.
-      const focused = this.getFocusedTrack();
-      if (!options.onStart && focused.armed && focused.isDrumTrack() &&
+      const focused = patternTrackId ? this.getTrack(patternTrackId) : undefined;
+      if (!options.onStart && focused?.armed && focused.isDrumTrack() &&
           !focused.events.length && !focused.getRegions(total).length &&
           !this.liveDrums.has(focused.id)) {
         this.liveDrums.set(focused.id, new LiveDrumSequence());
