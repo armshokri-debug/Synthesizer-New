@@ -146,6 +146,26 @@ describe("Phase 6 MIDI regions", () => {
     editor.undo();expect(editor.current(target.id)?.events).toEqual(original.events);engine.dispose();
   });
 
+  test("Grouped move across tracks and Option-drag copy are independent and undo atomically",()=>{
+    const {engine,track,editor,legacy}=setup();
+    const target=engine.getTracks()[1];engine.setTrackMachine(target.id,"yazd");
+    editor.duplicate();const second=editor.current(track.id)!;
+    editor.selectMany([legacy.id,second.id]);expect(editor.selection().length).toBe(2);
+    const before=editor.regions(track.id);
+    editor.move(bar,1,true);
+    expect(editor.regions(track.id)).toEqual(before);
+    const copied=editor.regions(target.id);
+    expect(copied.map(r=>r.startTick)).toEqual([bar,bar*2]);
+    expect(copied.every(r=>r.events.length===phrase.length)).toBe(true);
+    expect(copied.every(r=>!before.some(b=>b.id===r.id))).toBe(true);
+    editor.undo();expect(editor.regions(target.id)).toEqual([]);
+    editor.redo();expect(editor.regions(target.id)).toEqual(copied);
+    editor.move(0,-1);expect(editor.regions(target.id)).toEqual([]);
+    expect(editor.regions(track.id).length).toBe(4);
+    editor.undo();expect(editor.regions(track.id)).toEqual(before);
+    expect(editor.regions(target.id)).toEqual(copied);
+    engine.dispose();
+  });
   test("Piano Roll only edits the chosen source and preserves hidden notes and controllers", () => {
     const { engine, track, editor, legacy } = setup();
     editor.duplicate();

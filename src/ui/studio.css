@@ -3124,3 +3124,14 @@ html.is-studio-instrument #sy1-panel .oriental-pop,html.is-studio-instrument #sy
 .st-pr-option-body {display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:5px 0;}
 .st-region-clipboard {flex-wrap:wrap;}
 @media (pointer:coarse){#sy1-studio .st-pr-toolbar .st-pr-btn,#sy1-studio .st-pr-toolbar select,.st-pr-edit-options>summary {min-height:40px;}}
+
+/* Arrangement selection and contextual commands */
+.st-arr-marquee {position:fixed;z-index:1100;pointer-events:none;border:1.5px solid #ffd58c;background:rgba(240,162,51,.16);border-radius:2px;box-sizing:border-box;}
+.st-arr-marquee[hidden]{display:none;}
+.st-region-menu .st-menu-shortcut{margin-left:auto;padding-left:12px;color:#aaa;font-size:.72rem;}
+.st-region-menu summary{cursor:pointer;padding:9px 8px;color:inherit;}
+.st-region-menu details{border-top:1px solid #46484d;margin-top:4px;}
+.st-region-menu button{gap:8px;}
+.st-export-menu .st-region-clipboard{padding:4px 6px;gap:4px;}
+.st-export-menu .st-arr-snap-field{display:flex;justify-content:space-between;padding:6px 8px;}
+.st-midi-region.is-dragging{z-index:25;}

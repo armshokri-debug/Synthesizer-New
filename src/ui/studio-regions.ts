@@ -2,7 +2,7 @@ import { regionPlayback, type MidiRegion } from "../studio/midi-regions";
 import { previewMoveRegions, previewResizeRegion } from "../studio/region-editor";
 import { extractNoteSpans } from "../studio/midi-io";
 import { studioEngine } from "../studio/studio-engine";
-import { STUDIO_PPQ, STUDIO_REGION_SNAP_OPTIONS, STUDIO_TICKS_PER_BAR } from "../studio/types";
+import { STUDIO_PPQ, STUDIO_TICKS_PER_BAR } from "../studio/types";
 import type { SY1TrackEngine } from "../studio/track-engine";
 import { escapeHtml } from "../engine/params";
 
@@ -122,39 +122,39 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
 
   function openMenu(x: number, y: number, trackId: string, tick: number) {
     const count = editor.selection().length;
-    const actions: { name: string; enabled: boolean; run: () => void }[] = [
-      { name: multiSelect ? "Finish multi-select" : "Select multiple regions", enabled: true, run: () => { multiSelect = !multiSelect; } },
-      { name: "Open Piano Roll / Drum Grid", enabled: count > 0, run: controls.openEditor },
-      { name: "Copy", enabled: count > 0, run: () => editor.copy() },
-      { name: "Cut", enabled: count > 0, run: () => editor.cut() },
-      { name: "New region here", enabled: true, run: () => editor.create(trackId, tick) },
-      { name: "Paste here", enabled: editor.canPaste(), run: () => editor.paste(trackId, tick) },
-      { name: "Paste in place", enabled: editor.canPaste(), run: () => editor.pasteInPlace(trackId) },
-      { name: "Duplicate", enabled: count > 0, run: () => editor.duplicate() },
-      { name: "Split at playhead", enabled: count > 0, run: () => editor.split(studioEngine.getCurrentTick()) },
-      { name: "Merge regions", enabled: count > 1, run: () => editor.merge() },
-      { name: "Repeat to arrangement end", enabled: count > 0, run: () => editor.repeatToEnd() },
-      { name: "Undo", enabled: editor.canUndo(), run: () => editor.undo() },
-      { name: "Redo", enabled: editor.canRedo(), run: () => editor.redo() },
-      { name: "Delete chosen regions", enabled: count > 0, run: () => editor.remove() },
+    type Action = {name:string;enabled:boolean;run:()=>void;shortcut?:string};
+    const edit = !studioEngine.getTransportSnapshot().recording;
+    const actions: Action[] = [
+      {name:"Open Piano Roll / Drum Grid",enabled:count>0,run:controls.openEditor,shortcut:"↵"},
+      {name:"Copy",enabled:count>0,run:()=>editor.copy(),shortcut:"⌘ C"},
+      {name:"Cut",enabled:count>0&&edit,run:()=>editor.cut(),shortcut:"⌘ X"},
+      {name:"Paste here",enabled:editor.canPaste()&&edit,run:()=>editor.paste(trackId,tick),shortcut:"⌘ V"},
+      {name:"Paste in place",enabled:editor.canPaste()&&edit,run:()=>editor.pasteInPlace(trackId),shortcut:"⇧ ⌘ V"},
+      {name:"Duplicate",enabled:count>0&&edit,run:()=>editor.duplicate(),shortcut:"⌘ D"},
+      {name:"New region here",enabled:edit,run:()=>editor.create(trackId,tick)},
+      {name:"Delete",enabled:count>0&&edit,run:()=>editor.remove(),shortcut:"⌫"}
+    ];
+    const more: Action[] = [
+      {name:multiSelect?"Finish multi-select":"Select multiple regions",enabled:true,run:()=>{multiSelect=!multiSelect;}},
+      {name:"Select all regions",enabled:true,run:()=>editor.selectAll(),shortcut:"⌘ A"},
+      {name:"Select regions on this track",enabled:true,run:()=>editor.selectAll(trackId)},
+      {name:"Split at playhead",enabled:count>0&&edit,run:()=>editor.split(studioEngine.getCurrentTick())},
+      {name:"Merge regions",enabled:count>1&&edit,run:()=>editor.merge()},
+      {name:"Repeat to arrangement end",enabled:count>0&&edit,run:()=>editor.repeatToEnd()},
+      {name:"Undo",enabled:editor.canUndo()&&edit,run:()=>editor.undo()},
+      {name:"Redo",enabled:editor.canRedo()&&edit,run:()=>editor.redo()}
     ];
     menu.replaceChildren();
-    for (const action of actions) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = action.name;
-      button.disabled = !action.enabled;
-      button.addEventListener("click", () => { closeMenu(); run(action.run); });
-      menu.append(button);
-    }
-    const label = document.createElement("label");
-    label.textContent = "Region snap";
-    const select = document.createElement("select");
-    select.setAttribute("aria-label", "Region snap grid");
-    for (const option of STUDIO_REGION_SNAP_OPTIONS) select.add(new Option(option.label, String(option.ticks), false, editor.grid === option.ticks));
-    select.addEventListener("change", () => { editor.grid = Number(select.value); controls.render(); });
-    label.append(select);
-    menu.append(label);
+    const appendAction=(root:HTMLElement,action:Action)=>{
+      const button=document.createElement("button");
+      button.type="button";button.textContent=action.name;button.disabled=!action.enabled;
+      if(action.shortcut){const k=document.createElement("span");k.className="st-menu-shortcut";k.textContent=action.shortcut;button.append(k);}
+      button.addEventListener("click",()=>{closeMenu();run(action.run);});root.append(button);
+    };
+    actions.filter(action=>action.enabled).forEach(action=>appendAction(menu,action));
+    const details=document.createElement("details"),summary=document.createElement("summary");
+    summary.textContent="More…";details.append(summary);
+    more.forEach(action=>appendAction(details,action));menu.append(details);
     menu.hidden = false;
     menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
     menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
@@ -176,6 +176,9 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     id: string;
     edge: "left" | "right" | "loop" | null;
     start: number;
+    startY: number;
+    trackDelta: number;
+    copy: boolean;
     end: number;
     pointer: number;
     tickScale: number;
@@ -189,6 +192,54 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     movingElements: HTMLElement[];
   } | null = null;
   let suppressClickUntil = 0;
+  // Empty-space drag selects whole MIDI regions, never modifies their contents.
+  let box: {pointer:number;startX:number;startY:number;active:boolean;timer:number;frame:HTMLElement;initial:string[];hits:string[];touch:boolean}|null=null;
+  const hitIds=(x1:number,y1:number,x2:number,y2:number)=>{
+    const left=Math.min(x1,x2),right=Math.max(x1,x2),top=Math.min(y1,y2),bottom=Math.max(y1,y2);
+    return [...container.querySelectorAll<HTMLElement>("[data-region-id]")].filter(el=>{
+      const r=el.getBoundingClientRect();
+      return r.right>left&&r.left<right&&r.bottom>top&&r.top<bottom;
+    }).map(el=>el.dataset.regionId!);
+  };
+  function drawSelection(ids:readonly string[]){
+    const set=new Set(ids);
+    container.querySelectorAll<HTMLElement>("[data-region-id]").forEach(el=>{
+      const selected=set.has(el.dataset.regionId!);
+      el.classList.toggle("is-selected",selected);el.setAttribute("aria-pressed",String(selected));
+    });
+  }
+  function activateBox(){
+    if(!box||box.active)return;
+    box.active=true;clearTimeout(box.timer);
+    box.frame.hidden=false;
+    box.frame.style.left=box.startX+"px";box.frame.style.top=box.startY+"px";
+    try{container.setPointerCapture(box.pointer);}catch{}
+  }
+  function updateBox(x:number,y:number){
+    if(!box||!box.active)return;
+    const left=Math.min(x,box.startX),top=Math.min(y,box.startY);
+    Object.assign(box.frame.style,{left:left+"px",top:top+"px",width:Math.abs(x-box.startX)+"px",height:Math.abs(y-box.startY)+"px"});
+    box.hits=hitIds(box.startX,box.startY,x,y);
+    drawSelection([...box.initial,...box.hits]);
+  }
+  function endBox(commit:boolean,x?:number,y?:number){
+    if(!box)return;
+    if(commit&&box.active&&x!==undefined&&y!==undefined)updateBox(x,y);
+    const b=box;box=null;clearTimeout(b.timer);b.frame.remove();
+    if(!b.active)return;
+    suppressClickUntil=performance.now()+350;
+    if(commit){editor.selectMany([...b.initial,...b.hits]);controls.render();}
+    else drawSelection(editor.selection());
+  }
+  // Resolve the destination lane using its actual vertical bounds, even under pointer capture.
+  function laneShift(d:NonNullable<typeof drag>,y:number):number{
+    const lanes=[...container.querySelectorAll<HTMLElement>("[data-st-lane]")];
+    const source=lanes.indexOf(d.laneEl),dest=lanes.findIndex(el=>{const r=el.getBoundingClientRect();return y>=r.top&&y<r.bottom;});
+    if(source<0||dest<0)return 0;
+    const ids=studioEngine.getTracks().map(t=>t.id);
+    const shift=dest-source;
+    return d.movingRegions.every(r=>!!ids[ids.indexOf(r.trackId)+shift])?shift:0;
+  }
   let lastTap: { id: string; at: number; x: number; y: number } | null = null;
 
   function resetDragVisuals(activeDrag: NonNullable<typeof drag>) {
@@ -206,8 +257,17 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
   container.addEventListener("pointerdown", event => {
     const target = event.target as HTMLElement;
     const element = target.closest<HTMLElement>("[data-region-id]");
-    if (!element || event.button !== 0 || target.closest(".st-region-more")) return;
+    if (event.button !== 0 || target.closest(".st-region-more")) return;
     const position = locate(target, event.clientX);
+    if(!position)return;
+    if(!element){
+      if(box)endBox(false);
+      const frame=document.createElement("div");frame.className="st-arr-marquee";frame.hidden=true;document.body.append(frame);
+      const touch=event.pointerType==="touch";
+      box={pointer:event.pointerId,startX:event.clientX,startY:event.clientY,active:false,timer:0,frame,initial:event.shiftKey||event.metaKey||event.ctrlKey||multiSelect?editor.selection():[],hits:[],touch};
+      if(touch)box.timer=window.setTimeout(activateBox,320);
+      return;
+    }
     const id = element.dataset.regionId!;
     const region = position && editor.regions(position.trackId).find(item => item.id === id);
     if (!position || !region) return;
@@ -224,6 +284,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
       id,
       edge: edge ?? null,
       start: event.clientX,
+      startY:event.clientY,trackDelta:0,copy:event.altKey,
       end: event.clientX,
       pointer: event.pointerId,
       tickScale: position.ticksPerPx,
@@ -247,10 +308,16 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
   }, true);
 
   container.addEventListener("pointermove", event => {
+    if(box&&box.pointer===event.pointerId){
+      const dist=Math.hypot(event.clientX-box.startX,event.clientY-box.startY);
+      if(!box.active&&dist>5){if(box.touch){endBox(false);return;}activateBox();}
+      if(box?.active){event.preventDefault();updateBox(event.clientX,event.clientY);}
+      return;
+    }
     if (!drag || drag.pointer !== event.pointerId) return;
     drag.end = event.clientX;
     const dx = drag.end - drag.start;
-    if (!drag.moved && Math.abs(dx) < 5) return;
+    if (!drag.moved && Math.hypot(dx,event.clientY-drag.startY) < 5) return;
     if (!drag.moved) {
       drag.moved = true;
       clearTimeout(drag.timer);
@@ -271,9 +338,13 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     } else {
       const preview = previewMoveRegions(drag.movingRegions, deltaTicks, editor.grid, total);
       const shiftPx = preview ? preview.shift / drag.tickScale : dx;
-      const tx = `translateX(${shiftPx.toFixed(1)}px)`;
+      drag.trackDelta=laneShift(drag,event.clientY);drag.copy=event.altKey;
+      const lanes=[...container.querySelectorAll<HTMLElement>("[data-st-lane]")];
       for (const el of drag.movingElements) {
-        el.style.transform = tx;
+        const source=el.closest<HTMLElement>("[data-st-lane]");
+        const dest=source?lanes[lanes.indexOf(source)+drag.trackDelta]:null;
+        const dy=source&&dest?dest.getBoundingClientRect().top-source.getBoundingClientRect().top:0;
+        el.style.transform = `translate(${shiftPx.toFixed(1)}px,${dy.toFixed(1)}px)`;
         el.classList.add("is-dragging");
       }
       if (preview) {
@@ -283,6 +354,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
   }, true);
 
   function finish(event: PointerEvent, commit: boolean) {
+    if(box&&box.pointer===event.pointerId){endBox(commit,event.clientX,event.clientY);return;}
     if (!drag || drag.pointer !== event.pointerId) return;
     const change = drag;
     drag = null;
@@ -297,12 +369,13 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     run(() => {
       if (!editor.has(region.id)) editor.select(region.id);
       if (change.edge) editor.resize(region.id, change.edge, (change.edge === "left" ? region.startTick : region.startTick + region.length) + delta);
-      else editor.move(delta);
+      else editor.move(delta,laneShift(change,event.clientY),event.altKey);
     });
   }
   container.addEventListener("pointerup", event => finish(event, true), true);
   container.addEventListener("pointercancel", event => finish(event, false), true);
   window.addEventListener("blur", () => {
+    endBox(false);
     if (drag) {
       clearTimeout(drag.timer);
       resetDragVisuals(drag);
@@ -350,10 +423,14 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
   }, true);
 
   container.addEventListener("dblclick", event => {
-    const region = (event.target as HTMLElement).closest<HTMLElement>("[data-region-id]");
-    if (!region || multiSelect) return;
+    const target=event.target as HTMLElement;
+    const region=target.closest<HTMLElement>("[data-region-id]");
+    if(multiSelect)return;
+    const position=locate(target,event.clientX);
+    if(!position)return;
     event.stopImmediatePropagation();
-    editor.select(region.dataset.regionId!);
+    if(region)editor.select(region.dataset.regionId!);
+    else {if(studioEngine.getTransportSnapshot().recording)return;run(()=>editor.create(position.trackId,position.tick));}
     controls.openEditor();
   }, true);
 
@@ -365,6 +442,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     event.stopImmediatePropagation();
     const id = target.closest<HTMLElement>("[data-region-id]")?.dataset.regionId;
     if (id && !editor.has(id)) editor.select(id);
+    if(!id){editor.clearSelection();studioEngine.setFocusedTrack(position.trackId);}
     controls.render();
     openMenu(event.clientX, event.clientY, position.trackId, position.tick);
   }, true);
@@ -376,6 +454,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     if (container.hidden) { closeMenu(); return; }
     if (!(event.target instanceof HTMLElement)) return;
     const target = event.target;
+    if(event.key==="Escape"&&box){endBox(false);event.preventDefault();return;}
     if (event.key === "Escape" && (!menu.hidden || multiSelect)) { closeMenu(); multiSelect = false; event.preventDefault(); return; }
     if (target.closest("input, select, textarea, [contenteditable]")) return;
     const modifier = event.metaKey || event.ctrlKey;
@@ -386,6 +465,8 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     let action: (() => void) | undefined;
     if (modifier && key === "z") action = event.shiftKey ? () => editor.redo() : () => editor.undo();
     else if (modifier && key === "y") action = () => editor.redo();
+    else if(!noteEditor&&modifier&&key==="a")action=()=>editor.selectAll();
+    else if(!noteEditor&&key==="escape"&&selected)action=()=>editor.clearSelection();
     else if (!noteEditor && modifier && key === "v" && editor.canPaste()) action = () => event.shiftKey ? editor.pasteInPlace(studioEngine.getFocusedTrack().id) : editor.paste(studioEngine.getFocusedTrack().id, studioEngine.getCurrentTick());
     else if (!noteEditor && selected) {
       if (modifier && key === "c") action = () => editor.copy();

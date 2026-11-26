@@ -96,6 +96,18 @@ export class RegionEditor {
     this.host.focus(region.trackId);
   }
 
+  selectMany(ids: readonly string[], additive = false): void {
+    const all = this.all(), valid = new Map(all.map(region => [region.id, region]));
+    const selected = additive ? new Set(this.selected) : new Set<string>();
+    for (const id of ids) if (valid.has(id)) selected.add(id);
+    this.selected = selected;
+    const primary = ids.at(-1);
+    if (primary && valid.has(primary)) this.host.focus(valid.get(primary)!.trackId);
+  }
+  selectAll(trackId?: string): void {
+    this.selectMany((trackId ? this.regions(trackId) : this.all()).map(r => r.id));
+  }
+
   clearSelection(): void { this.selected.clear(); }
   reset(): void { this.clearSelection(); this.history = []; this.future = []; }
   registerTake(before: Tracks): void {
@@ -166,11 +178,24 @@ export class RegionEditor {
     this.edit(tracks);
   }
 
-  move(delta: number): void {
+  /** Move/copy a whole selection while retaining relative track and time offsets. */
+  move(delta: number, trackDelta = 0, copy = false): void {
+    this.assertEditable();
     const regions = this.selectedRegions();
     const preview = previewMoveRegions(regions, delta, this.grid, this.host.length());
-    if (!preview || !preview.shift) return;
-    this.change(regions.map(region => ({ ...region, startTick: region.startTick + preview.shift })));
+    if (!preview || (!preview.shift && !trackDelta && !copy)) return;
+    const trackIds = this.host.tracks().map(track => track.id);
+    const destinations = regions.map(region => trackIds[trackIds.indexOf(region.trackId) + trackDelta]);
+    if (destinations.some(id => !id)) throw new Error("Selection cannot move outside the track list.");
+    const affected = new Set([...regions.map(region => region.trackId), ...destinations]);
+    const after: Tracks = new Map([...affected].map(id => [id, this.regions(id).filter(region => copy || !this.selected.has(region.id))]));
+    const next = regions.map((region, i) => ({
+      ...cloneRegion(region), id: copy ? regionId() : region.id,
+      startTick: region.startTick + preview.shift, trackId: destinations[i]
+    }));
+    for (const region of next) after.get(region.trackId)!.push(region);
+    this.edit(after, next.map(region => region.id));
+    this.host.focus(next.at(-1)!.trackId);
   }
 
   resize(id: string, edge: "left" | "right" | "loop", tick: number): void {

@@ -59,6 +59,29 @@ try {
     await sleep(50);assert.equal(await cdp.evaluate('document.querySelectorAll(".st-pr-note.is-selected").length'),2,type+" marquee selects both notes");
   };
   await gesture("mouse");await gesture("touch");
+  // Context menu on a selected note must not delete it.
+  await cdp.evaluate(`(()=>{const n=document.querySelector(".st-pr-note");n.dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:30,clientY:30}));})()`);
+  assert.equal(await cdp.evaluate('document.querySelectorAll(".st-pr-note").length'),2);
+  assert(await cdp.evaluate('!document.querySelector(".st-note-context").hidden'));
+  await cdp.evaluate('document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true}))');
+  // Test the timeline selection on two different instrument tracks.
+  await cdp.evaluate(`(()=>{const e=SY1_STUDIO.engine;e.regions.clearSelection();document.querySelector("#st-tab-pianoroll").click();})()`);
+  const box=await cdp.evaluate(`(()=>{const clips=[...document.querySelectorAll("[data-region-id]")].map(el=>el.getBoundingClientRect());const lane=[...document.querySelectorAll("[data-st-lane]")].at(-1).getBoundingClientRect();return {x:Math.max(...clips.map(r=>r.right))+12,y:lane.bottom-3,endX:Math.min(...clips.map(r=>r.left))+1,endY:Math.min(...clips.map(r=>r.top))+1};})()`);
+  const gestureRegion=async(type)=>{
+    const evt=(name,x,y)=>cdp.evaluate(`document.querySelectorAll("[data-st-lane]")[1].dispatchEvent(new PointerEvent("${name}",{pointerId:33,pointerType:"${type}",button:0,buttons:${name==="pointerup"?0:1},bubbles:true,cancelable:true,clientX:${x},clientY:${y}}))`);
+    await evt("pointerdown",box.x,box.y);if(type==="touch")await sleep(370);
+    await evt("pointermove",box.endX,box.endY);await evt("pointerup",box.endX,box.endY);
+    await sleep(70);assert.equal(await cdp.evaluate("SY1_STUDIO.engine.regions.selection().length"),2,type+" timeline marquee");
+  };
+  await gestureRegion("mouse");await gestureRegion("touch");
+  const delta=await cdp.evaluate(`(()=>{const el=document.querySelector("[data-region-id]"),l=el.closest("[data-st-lane]"),r=el.getBoundingClientRect();return {x:r.left+r.width*.4,y:r.top+r.height*.5,dx:l.getBoundingClientRect().width*1920/SY1_STUDIO.engine.getTotalTicks()};})()`);
+  const regionEvent=(name,x)=>cdp.evaluate(`document.querySelector("[data-region-id]").dispatchEvent(new PointerEvent("${name}",{pointerId:34,pointerType:"mouse",button:0,buttons:${name==="pointerup"?0:1},bubbles:true,cancelable:true,clientX:${x},clientY:${delta.y}}))`);
+  await regionEvent("pointerdown",delta.x);await regionEvent("pointermove",delta.x+delta.dx);await regionEvent("pointerup",delta.x+delta.dx);
+  await sleep(70);
+  assert.deepEqual(await cdp.evaluate("SY1_STUDIO.engine.regions.selectedRegions().map(r=>r.startTick)"),[1920,1920]);
+  await cdp.evaluate("SY1_STUDIO.engine.regions.undo()");
+  assert.deepEqual(await cdp.evaluate("SY1_STUDIO.engine.regions.selectedRegions().map(r=>r.startTick)"),[0,0]);
+  console.log("PASS: timeline mouse/touch marquee, grouped drag, single Undo, non-destructive note context menu");
   assert.deepEqual(errors,[]);console.log("PASS: cross-instrument MIDI copy/paste in place, Space transport, Select All, quantize, mouse and touch marquee");
 } finally {
   cdp?.close();chrome.kill();chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}});

@@ -956,6 +956,15 @@ export function renderStudioHtml(): string {
               </div>
               <div class="st-menu-sep"></div>
               <label class="st-click-level">Click volume <input id="st-click-volume" type="range" min="0" max="1" step="0.01" value="${recSettings.clickVolume}" aria-label="Metronome volume"></label>
+                <label class="st-arr-snap-field" title="Arrangement region snap grid (independent from Piano Roll Snap)">
+                  <span class="st-arr-snap-lbl">Snap</span>
+                  <select class="st-select st-arr-snap-sel" id="st-arr-snap" aria-label="Arrangement region snap">
+                    ${STUDIO_REGION_SNAP_OPTIONS.map(
+                      (opt) =>
+                        `<option value="${opt.ticks}"${studioEngine.regions.grid === opt.ticks ? " selected" : ""}>${escapeHtml(opt.label)}</option>`
+                    ).join("")}
+                  </select>
+                </label>
               <div class="st-menu-label">Recording Mode</div>
               <button type="button" class="st-menu-item${recMode === "overdub" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "overdub"}" data-st-action="set-rec-mode" data-rec-mode="overdub">${recMode === "overdub" ? "✓ " : ""}Overdub (Merge)</button>
               <button type="button" class="st-menu-item${recMode === "takes" ? " is-checked" : ""}" role="menuitemradio" aria-checked="${recMode === "takes"}" data-st-action="set-rec-mode" data-rec-mode="takes">${recMode === "takes" ? "✓ " : ""}Separate Takes</button>
@@ -965,6 +974,11 @@ export function renderStudioHtml(): string {
               <div class="st-menu-view"${studioMenuKind !== "project" ? " hidden" : ""}>
                 <button type="button" class="st-menu-item" role="menuitem" data-st-action="toggle-open-drawer">My Projects…</button>
                 <button type="button" class="st-menu-item" role="menuitem" data-st-action="save-project">Save project</button>
+                <div class="st-seg st-region-clipboard" role="group" aria-label="Region clipboard">
+                  <button type="button" class="st-btn st-tiny-btn" data-st-action="copy-region"${studioEngine.regions.selection().length ? "" : " disabled"} title="Copy MIDI region (Cmd/Ctrl+C)">Copy</button>
+                  <button type="button" class="st-btn st-tiny-btn" data-st-action="paste-region"${studioEngine.regions.canPaste() && !tr.recording ? "" : " disabled"} title="Paste MIDI at playhead (Cmd/Ctrl+V)">Paste</button>
+                  <button type="button" class="st-btn st-tiny-btn" data-st-action="paste-region-in-place"${studioEngine.regions.canPaste() && !tr.recording ? "" : " disabled"} title="Paste at original position (Cmd/Ctrl+Shift+V)">Paste in place</button>
+                </div>
                 <div class="st-menu-sep"></div>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-wav" data-st-action="export-wav"${exporting || exportingStems ? " disabled" : ""}>Export 24-bit WAV Mix</button>
               <button type="button" class="st-menu-item" role="menuitem" id="st-export-stems" data-st-action="export-stems"${exporting || exportingStems ? " disabled" : ""}>Export 24-bit WAV Stems</button>
@@ -1071,20 +1085,6 @@ export function renderStudioHtml(): string {
                   <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>${stIcon("undo")}</button>
                   <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>${stIcon("redo")}</button>
                 </div>
-                <div class="st-seg st-region-clipboard" role="group" aria-label="Region clipboard">
-                  <button type="button" class="st-btn st-tiny-btn" data-st-action="copy-region"${studioEngine.regions.selection().length ? "" : " disabled"} title="Copy MIDI region (Cmd/Ctrl+C)">Copy</button>
-                  <button type="button" class="st-btn st-tiny-btn" data-st-action="paste-region"${studioEngine.regions.canPaste() && !tr.recording ? "" : " disabled"} title="Paste MIDI at playhead (Cmd/Ctrl+V)">Paste</button>
-                  <button type="button" class="st-btn st-tiny-btn" data-st-action="paste-region-in-place"${studioEngine.regions.canPaste() && !tr.recording ? "" : " disabled"} title="Paste at original position (Cmd/Ctrl+Shift+V)">Paste in place</button>
-                </div>
-                <label class="st-arr-snap-field" title="Arrangement region snap grid (independent from Piano Roll Snap)">
-                  <span class="st-arr-snap-lbl">Snap</span>
-                  <select class="st-select st-arr-snap-sel" id="st-arr-snap" aria-label="Arrangement region snap">
-                    ${STUDIO_REGION_SNAP_OPTIONS.map(
-                      (opt) =>
-                        `<option value="${opt.ticks}"${studioEngine.regions.grid === opt.ticks ? " selected" : ""}>${escapeHtml(opt.label)}</option>`
-                    ).join("")}
-                  </select>
-                </label>
                 ${
                   recMode !== "overdub" || tr.recording
                     ? `<span class="st-rec-mode-tag${recMode === "replace" ? " is-replace" : ""}" id="st-rec-mode-tag">${recMode === "replace" ? "Replace" : recMode === "takes" ? "New Take" : "Overdub"}</span>`
