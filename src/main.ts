@@ -220,6 +220,7 @@ function initApp(): void {
       setMidiInputInterceptor((cmd,d1,d2,ch)=>synthRecording.captureController(cmd,d1,d2,ch));
       setKeyboardTarget(null);
       hideStudioPanel();
+      renderPanel();
       syncArpButton();
       fitPanel();
     };
