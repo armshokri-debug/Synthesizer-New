@@ -904,7 +904,8 @@ export class SY1StudioEngine {
   async record(options: { midiOnly?: boolean; onStart?: (at: number) => void } = {}): Promise<void> {
     if (this.recording || this.preparingRecord) return;
     this.recordedDrumHits.clear();
-    this.pendingDrumCapture = [];
+    // Keep already scheduled live hits so punch-in captures those that sound
+    // after the recording boundary, not just hits scheduled after Record.
     this.preparingRecord = true;
     this.stopDrumPreview();
     const epoch = this.transportEpoch;
@@ -1193,7 +1194,7 @@ export class SY1StudioEngine {
     const remaining: typeof this.pendingDrumCapture = [];
     for (const h of this.pendingDrumCapture) {
       if (h.at > now + 1e-7) { if (!stopping) remaining.push(h); continue; }
-      if (!this.recording || this.getTrack(h.track.id) !== h.track) continue;
+      if (!this.canCapturePerformanceAt(h.at) || !h.track.armed || this.getTrack(h.track.id) !== h.track) continue;
       const key = `${h.track.id}:${h.tick}:${h.midi}`;
       if (this.recordedDrumHits.has(key)) continue;
       this.recordedDrumHits.add(key);
@@ -1221,7 +1222,9 @@ export class SY1StudioEngine {
             const at = segStartAudio + (hit.tick - startTick) * secPerTick;
             if (track.audible) track.noteOn(hit.midi, hit.velocity, at);
             observer?.({trackId:track.id,event:{type:"noteOn",tick:hit.tick,midi:hit.midi,velocity:hit.velocity},audioTime:at});
-            if (track.armed && this.canCapturePerformanceAt(at)) this.pendingDrumCapture.push({track,...hit,at});
+            // Queue each scheduled hit until its actual audio time. The capture
+            // gate at that time determines whether it belongs to the take.
+            this.pendingDrumCapture.push({track,...hit,at});
           });
           continue;
         }
