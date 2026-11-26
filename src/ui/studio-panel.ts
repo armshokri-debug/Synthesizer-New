@@ -1781,7 +1781,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         }
         case "play":
-          if (studioEngine.getTransportSnapshot().playing) void studioEngine.stop();
+          if (studioEngine.getTransportSnapshot().playing) void studioEngine.pause();
           else void studioEngine.play();
           break;
         case "rewind":
@@ -1791,7 +1791,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           void studioEngine.stop();
           break;
         case "record":
-          if (studioEngine.getTransportSnapshot().recording) void studioEngine.stop();
+          if (studioEngine.getTransportSnapshot().recording) void studioEngine.pause();
           else void studioEngine.record({ patternTrackId: instrumentFocusMode && studioEngine.getFocusedTrack().isDrumTrack() ? studioEngine.getFocusedTrack().id : undefined });
           break;
         case "toggle-loop":
