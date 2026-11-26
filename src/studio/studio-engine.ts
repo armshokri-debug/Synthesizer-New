@@ -447,6 +447,8 @@ export class SY1StudioEngine {
   handleAudioContextStateChange(state: string, nowAudioTime = this.nowAudioTime()): void {
     if (state === "interrupted" || state === "suspended") {
       this.stopDrumPreview();
+      this.flushDrumCapture(nowAudioTime, true);
+      this.pendingDrumCapture = [];
       this.metronome.cancel();
       if (this.playing || this.active) {
         this.releasePlaybackNotes(0);
@@ -845,6 +847,7 @@ export class SY1StudioEngine {
 
   seekToTick(tick: number): void {
     if (this.recording) return;
+    this.pendingDrumCapture = [];
     this.pendingLoopWrap = null;
     this.metronome.cancel();
     this.countInStart = this.countInEnd = null;
