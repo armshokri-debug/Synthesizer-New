@@ -1,13 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" fill="none">
 <defs>
- <linearGradient id="sky" x2=".2" y2="1"><stop stop-color="#e6c8e5"/><stop offset="1" stop-color="#b980aa"/></linearGradient>
+ <linearGradient id="sky" x1="0" y1="0" x2="0.25" y2="1"><stop stop-color="#e9c7db"/><stop offset=".52" stop-color="#c898bd"/><stop offset="1" stop-color="#86617f"/></linearGradient>
  <linearGradient id="wall" x2="1" y2=".3"><stop stop-color="#dcaec6"/><stop offset=".55" stop-color="#c38da9"/><stop offset="1" stop-color="#9c6c91"/></linearGradient>
  <pattern id="brick" width="20" height="10" patternUnits="userSpaceOnUse"><path d="M0 0H20M0 5H20M5 0V5M15 5V10" stroke="#704867" opacity=".22" stroke-width=".6"/></pattern>
  <pattern id="tile" width="44" height="44" patternUnits="userSpaceOnUse"><path d="M22 0 27 15 44 22 27 29 22 44 17 29 0 22 17 15ZM0 0 22 8 44 0 36 22 44 44 22 36 0 44 8 22Z" stroke="#f6dcf1" opacity=".24" stroke-width=".8"/></pattern>
  <g id="tower"><path d="M0 160V40L72 28 112 45V160Z" fill="url(#wall)" stroke="#8c557c"/><path d="M72 28 112 45V160H72Z" fill="#946087"/><path d="M-6 36 73 21 118 40V46L73 31-6 47Z" fill="#f1cedb" stroke="#986584"/><path d="M3 48 71 35V88L3 100ZM77 38 106 50V100L77 87Z" fill="#754565"/><g stroke="#d9a9bf" stroke-width="5"><path d="M13 48V99M27 45V96M41 42V93M55 39V90M84 43V90M96 48V96"/></g><path d="M0 107 72 94 112 107M0 116 72 103 112 116" stroke="#edd1d8" stroke-width="2"/><path d="M0 122 72 109 112 121V160H0Z" fill="url(#brick)"/></g>
+<filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".58" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+ <radialGradient id="haze"><stop stop-color="#ffe5cc" stop-opacity=".35"/><stop offset="1" stop-color="#eac5e0" stop-opacity="0"/></radialGradient>
 </defs>
 <rect width="920" height="240" fill="url(#sky)"/><circle cx="730" cy="48" r="35" fill="#ffe3d2" opacity=".7"/><path d="M0 159Q120 97 240 148T480 139 700 140 920 117V240H0Z" fill="#ad79a4" opacity=".35"/><path d="M0 186Q190 122 300 183T570 156 920 163V240H0Z" fill="#906383" opacity=".45"/>
 <g transform="translate(455 56) scale(.82)"><use href="#tower"/></g><g transform="translate(624 4) scale(1.16)"><use href="#tower"/></g><g transform="translate(808 57) scale(.88)"><use href="#tower"/></g>
 <path d="M318 240V185H371V151Q415 98 459 151V185H534V172H585V240Z" fill="url(#wall)" stroke="#956487"/><path d="M371 151Q415 98 459 151" fill="#d7a1bc"/><path d="M382 240V200Q414 159 446 200V240" fill="#865474"/><path d="M540 240V181H674V153Q723 99 772 153V181H920V240Z" fill="url(#wall)" stroke="#9a668a"/><path d="M674 153Q723 99 772 153" fill="#e6b6c9"/><g fill="#885776"><path d="M570 240V212Q584 190 598 212V240M621 240V212Q635 190 649 212V240M694 240V205Q724 164 754 205V240M812 240V212Q826 190 840 212V240M864 240V212Q878 190 892 212V240"/></g><rect x="318" y="184" width="602" height="56" fill="url(#brick)"/>
 <path d="M0 0H920V240H0Z" fill="url(#tile)" opacity=".7"/>
+<ellipse cx="680" cy="63" rx="260" ry="105" fill="url(#haze)"/>
+<rect width="920" height="240" filter="url(#grain)" opacity=".10" style="mix-blend-mode:soft-light"/>
 </svg>
