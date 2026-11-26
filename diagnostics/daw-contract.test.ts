@@ -1,6 +1,7 @@
 // Architectural acceptance tests. These intentionally test the desired behavior,
 // not the current behavior. Run separately from the legacy regression suite.
 import { describe, expect, test } from "bun:test";
+import { trimCaptureWindow } from "../src/studio/recording-window";
 import { SY1StudioEngine, type ScheduledDispatchRecord } from "../src/studio/studio-engine";
 import { patternFrom, DRUM_NOTES } from "../src/engine/drums";
 import { STUDIO_PPQ } from "../src/studio/types";
@@ -138,5 +139,15 @@ describe("DAW acceptance contract",()=>{
       expect(engine.getCurrentTick()).toBe(624);
       expect(engine.getTransportSnapshot().recording).toBe(false);
     }finally{engine.dispose();}
+  });
+  test("A17: PCM frame window excludes count-in and tail, preserves both channels across block boundaries",()=>{
+    const l=[Float32Array.from([1,2,3,4]),Float32Array.from([5,6,7,8])];
+    const r=[Float32Array.from([-1,-2,-3,-4]),Float32Array.from([-5,-6,-7,-8])];
+    const result=trimCaptureWindow([l,r],100,103,106);
+    expect(result.frames).toBe(3);
+    expect(result.missingFrames).toBe(0);
+    expect(result.chunks[0].flatMap(a=>Array.from(a))).toEqual([4,5,6]);
+    expect(result.chunks[1].flatMap(a=>Array.from(a))).toEqual([-4,-5,-6]);
+    expect(trimCaptureWindow([l,r],100,98,110).missingFrames).toBe(4);
   });
 });
