@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { trimCaptureWindow } from "../src/studio/recording-window";
 import { SY1StudioEngine, type ScheduledDispatchRecord } from "../src/studio/studio-engine";
 import { patternFrom, DRUM_NOTES } from "../src/engine/drums";
-import { STUDIO_PPQ } from "../src/studio/types";
+import { STUDIO_PPQ, type StudioMidiEvent } from "../src/studio/types";
 function fixture() {
   let now=10;
   const engine=new SY1StudioEngine({isolatedTempo:true,initialBpm:120,clockNow:()=>now});
@@ -160,7 +160,7 @@ describe("DAW acceptance contract",()=>{
       await engine.record({midiOnly:true,patternTrackId:track.id});
       advance(10.7);await engine.stop();
       const expected=[[0,DRUM_NOTES.kick],[240,DRUM_NOTES.snare],[480,DRUM_NOTES.kick]];
-      const pairs=events=>events.filter(e=>e.type==="noteOn").map(e=>[e.tick,e.midi]).sort((a,b)=>a[0]-b[0]);
+      const pairs=(events: readonly StudioMidiEvent[])=>events.filter(e=>e.type==="noteOn").map(e=>[e.tick,e.midi]).sort((a,b)=>a[0]-b[0]);
       expect(pairs(track.events)).toEqual(expected);
       expect(pairs(hits.map(h=>h.event))).toEqual(expected);
       hits.length=0;await engine.play();advance(11.4);await engine.stop();
