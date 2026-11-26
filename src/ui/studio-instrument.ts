@@ -27,6 +27,15 @@ export function setTrackDrumPreviewView(track: SY1TrackEngine, enabled: boolean)
 const liveDrumByTrack = new WeakMap<SY1TrackEngine, boolean>();
 export const setTrackDrumLiveView = (track:SY1TrackEngine, enabled:boolean):void => { liveDrumByTrack.set(track,enabled); };
 const drumEditByTrack = new WeakMap<SY1TrackEngine, StepEdit>();
+const collapsedSequencers=new WeakSet<SY1TrackEngine>();
+const openSequencerOptions=new WeakSet<SY1TrackEngine>();
+export function toggleTrackSequencer(track:SY1TrackEngine):void{
+  if(collapsedSequencers.has(track))collapsedSequencers.delete(track);else collapsedSequencers.add(track);
+}
+export function toggleTrackSequencerOptions(track:SY1TrackEngine):void{
+  if(openSequencerOptions.has(track))openSequencerOptions.delete(track);else openSequencerOptions.add(track);
+}
+
 export const getTrackDrumEdit = (track:SY1TrackEngine): StepEdit => drumEditByTrack.get(track) ?? "hit";
 export const setTrackDrumEdit = (track:SY1TrackEngine, mode:StepEdit): void => { drumEditByTrack.set(track, mode); };
 
@@ -126,21 +135,30 @@ function renderStudioVectorPad(track: SY1TrackEngine): string {
 function renderStudioDrumPadsAndKits(track:SY1TrackEngine):string {
   const bank=track.getTrackDrumBank(),pat=bank.patterns[bank.selected],mode=getTrackDrumEdit(track);
   const playing=!!previewDrumByTrack.get(track)||!!liveDrumByTrack.get(track);
-  return `<div class="drum-transport">
+  const collapsed=collapsedSequencers.has(track),settings=openSequencerOptions.has(track);
+  const labels=getDrumLabelsForTrack(track.machineId,track.patch,track.presetId);
+  return `<div class="st-seq-toolbar drum-transport">
     <button type="button" class="drum-play ${playing?"active":""}" data-st-action="track-drum-preview" aria-pressed="${playing}">${playing?"■ Stop":"▶ Play"}</button>
-    <div class="drum-slots" role="group" aria-label="Pattern">${Array.from({length:8},(_,i)=>`<button type="button" class="drum-slot ${i===bank.selected?"active":""}" data-st-action="track-drum-pattern" data-index="${i}">${"ABCDEFGH"[i]}</button>`).join("")}</div></div>
+    <div class="drum-slots" role="group" aria-label="Pattern">${Array.from({length:8},(_,i)=>`<button type="button" class="drum-slot ${i===bank.selected?"active":""}" data-st-action="track-drum-pattern" data-index="${i}" aria-pressed="${i===bank.selected}">${"ABCDEFGH"[i]}</button>`).join("")}</div>
+    <button type="button" class="synth-choice-btn drum-acc ${mode!=="hit"?"active":""}" data-st-action="track-drum-edit" title="Step edit mode">${mode.toUpperCase()}</button>
+    <button type="button" class="synth-choice-btn" data-st-action="track-seq-options" aria-expanded="${settings}" aria-label="Sequencer settings" title="Sequencer settings">⚙</button>
+    <button type="button" class="synth-choice-btn" data-st-action="track-seq-toggle" aria-expanded="${!collapsed}" aria-label="${collapsed?"Show":"Hide"} step sequencer">${collapsed?"▾":"▴"}</button>
+  </div>
+  <div class="st-seq-settings"${settings?"":" hidden"}>
     <div class="drum-transport drum-transport-2">
-      <div class="synth-choice drum-len">${[16,12].map(len=>`<button type="button" class="synth-choice-btn ${pat.len===len?"active":""}" data-st-action="track-drum-len" data-len="${len}">${len}</button>`).join("")}</div>
-      <button type="button" class="synth-choice-btn drum-acc ${mode!=="hit"?"active":""}" data-st-action="track-drum-edit">✎ ${mode.toUpperCase()}</button>
-      <button type="button" class="synth-choice-btn" data-st-action="track-drum-clear">CLEAR</button>
-      <button type="button" class="synth-choice-btn drum-export" data-st-action="track-drum-insert" title="Insert pattern as MIDI in Studio; Shift-click to download MIDI" draggable="true">⤓ MIDI</button>
-    </div>`;
+      <span>Length</span><div class="synth-choice drum-len">${[16,12].map(len=>`<button type="button" class="synth-choice-btn ${pat.len===len?"active":""}" data-st-action="track-drum-len" data-len="${len}">${len}</button>`).join("")}</div>
+      <button type="button" class="synth-choice-btn" data-st-action="track-drum-clear">Clear</button>
+      <button type="button" class="synth-choice-btn drum-export" data-st-action="track-drum-insert" title="Add pattern to Studio as MIDI; Shift-click to download" draggable="true">+ MIDI</button>
+      <button type="button" class="synth-choice-btn" data-st-action="track-drum-download">Download MIDI</button>
+    </div>
+  </div>
+  <div class="st-seq-grid"${collapsed?" hidden":""}>${renderDrumStepsHtml(pat,getStudioSelectedDrumVoice(track.id),v=>escapeHtml(labels[v]),true)}</div>`;
 }
 
 function renderStudioDrumVoice(track: SY1TrackEngine, m: MachineDef): string {
   const v = getStudioSelectedDrumVoice(track.id);
   const labels = getDrumLabelsForTrack(m.id, track.patch, track.presetId);
-  return `    <div class="drum-voice-name">${escapeHtml(labels[v])}</div>
+  return `<div class="st-sound-voices drum-voices" role="group" aria-label="Sound voice">${DRUM_VOICES.map(voice=>`<button type="button" class="drum-voice-btn ${voice===v?"active":""}" data-st-action="drum-select-voice" data-st-drum-voice="${voice}" aria-pressed="${voice===v}">${escapeHtml(labels[voice])}</button>`).join("")}</div><div class="drum-voice-name">${escapeHtml(labels[v])}</div>
     <div class="sk-row">${
       renderStudioSynthKnob(track, v + "Tune", "TUNE") +
       renderStudioSynthKnob(track, v + "Decay", "DECAY") +
@@ -188,7 +206,7 @@ function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionD
 
 export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string, _focusMode = false, overlay = "", projectBpm?: number, output = "", connections = ""): string {
   const m: MachineDef = getStudioMachineDef(track.machineId);
-  const pages = m.pages;
+  const pages = m.kind==="drums"?m.pages.map(p=>p.id==="steps"?{...p,label:"Sequencer"}:p):m.pages;
   const validPage = pageFilter === "all" || pages.some((p) => p.id === pageFilter) ? pageFilter : "all";
   const presets = m.presets;
   const curIdx = presets.findIndex((p) => p.id === track.presetId);
@@ -204,14 +222,16 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
     <button type="button" class="synth-midi-btn tempo-step-btn" data-st-action="bpm-up" aria-label="Faster">+</button>
     <button type="button" class="synth-midi-btn tempo-tap-btn" data-st-action="bpm-tap">TAP</button></div>`:"";
   return renderOriginalFaceplate({
-    attributes:`class="synth-panel" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" aria-label="${escapeHtml(track.name)}" data-skin="${escapeHtml(m.skin||m.id)}" data-page="${escapeHtml(validPage)}"`,
+    attributes:`class="synth-panel" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" aria-label="${escapeHtml(track.name)}" data-skin="${escapeHtml(m.skin||m.id)}" data-page="${escapeHtml(validPage)}"${m.kind==="drums"?' data-compact-drums="true"':""}`,
     machineName:m.name,studioButton:'<button type="button" class="synth-midi-btn synth-studio-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio">Studio</button>',
     output,connections,
     previous:'data-st-action="inst-preset-prev"',presetLabel:renderInstrumentPresetLabel(presetLabel,presetGroup),next:'data-st-action="inst-preset-next"',
     tempo,tabs:renderInstrumentTabs([{id:"all",label:"ALL"},...pages],validPage,true),
-    sections:m.sections.map((sec,idx)=>renderStudioSection(track,m,sec,idx,validPage)).join(""),
+    sections:(m.kind==="drums"
+      ? m.sections.map((sec,idx)=>({sec,idx})).filter(({sec})=>sec.custom!=="drum-steps").sort((a,b)=>Number(b.sec.custom==="drum-transport")-Number(a.sec.custom==="drum-transport"))
+      : m.sections.map((sec,idx)=>({sec,idx}))).map(({sec,idx})=>renderStudioSection(track,m,sec.custom==="drum-transport"?{...sec,title:"SEQUENCER"}:sec,idx,validPage)).join(""),
     sectionClass:validPage!=="all"?" is-filtered":"",
-    hint:"Drag a knob up/down (or scroll / arrow keys) · double-click to reset · keys A W S E D F G H U J K · Z/X = octave",overlay
+    hint:"Drag a knob vertically · Shift for fine control · arrow keys · double-click to reset · keys A W S E D F G H U J K · Z/X = octave",overlay
   });
 }
 

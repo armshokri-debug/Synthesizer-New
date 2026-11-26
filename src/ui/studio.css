@@ -3137,3 +3137,27 @@ html.is-studio-instrument #sy1-panel .oriental-pop,html.is-studio-instrument #sy
 .st-midi-region.is-dragging{z-index:25;}
 
 @media(pointer:coarse){.st-lane{touch-action:none;}}
+
+/* Compact project drum instruments: the sequencer lives at the top of the
+   original faceplate, with pattern settings disclosed on demand. */
+#sy1-panel[data-studio-instrument] .synth-panel[data-compact-drums] .synth-sections {align-content:start;grid-auto-rows:max-content;gap:6px;overscroll-behavior:contain;}
+#sy1-panel[data-studio-instrument] .synth-panel[data-compact-drums] .synth-sec:has([data-custom="drum-transport"]) {grid-column:1/-1;min-height:0;gap:5px;padding:6px 8px;}
+#sy1-panel[data-studio-instrument] .st-seq-toolbar {display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:4px;}
+#sy1-panel[data-studio-instrument] .st-seq-toolbar .drum-slots {flex:0 1 auto;display:grid;grid-template-columns:repeat(8,minmax(26px,34px));gap:3px;}
+#sy1-panel[data-studio-instrument] .st-seq-toolbar button {flex:0 0 auto;width:auto;min-height:30px;height:30px;min-width:30px;padding:0 7px;font-size:.72rem;white-space:nowrap;}
+#sy1-panel[data-studio-instrument] .st-seq-toolbar .drum-play{min-width:65px;}
+#sy1-panel[data-studio-instrument] .st-seq-settings[hidden],#sy1-panel[data-studio-instrument] .st-seq-grid[hidden]{display:none!important;}
+#sy1-panel[data-studio-instrument] .st-seq-settings {padding:5px 0;border-top:1px solid var(--sec-border);}
+#sy1-panel[data-studio-instrument] .st-seq-settings .drum-transport {flex-wrap:wrap;gap:5px;font-size:.72rem;}
+#sy1-panel[data-studio-instrument] .st-seq-settings .drum-len {display:flex;flex-wrap:nowrap;gap:3px;}
+#sy1-panel[data-studio-instrument] .st-seq-settings .synth-choice-btn {flex:0 0 auto;min-height:30px;white-space:nowrap;padding:0 9px;}
+#sy1-panel[data-studio-instrument] .st-seq-grid {display:flex;flex-direction:column;gap:5px;}
+#sy1-panel[data-studio-instrument] .st-seq-grid .drum-steps {grid-template-columns:repeat(var(--len),minmax(0,1fr));gap:3px;}
+#sy1-panel[data-studio-instrument] .st-seq-grid .drum-step {min-height:30px;height:32px;}
+#sy1-panel[data-studio-instrument] .st-seq-grid .drum-voice-btn,#sy1-panel[data-studio-instrument] .st-sound-voices .drum-voice-btn {font-size:.65rem;min-height:28px;}
+#sy1-panel[data-studio-instrument] .st-sound-voices {grid-column:1/-1;width:100%;margin-bottom:4px;}
+html.is-studio-instrument .sy1-shell .kb-area.is-drums {--keys-h:clamp(94px,16vh,150px);}
+html.is-studio-instrument .sy1-shell .kb-area.is-drums .kb.is-pads {grid-template-columns:repeat(8,minmax(0,1fr));}
+#sy1-panel[data-studio-instrument] .st-inst-knob {cursor:ns-resize;}
+@media(max-width:650px){#sy1-panel[data-studio-instrument] .st-seq-toolbar .drum-slots{order:2;flex:1 0 100%;grid-template-columns:repeat(8,minmax(0,1fr));}#sy1-panel[data-studio-instrument] .st-seq-grid .drum-steps{grid-template-columns:repeat(calc(var(--len)/2),minmax(0,1fr));}html.is-studio-instrument .sy1-shell .kb-area.is-drums .kb.is-pads{grid-template-columns:repeat(4,minmax(0,1fr));}}
+@media(pointer:coarse){#sy1-panel[data-studio-instrument] .st-seq-toolbar button,#sy1-panel[data-studio-instrument] .st-seq-settings .synth-choice-btn,#sy1-panel[data-studio-instrument] .st-seq-grid .drum-step,#sy1-panel[data-studio-instrument] .st-seq-grid .drum-voice-btn{min-height:38px;}}

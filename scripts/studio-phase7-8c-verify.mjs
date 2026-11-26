@@ -59,6 +59,21 @@ try {
   assert.deepEqual(await tempo(), [119, 119]);
   await cdp.evaluate('document.querySelector("#sy1-panel [data-st-action=bpm-up]").click()');
   assert.deepEqual(await tempo(), [120, 120]);
+  // Compact sequencer is the first section, and can hide/show without affecting the pattern.
+  assert(await cdp.evaluate('document.querySelector(".synth-sections").firstElementChild.querySelector(".st-seq-grid")!==null'));
+  assert(await cdp.evaluate('!document.querySelector(".st-seq-grid").hidden'));
+  await click("track-seq-toggle");
+  assert(await cdp.evaluate('document.querySelector(".st-seq-grid").hidden'));
+  await click("track-seq-toggle");
+  assert(await cdp.evaluate('!document.querySelector(".st-seq-grid").hidden'));
+  await click("track-seq-options");
+  assert(await cdp.evaluate('!document.querySelector(".st-seq-settings").hidden'));
+  await click("track-seq-options");
+  await cdp.evaluate('document.querySelector("[data-st-page=sound]").click()');
+  const knobTest=await cdp.evaluate(`(()=>{const k=document.querySelector(".synth-sec.is-on-page .st-inst-knob"),e=SY1_STUDIO.engine,t=e.getFocusedTrack(),key=k.dataset.stParam,before=t.patch[key];k.dispatchEvent(new WheelEvent("wheel",{deltaY:100,bubbles:true,cancelable:true}));return {before,after:t.patch[key]};})()`);
+  assert.equal(knobTest.before,knobTest.after,"ordinary scrolling must not alter sound");
+  await cdp.evaluate('document.querySelector("[data-st-page=steps]").click()');
+  console.log("PASS: compact top sequencer, fold/unfold, explicit settings and safe scroll");
   await click("track-drum-preview");
   assert.equal(await cdp.evaluate("document.querySelector('[data-st-action=track-drum-preview]').getAttribute('aria-pressed')"), "true");
   const signal = await cdp.evaluate(`(async () => {
@@ -144,6 +159,7 @@ try {
   assert(recordHandoff.hits.every(h=>h.source===undefined));
   await cdp.evaluate("SY1_STUDIO.engine.stop()");
   assert.deepEqual(await regions(),before);
+  await click("track-seq-options");
   await click("track-drum-insert");
   const after = await regions();
   assert.deepEqual(after[0], before[0]);

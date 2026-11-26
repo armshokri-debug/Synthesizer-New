@@ -132,6 +132,10 @@ describe("Phase 7.8C drum preview and safe MIDI insertion", () => {
     expect(html).toContain('class="drum-play active"');
     expect(html).toContain('class="drum-transport drum-transport-2"');
     expect(html).toContain('data-st-action="track-drum-insert"');
+    expect(html).toContain('data-st-action="track-drum-download"');
+    expect(html).toContain('data-st-action="track-seq-toggle"');
+    expect(html).toContain('data-st-action="track-seq-options"');
+    expect(html.indexOf("st-seq-grid")).toBeLessThan(html.indexOf('data-custom="drum-voice"'));
     engine.dispose();
   });
 });

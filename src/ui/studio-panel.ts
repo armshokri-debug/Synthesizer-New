@@ -46,6 +46,7 @@ import {
 } from "../studio/types";
 import { machineArt } from "./machine-browser";
 import {
+  toggleTrackSequencer, toggleTrackSequencerOptions,
   getStudioSelectedDrumVoice,
   getTrackDrumEdit, setTrackDrumEdit, setTrackDrumLiveView, setTrackDrumPreviewView,
   renderStudioInstrumentHtml,
@@ -95,7 +96,9 @@ function renderProjectInstrumentHost(container:HTMLElement):void{
     standaloneInstrumentContents=document.createDocumentFragment();
     while(host.firstChild)standaloneInstrumentContents.appendChild(host.firstChild);
   }
-  const prev=host.querySelector<HTMLElement>(".synth-sections")?.scrollTop||0;
+  const oldPanel=host.querySelector<HTMLElement>(".synth-panel");
+  const prev=oldPanel?.dataset.page===instPageFilter&&oldPanel?.dataset.trackId===studioEngine.getFocusedTrack().id&&oldPanel?.dataset.machine===studioEngine.getFocusedTrack().machineId?host.querySelector<HTMLElement>(".synth-sections")?.scrollTop||0:0;
+  const focusedKnob=document.activeElement?.closest<HTMLElement>(".st-inst-knob")?.dataset.stParam;
   const library=host.querySelector(".lib-pop");
   host.dataset.studioInstrument="true";container.hidden=true;container.replaceChildren();host.hidden=false;
   document.documentElement.classList.add("is-studio","is-studio-instrument");
@@ -103,6 +106,7 @@ function renderProjectInstrumentHost(container:HTMLElement):void{
   host.innerHTML=renderProjectInstrumentHtml();
   if(library)host.querySelector(".synth-panel")?.appendChild(library);
   const sections=host.querySelector<HTMLElement>(".synth-sections");if(sections)sections.scrollTop=prev;
+  if(focusedKnob)host.querySelector<HTMLElement>(`.st-inst-knob[data-st-param="${CSS.escape(focusedKnob)}"]`)?.focus({preventScroll:true});
   applyKeyboardVisibility();
   const arpBtn=document.getElementById("kb-arp"),orientBtn=document.getElementById("kb-oriental");
   arpBtn?.classList.toggle("active",studioEngine.getFocusedTrack().patch.arpOn==="on");
@@ -257,6 +261,7 @@ function openInstrumentPage(): void {
   if (!instrumentFocusMode) {
     preInstFocusState = {dockTab:activeDockTab,dockCollapsed,dockExpanded,browserOpen,keysVisible};
     instrumentFocusMode = true;
+    instPageFilter=studioEngine.getFocusedTrack().isDrumTrack()?"steps":"all";
     browserOpen = false;
     keysVisible = true;
     applyKeyboardVisibility();
@@ -1362,7 +1367,7 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
     (instrumentFocusMode?!!target.closest("#sy1-panel[data-studio-instrument]"):container.contains(target));
   setInstrumentSessionReader(()=>instrumentFocusMode&&studioEngine.isActive()?{
     track:studioEngine.getFocusedTrack(),bpm:studioEngine.getBpm(),
-    chooseMachine(id){instPageFilter="all";studioEngine.setTrackMachine(studioEngine.getFocusedTrack().id,id);renderStudioPanel();},
+    chooseMachine(id){studioEngine.setTrackMachine(studioEngine.getFocusedTrack().id,id);instPageFilter=studioEngine.getFocusedTrack().isDrumTrack()?"steps":"all";renderStudioPanel();},
     choosePreset(id,kind,keepKit){
       const track=studioEngine.getFocusedTrack(),m=getStudioMachineDef(track.machineId);
       if(kind==="style"){
@@ -2023,6 +2028,12 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
           }
           break;
         }
+        case "track-seq-toggle":
+          toggleTrackSequencer(resolveInstrumentTrack(btn));renderStudioPanel();break;
+        case "track-seq-options":
+          toggleTrackSequencerOptions(resolveInstrumentTrack(btn));renderStudioPanel();break;
+        case "track-drum-download":
+          exportInstrumentPattern();break;
         case "track-drum-preview": {
           const track = resolveInstrumentTrack(btn);
           try {
@@ -2963,10 +2974,11 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
 
     // Embedded original synthesizer .sk knob drag
     const knob = target.closest<HTMLElement>(".st-inst-knob");
-    if (!knob) return;
+    if (!knob || e.button!==0 || !e.isPrimary) return;
     const key = knob.getAttribute("data-st-param");
     if (!key) return;
     e.preventDefault();
+    knob.focus({preventScroll:true});
     studioEngine.prepareAudioSync();
     const track = resolveInstrumentTrack(knob);
     draggingKnobParam = key;
@@ -3018,11 +3030,11 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
       return;
     }
     if (!knobDrag || e.pointerId !== knobDrag.pointerId) return;
+    if(!knobDrag.el.isConnected || !instrumentFocusMode || (e.pointerType==="mouse" && !(e.buttons&1))){endInteractiveDrags(e);return;}
     e.preventDefault();
     const dy = knobDrag.startY - e.clientY;
-    const dx = e.clientX - knobDrag.startX;
-    const sens = e.shiftKey ? 700 : 200;
-    const nextVal = synthDenorm(knobDrag.key, knobDrag.startN + (dy + dx * 0.5) / sens);
+    const sens = e.shiftKey ? 1000 : 340;
+    const nextVal = synthDenorm(knobDrag.key, knobDrag.startN + dy / sens);
     studioEngine.setTrackParam(knobDrag.trackId, knobDrag.key, nextVal);
   });
 
@@ -3069,6 +3081,10 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
 
   eventRoot.addEventListener("pointerup", endInteractiveDrags);
   eventRoot.addEventListener("pointercancel", endInteractiveDrags);
+  eventRoot.addEventListener("lostpointercapture",e=>{if(knobDrag&&e.pointerId===knobDrag.pointerId)endInteractiveDrags(e);});
+  window.addEventListener("pointerup",e=>{if(knobDrag&&e.pointerId===knobDrag.pointerId)endInteractiveDrags(e);});
+  window.addEventListener("pointercancel",e=>{if(knobDrag&&e.pointerId===knobDrag.pointerId)endInteractiveDrags(e);});
+  document.addEventListener("visibilitychange",()=>{if(document.hidden)endInteractiveDrags();});
   window.addEventListener("blur", () => endInteractiveDrags());
 
   // Double-click: reset embedded synth knob, reset dock height, or open Piano Roll from lane
@@ -3107,13 +3123,14 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
     (e) => {
       if(!projectTarget(e.target))return;
       const knob = (e.target as HTMLElement | null)?.closest<HTMLElement>(".st-inst-knob");
-      if (!knob) return;
+      // Plain mouse wheel / trackpad scrolling must never change a sound.
+      if (!knob || !e.shiftKey || document.activeElement!==knob || e.ctrlKey || e.metaKey) return;
       const key = knob.getAttribute("data-st-param");
       if (!key) return;
       e.preventDefault();
       const track = resolveInstrumentTrack(knob);
       const curN = synthNorm(key, Number(track.patch[key]));
-      track.setParam(key, synthDenorm(key, curN - Math.sign(e.deltaY) * 0.03));
+      track.setParam(key, synthDenorm(key, curN - Math.sign(e.deltaY) * 0.01));
     },
     { passive: false }
   );
