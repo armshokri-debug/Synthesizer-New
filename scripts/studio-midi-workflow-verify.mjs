@@ -65,12 +65,15 @@ try {
   assert(await cdp.evaluate('!document.querySelector(".st-note-context").hidden'));
   await cdp.evaluate('document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true}))');
   // Test the timeline selection on two different instrument tracks.
-  await cdp.evaluate(`(()=>{const e=SY1_STUDIO.engine;e.regions.clearSelection();document.querySelector("#st-tab-pianoroll").click();})()`);
+  await cdp.evaluate(`(()=>{const e=SY1_STUDIO.engine;e.regions.clearSelection();document.querySelector("[data-st-action=dock-collapse]").click();})()`);
+  await sleep(100);
   const box=await cdp.evaluate(`(()=>{const clips=[...document.querySelectorAll("[data-region-id]")].map(el=>el.getBoundingClientRect());const lane=[...document.querySelectorAll("[data-st-lane]")].at(-1).getBoundingClientRect();return {x:Math.max(...clips.map(r=>r.right))+12,y:lane.bottom-3,endX:Math.min(...clips.map(r=>r.left))+1,endY:Math.min(...clips.map(r=>r.top))+1};})()`);
+  console.log("Timeline geometry",box);
+  assert(box.x>box.endX&&box.y>box.endY,"timeline must have visible clip geometry");
   const gestureRegion=async(type)=>{
     const evt=(name,x,y)=>cdp.evaluate(`document.querySelectorAll("[data-st-lane]")[1].dispatchEvent(new PointerEvent("${name}",{pointerId:33,pointerType:"${type}",button:0,buttons:${name==="pointerup"?0:1},bubbles:true,cancelable:true,clientX:${x},clientY:${y}}))`);
     await evt("pointerdown",box.x,box.y);if(type==="touch")await sleep(370);
-    await evt("pointermove",box.endX,box.endY);await evt("pointerup",box.endX,box.endY);
+    await evt("pointermove",box.endX,box.endY);assert.equal(await cdp.evaluate('document.querySelectorAll(".st-midi-region.is-selected").length'),2,"marquee preview");await evt("pointerup",box.endX,box.endY);
     await sleep(70);assert.equal(await cdp.evaluate("SY1_STUDIO.engine.regions.selection().length"),2,type+" timeline marquee");
   };
   await gestureRegion("mouse");await gestureRegion("touch");

@@ -440,6 +440,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     if (!position) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if(box?.active)return;
     const id = target.closest<HTMLElement>("[data-region-id]")?.dataset.regionId;
     if (id && !editor.has(id)) editor.select(id);
     if(!id){editor.clearSelection();studioEngine.setFocusedTrack(position.trackId);}

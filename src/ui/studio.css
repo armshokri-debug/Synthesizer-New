@@ -3135,3 +3135,5 @@ html.is-studio-instrument #sy1-panel .oriental-pop,html.is-studio-instrument #sy
 .st-export-menu .st-region-clipboard{padding:4px 6px;gap:4px;}
 .st-export-menu .st-arr-snap-field{display:flex;justify-content:space-between;padding:6px 8px;}
 .st-midi-region.is-dragging{z-index:25;}
+
+@media(pointer:coarse){.st-lane{touch-action:none;}}

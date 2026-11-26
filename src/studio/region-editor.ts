@@ -182,7 +182,7 @@ export class RegionEditor {
   move(delta: number, trackDelta = 0, copy = false): void {
     this.assertEditable();
     const regions = this.selectedRegions();
-    const preview = previewMoveRegions(regions, delta, this.grid, this.host.length());
+    const preview = previewMoveRegions(regions, delta, delta===0?0:this.grid, this.host.length());
     if (!preview || (!preview.shift && !trackDelta && !copy)) return;
     const trackIds = this.host.tracks().map(track => track.id);
     const destinations = regions.map(region => trackIds[trackIds.indexOf(region.trackId) + trackDelta]);
