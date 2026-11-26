@@ -120,7 +120,7 @@ describe("Phase 7.8C drum preview and safe MIDI insertion", () => {
     engine.dispose();
   });
 
-  test("insert disarms Live after success and the toolbar keeps both features", () => {
+  test("insert disarms Live and the original toolbar preserves pattern audition and insertion without extra Live control", () => {
     const {engine, track} = setup();
     engine.setLiveDrumEnabled(track.id, true);
     engine.insertDrumPattern(track.id, 0);
@@ -128,7 +128,9 @@ describe("Phase 7.8C drum preview and safe MIDI insertion", () => {
     setTrackDrumPreviewView(track, true);
     const html = renderStudioInstrumentHtml(track, "steps", true);
     expect(html).toContain('data-st-action="track-drum-preview" aria-pressed="true"');
-    expect(html).toContain('data-st-action="track-drum-live"');
+    expect(html).not.toContain('data-st-action="track-drum-live"');
+    expect(html).toContain('class="drum-play active"');
+    expect(html).toContain('class="drum-transport drum-transport-2"');
     expect(html).toContain('data-st-action="track-drum-insert"');
     engine.dispose();
   });
