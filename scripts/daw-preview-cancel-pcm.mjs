@@ -41,7 +41,15 @@ try {
       await until(()=>blocks.length>10);
       if(mode==="preview")e.startDrumPreview(t.id);
       else if(mode==="arrangement"){e.insertDrumPattern(t.id,0);await e.play();}
-      else await e.record({midiOnly:true,patternTrackId:t.id});
+      else {
+        // Exercise the actual selected-instrument Record button, not a test-only
+        // engine call; another track remains armed to expose wrong routing.
+        const other=e.getTracks().find(x=>x.id!==t.id);
+        if(other){e.setTrackArmed(t.id,false);e.setTrackArmed(other.id,true);}
+        document.querySelector('[data-st-action="open-track-instrument"][data-track-id="'+CSS.escape(t.id)+'"]').click();
+        document.getElementById("st-rec-btn").click();
+        await until(()=>e.getTransportSnapshot().playing&&e.getTransportSnapshot().recording);
+      }
       await until(()=>hits.length>=1);
       const oldAt=hits[0].audioTime,changedAt=ctx.currentTime;
       if(oldAt-changedAt<.04)throw Error("Test did not reach pending event before audio onset");
@@ -55,6 +63,11 @@ try {
       const silentPeak=peak(oldAt-.01,newAt-.012),soundedPeak=peak(newAt,newAt+.15);
       const first=blocks.find(x=>x.frame/rate>=oldAt-.02&&x.peak>.002);
       const recorded=t.events.filter(h=>h.type==="noteOn").map(h=>h.tick);
+      if(mode==="record"){
+        document.getElementById("st-rec-btn").click();
+        await until(()=>!e.getTransportSnapshot().recording&&!e.getTransportSnapshot().playing);
+        if(e.getCurrentTick()<=480)throw Error("Record completion reset the playhead");
+      }
       return {mode,oldAt,newAt,changedAt,silentPeak,soundedPeak,onset:first?first.frame/rate:null,rate,recorded};
     } finally {await e.stop();e.setDispatchObserver(null);probe.port.onmessage=null;e.getMasterBus().tap.disconnect(probe);probe.disconnect();sink.disconnect();}
   })()`);
