@@ -9,6 +9,8 @@ const port=9283,profile=mkdtempSync(join(tmpdir(),"sy1-pcm-"));
 const chrome=spawn(process.env.SY1_CHROME_BIN||"/usr/bin/chromium",[
   "--user-data-dir="+profile,"--headless","--no-sandbox","--disable-gpu","--autoplay-policy=no-user-gesture-required",
   "--remote-debugging-port="+port,"about:blank"],{stdio:"ignore"});
+const mode=process.argv[2]||"preview";
+assert(["preview","arrangement","record"].includes(mode));
 let cdp;
 try {
   cdp=new CdpClient(await waitForCdp(port));await cdp.connect();
@@ -17,8 +19,9 @@ try {
   for(let i=0;i<150;i++){if(await cdp.evaluate("!!window.SY1_STUDIO"))break;await sleep(50);}
   const report=await cdp.evaluate(`(async()=>{
     await SY1_STUDIO.ready;SY1_STUDIO.open();
-    const e=SY1_STUDIO.engine,t=e.getFocusedTrack();
+    const e=SY1_STUDIO.engine,t=e.getFocusedTrack(),mode=${JSON.stringify(mode)};
     e.setBpm(120);e.setTrackMachine(t.id,"kerman");
+    e.setLoopEnabled(false);e.setTrackArmed(t.id,true);e.setRecordingSettings({countIn:false,metronome:false});
     t.setParam("drumSwing",0);t.setParam("revMix",0);t.setParam("delayMix",0);t.setParam("kickSend",0);
     const bank=t.getTrackDrumBank(),p=bank.patterns[bank.selected];
     for(const row of Object.values(p.steps))row.fill(0);
@@ -32,11 +35,13 @@ try {
     const sink=ctx.createGain();sink.gain.value=0;
     const blocks=[];probe.port.onmessage=ev=>blocks.push(ev.data);
     e.getMasterBus().tap.connect(probe);probe.connect(sink);sink.connect(ctx.destination);
-    const hits=[];e.setDispatchObserver(h=>{if(h.source==="drum-preview")hits.push(h);});
+    const hits=[];e.setDispatchObserver(h=>{if(h.trackId===t.id&&h.event.type==="noteOn")hits.push(h);});
     const until=async predicate=>{const end=performance.now()+4000;while(!predicate()){if(performance.now()>end)throw Error("Audio measurement timeout");await new Promise(r=>setTimeout(r,4));}};
     try {
       await until(()=>blocks.length>10);
-      e.startDrumPreview(t.id);
+      if(mode==="preview")e.startDrumPreview(t.id);
+      else if(mode==="arrangement"){e.insertDrumPattern(t.id,0);await e.play();}
+      else await e.record({midiOnly:true,patternTrackId:t.id});
       await until(()=>hits.length>=1);
       const oldAt=hits[0].audioTime,changedAt=ctx.currentTime;
       if(oldAt-changedAt<.04)throw Error("Test did not reach pending event before audio onset");
@@ -49,12 +54,14 @@ try {
       const peak=(a,b)=>blocks.filter(x=>x.frame/rate>=a&&x.frame/rate<b).reduce((m,x)=>Math.max(m,x.peak),0);
       const silentPeak=peak(oldAt-.01,newAt-.012),soundedPeak=peak(newAt,newAt+.15);
       const first=blocks.find(x=>x.frame/rate>=oldAt-.02&&x.peak>.002);
-      return {oldAt,newAt,changedAt,silentPeak,soundedPeak,onset:first?first.frame/rate:null,rate};
-    } finally {e.stopDrumPreview();e.setDispatchObserver(null);probe.port.onmessage=null;e.getMasterBus().tap.disconnect(probe);probe.disconnect();sink.disconnect();}
+      const recorded=t.events.filter(h=>h.type==="noteOn").map(h=>h.tick);
+      return {mode,oldAt,newAt,changedAt,silentPeak,soundedPeak,onset:first?first.frame/rate:null,rate,recorded};
+    } finally {await e.stop();e.setDispatchObserver(null);probe.port.onmessage=null;e.getMasterBus().tap.disconnect(probe);probe.disconnect();sink.disconnect();}
   })()`);
   assert(report.newAt-report.oldAt>=.04,JSON.stringify(report));
   assert(report.soundedPeak>.005,JSON.stringify(report));
   assert(report.silentPeak<.001, "Stale hit audible: "+JSON.stringify(report));
   assert(report.onset>=report.newAt-.005 && report.onset-report.newAt<.04,JSON.stringify(report));
+  if(mode==="record")assert.deepEqual(report.recorded,[480]);
   console.log("PASS: real audio PCM cancellation/reschedule",JSON.stringify(report));
 } finally {cdp?.close();chrome.kill();chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}});}
