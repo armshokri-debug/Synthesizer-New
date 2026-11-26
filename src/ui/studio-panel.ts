@@ -794,7 +794,7 @@ export function renderStudioHtml(): string {
     const arp = studioArpTrack();
     const overlay = orient ? renderOrientalPanelHtml(orient.patch, orient.getTrackCustomTuning(), orientalStatus, orientalError, true)
       : arp ? renderArpPanelHtml(arp.patch, studioEngine.getBpm(), c => renderInstrumentControl({kind:"track",patch:arp.patch}, c), true) : "";
-    dockContent = renderStudioInstrumentHtml(focused, instPageFilter, true, overlay);
+    dockContent = renderStudioInstrumentHtml(focused, instPageFilter, true, overlay, tr.bpm);
   } else if (!dockCollapsed) {
     if (activeDockTab === "piano-roll") {
       dockContent = renderPianoRollHtml();
