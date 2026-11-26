@@ -1071,6 +1071,11 @@ export function renderStudioHtml(): string {
                   <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-undo-btn" data-st-action="undo" aria-label="Undo" title="Undo (Cmd/Ctrl+Z)"${canUndo ? "" : " disabled"}>${stIcon("undo")}</button>
                   <button type="button" class="st-btn st-tiny-btn st-hist-btn" id="st-redo-btn" data-st-action="redo" aria-label="Redo" title="Redo (Shift+Cmd/Ctrl+Z)"${canRedo ? "" : " disabled"}>${stIcon("redo")}</button>
                 </div>
+                <div class="st-seg st-region-clipboard" role="group" aria-label="Region clipboard">
+                  <button type="button" class="st-btn st-tiny-btn" data-st-action="copy-region"${studioEngine.regions.selection().length ? "" : " disabled"} title="Copy MIDI region (Cmd/Ctrl+C)">Copy</button>
+                  <button type="button" class="st-btn st-tiny-btn" data-st-action="paste-region"${studioEngine.regions.canPaste() && !tr.recording ? "" : " disabled"} title="Paste MIDI at playhead (Cmd/Ctrl+V)">Paste</button>
+                  <button type="button" class="st-btn st-tiny-btn" data-st-action="paste-region-in-place"${studioEngine.regions.canPaste() && !tr.recording ? "" : " disabled"} title="Paste at original position (Cmd/Ctrl+Shift+V)">Paste in place</button>
+                </div>
                 <label class="st-arr-snap-field" title="Arrangement region snap grid (independent from Piano Roll Snap)">
                   <span class="st-arr-snap-lbl">Snap</span>
                   <select class="st-select st-arr-snap-sel" id="st-arr-snap" aria-label="Arrangement region snap">
@@ -1425,6 +1430,11 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
     (e) => {
       if (!studioEngine.isActive()) return;
       if (!hasActiveModal()) {
+        if ((e.code === "Space" || e.key === " ") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.isComposing && !exportMenuOpen && !openDrawerVisible && !(e.target instanceof Element && e.target.closest("input,textarea,select,[contenteditable],.lib-pop,.mb-pop,.conn-pop,.daw-sheet,.st-region-menu,summary, .sk, [role=slider]"))) {
+          e.preventDefault();e.stopImmediatePropagation();
+          if(!e.repeat){if(studioEngine.isPlaying())void studioEngine.pause();else void studioEngine.play();}
+          return;
+        }
         if (e.key === "Escape" && studioArpTrack() && !exportMenuOpen && !openDrawerVisible) {
           e.preventDefault(); e.stopPropagation(); arpTrackKey = null; renderStudioPanel();
           document.getElementById("kb-arp")?.focus(); return;
@@ -1780,6 +1790,16 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
           }
           break;
         }
+        case "copy-region":
+          studioEngine.regions.copy();renderStudioPanel();break;
+        case "paste-region":
+        case "paste-region-in-place":
+          try {
+            const id=studioEngine.getFocusedTrack().id;
+            if(action==="paste-region-in-place")studioEngine.regions.pasteInPlace(id);
+            else studioEngine.regions.paste(id,studioEngine.getCurrentTick());
+          } catch(error){setStatus(error instanceof Error?error.message:String(error),"error");}
+          renderStudioPanel();break;
         case "play":
           if (studioEngine.getTransportSnapshot().playing) void studioEngine.pause();
           else void studioEngine.play();

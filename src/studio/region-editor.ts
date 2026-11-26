@@ -70,7 +70,7 @@ export class RegionEditor {
   private selected = new Set<string>();
   private history: History[] = [];
   private future: History[] = [];
-  private clipboard: { region: MidiRegion; machineId: string }[] = [];
+  private clipboard: MidiRegion[] = [];
   grid = 120;
 
   constructor(private host: TimelineHost) {}
@@ -257,7 +257,7 @@ export class RegionEditor {
 
   copy(): void {
     const regions = this.selectedRegions();
-    if (regions.length) this.clipboard = regions.map(region => ({ region: cloneRegion(region), machineId: this.track(region.trackId).machineId }));
+    if (regions.length) this.clipboard = regions.map(cloneRegion);
   }
 
   remove(): void {
@@ -279,15 +279,20 @@ export class RegionEditor {
 
   cut(): void { this.assertEditable(); this.copy(); this.remove(); }
 
-  paste(trackId: string, tick: number): void {
+  pasteInPlace(trackId: string): void {
     if (!this.clipboard.length) return;
-    const machine = this.track(trackId).machineId;
-    if (this.clipboard.some(item => item.machineId !== machine)) throw new Error("Paste onto a track with the same instrument.");
-    const first = Math.min(...this.clipboard.map(item => item.region.startTick));
-    const maxEnd = Math.max(...this.clipboard.map(item => item.region.startTick + item.region.length));
+    this.paste(trackId, Math.min(...this.clipboard.map(region => region.startTick)), true);
+  }
+
+  paste(trackId: string, tick: number, exact = false): void {
+    if (!this.clipboard.length) return;
+    // MIDI is instrument-independent; preserve pitch, velocity, controllers and source offsets.
+    this.track(trackId);
+    const first = Math.min(...this.clipboard.map(region => region.startTick));
+    const maxEnd = Math.max(...this.clipboard.map(region => region.startTick + region.length));
     const span = Math.max(1, maxEnd - first);
-    const targetStart = clampGridStart(tick, this.grid, Math.max(1, this.host.length() - span + 1));
-    this.insert(this.clipboard.map(item => ({ ...item.region, trackId })), targetStart);
+    const targetStart = exact ? Math.max(0, Math.round(tick)) : clampGridStart(tick, this.grid, Math.max(1, this.host.length() - span + 1));
+    this.insert(this.clipboard.map(region => ({ ...region, trackId })), targetStart);
     this.host.focus(trackId);
   }
 

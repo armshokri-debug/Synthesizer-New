@@ -129,6 +129,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
       { name: "Cut", enabled: count > 0, run: () => editor.cut() },
       { name: "New region here", enabled: true, run: () => editor.create(trackId, tick) },
       { name: "Paste here", enabled: editor.canPaste(), run: () => editor.paste(trackId, tick) },
+      { name: "Paste in place", enabled: editor.canPaste(), run: () => editor.pasteInPlace(trackId) },
       { name: "Duplicate", enabled: count > 0, run: () => editor.duplicate() },
       { name: "Split at playhead", enabled: count > 0, run: () => editor.split(studioEngine.getCurrentTick()) },
       { name: "Merge regions", enabled: count > 1, run: () => editor.merge() },
@@ -385,7 +386,7 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
     let action: (() => void) | undefined;
     if (modifier && key === "z") action = event.shiftKey ? () => editor.redo() : () => editor.undo();
     else if (modifier && key === "y") action = () => editor.redo();
-    else if (!noteEditor && modifier && key === "v") action = () => editor.paste(studioEngine.getFocusedTrack().id, studioEngine.getCurrentTick());
+    else if (!noteEditor && modifier && key === "v" && editor.canPaste()) action = () => event.shiftKey ? editor.pasteInPlace(studioEngine.getFocusedTrack().id) : editor.paste(studioEngine.getFocusedTrack().id, studioEngine.getCurrentTick());
     else if (!noteEditor && selected) {
       if (modifier && key === "c") action = () => editor.copy();
       if (modifier && key === "x") action = () => editor.cut();
@@ -394,13 +395,13 @@ export function bindRegionControls(container: HTMLElement, controls: RegionContr
       if (key === "delete" || key === "backspace") action = () => editor.remove();
       if (focusedId && (key === "arrowleft" || key === "arrowright")) action = () => editor.move((key === "arrowleft" ? -1 : 1) * (editor.grid || 1));
     }
-    if (focusedId && (key === "enter" || key === " " || key === "contextmenu" || (event.shiftKey && key === "f10"))) {
+    if (focusedId && (key === "enter" || key === "contextmenu" || (event.shiftKey && key === "f10"))) {
       action = () => {
         const rect = target.getBoundingClientRect();
         const position = locate(target, rect.left);
         if (!editor.has(focusedId)) editor.select(focusedId, event.shiftKey);
         if (key === "enter") controls.openEditor();
-        else if (key !== " " && position) openMenu(rect.left, rect.bottom, position.trackId, position.tick);
+        else if (position) openMenu(rect.left, rect.bottom, position.trackId, position.tick);
       };
     }
     if (!action) return;

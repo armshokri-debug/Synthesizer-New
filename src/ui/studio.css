@@ -3115,3 +3115,12 @@ html.is-studio:not(.is-studio-instrument) #kb-scale-notes {
 
 #sy1-panel[hidden],#sy1-studio[hidden]{display:none!important;}
 html.is-studio-instrument #sy1-panel .oriental-pop,html.is-studio-instrument #sy1-panel .st-arp-pop{z-index:40;}
+
+/* Compact MIDI controls: keep advanced options in a single disclosure. */
+.st-pr-edit-options {font-size:.75rem;max-width:100%;}
+.st-pr-edit-options>summary {cursor:pointer;min-height:34px;display:flex;align-items:center;padding:0 9px;border:1px solid var(--st-border-hi);border-radius:5px;white-space:nowrap;}
+.st-pr-edit-options>summary::after {content:" ▾";margin-left:5px;}
+.st-pr-edit-options[open]>summary::after {content:" ▴";}
+.st-pr-option-body {display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:5px 0;}
+.st-region-clipboard {flex-wrap:wrap;}
+@media (pointer:coarse){#sy1-studio .st-pr-toolbar .st-pr-btn,#sy1-studio .st-pr-toolbar select,.st-pr-edit-options>summary {min-height:40px;}}
