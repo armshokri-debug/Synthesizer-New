@@ -23,7 +23,7 @@ function fixture() {
   }
   return {engine,track,hits,advance};
 }
-describe("DAW acceptance contract — current baseline",()=>{
+describe("DAW acceptance contract",()=>{
   test("A01: Record on a selected drum machine records its selected pattern without a separate Live toggle",async()=>{
     const {engine,track,advance}=fixture();
     try {
@@ -76,5 +76,40 @@ describe("DAW acceptance contract — current baseline",()=>{
       advance(11.2);await engine.stop();
       expect(track.events.some(e=>e.type==="noteOn"&&e.midi===DRUM_NOTES.snare&&e.tick===STUDIO_PPQ*2)).toBe(true);
     } finally {engine.dispose();}
+  });
+  test("A12: arrangement drum hit inside lookahead moves with new tempo",async()=>{
+    const {engine,track,hits,advance}=fixture();
+    try{
+      engine.insertDrumPattern(track.id,0);
+      await engine.play();advance(10.425);
+      engine.setBpm(60);advance(10.8);
+      const beat=hits.filter(h=>h.trackId===track.id&&h.event.type==="noteOn"&&h.event.tick===STUDIO_PPQ);
+      expect(beat.at(-1)?.audioTime).toBeCloseTo(10.575,6);
+    }finally{engine.dispose();}
+  });
+  test("A13: live pattern capture follows the rescheduled audio event",async()=>{
+    const {engine,track,hits,advance}=fixture();
+    try{
+      await engine.record({midiOnly:true,patternTrackId:track.id});advance(10.425);
+      engine.setBpm(60);advance(10.55);
+      expect(track.events.filter(e=>e.type==="noteOn").map(e=>e.tick)).toEqual([0]);
+      advance(10.65);await engine.stop();
+      expect(track.events.filter(e=>e.type==="noteOn").map(e=>e.tick)).toEqual([0,STUDIO_PPQ]);
+      const beat=hits.filter(h=>h.event.type==="noteOn"&&h.event.tick===STUDIO_PPQ);
+      expect(beat.at(-1)?.audioTime).toBeCloseTo(10.575,6);
+    }finally{engine.dispose();}
+  });
+  test("A14: future drum hit on next loop moves with the new seam",async()=>{
+    const {engine,track,hits,advance}=fixture();
+    try{
+      engine.setBars(1);engine.setLoopRange(1,1);engine.setLoopEnabled(true);
+      engine.insertDrumPattern(track.id,0);
+      await engine.play();advance(11.95);engine.setBpm(60);
+      expect(engine.getCurrentTick()).toBeCloseTo(1872,5);
+      advance(12.1);
+      const downbeat=hits.filter(h=>h.event.type==="noteOn"&&h.event.tick===0);
+      expect(downbeat.at(-1)?.audioTime).toBeCloseTo(12.05,6);
+      expect(engine.getCurrentTick()).toBeCloseTo(24,5);
+    }finally{engine.dispose();}
   });
 });
