@@ -256,6 +256,7 @@ export class SY1StudioEngine {
     track: SY1TrackEngine;
     voice: SY1TrackEngine;
     sequence: LiveDrumSequence;
+    scheduled: {tick:number;midi:number;velocity:number;at:number;handle?: ReturnType<SY1TrackEngine['scheduleDrumNote']>}[];
     anchorTime: number;
     anchorTick: number;
     cursorTick: number;
@@ -804,9 +805,22 @@ export class SY1StudioEngine {
     const now = this.nowAudioTime();
     const preview = this.drumPreview;
     if (preview) {
-      preview.anchorTick = this.getDrumPreviewTick(now);
-      preview.anchorTime = Math.max(now, preview.anchorTime);
+      const tick=this.getDrumPreviewTick(now);
+      // Invalidate only future hits, retaining sounding tails and musical phase.
+      // Cancel reverse dispatch order for reversible hi-hat choke scheduling.
+      const redo: typeof preview.scheduled=[];
+      for(let i=preview.scheduled.length-1;i>=0;i--){
+        const hit=preview.scheduled[i];
+        if(hit.at>now && (hit.handle?.cancel() ?? !!this.clockNowOverride))redo.push(hit);
+      }
+      preview.scheduled=[];
+      preview.anchorTick=tick;
+      preview.anchorTime=Math.max(now,preview.anchorTime);
       preview.voice.syncTempo(nextBpm);
+      for(const hit of redo.reverse()){
+        const at=preview.anchorTime+(hit.tick-tick)*this.secondsPerTick(nextBpm);
+        this.dispatchPreviewHit(preview,hit,at);
+      }
     }
     this.metronome.cancel();
     if (this.countInEnd !== null && this.countInStart !== null && now < this.countInEnd) {
@@ -1128,7 +1142,7 @@ export class SY1StudioEngine {
     if (context && this.masterBus) void voice.attachAudio(context, this.masterBus.sum);
     const now = this.nowAudioTime();
     const preview = {
-      track, voice, sequence: new LiveDrumSequence(),
+      track, voice, sequence: new LiveDrumSequence(), scheduled: [] as NonNullable<SY1StudioEngine['drumPreview']>['scheduled'],
       anchorTime: now + (context ? PLAY_START_LEAD_SEC : 0), anchorTick: 0, cursorTick: 0,
       unsubscribe: track.onChange(copySound)
     };
@@ -1146,6 +1160,8 @@ export class SY1StudioEngine {
       clearInterval(this.schedulerTimer);
       this.schedulerTimer = null;
     }
+    for(let i=preview.scheduled.length-1;i>=0;i--)preview.scheduled[i].handle?.cancel();
+    preview.scheduled=[];
     preview.unsubscribe();
     preview.voice.dispose();
     this.notify();
@@ -1156,9 +1172,18 @@ export class SY1StudioEngine {
     return preview.anchorTick + Math.max(0, now - preview.anchorTime) * this.ticksPerSecond(this.bpm);
   }
 
+  private dispatchPreviewHit(preview: NonNullable<SY1StudioEngine['drumPreview']>, hit: {tick:number;midi:number;velocity:number}, at:number): void {
+    const handle=preview.voice.scheduleDrumNote(hit.midi,hit.velocity,at);
+    const actualAt=handle?.at??at;
+    preview.scheduled.push({tick:hit.tick,midi:hit.midi,velocity:hit.velocity,at:actualAt,handle});
+    this.dispatchObserver?.({trackId:preview.track.id,source:"drum-preview",
+      event:{type:"noteOn",tick:hit.tick,midi:hit.midi,velocity:hit.velocity},audioTime:actualAt});
+  }
+
   private stepDrumPreview(now: number): void {
     const preview = this.drumPreview;
     if (!preview) return;
+    preview.scheduled=preview.scheduled.filter(h=>h.at>now);
     const tick = this.getDrumPreviewTick(now);
     if ((tick - preview.cursorTick) * this.secondsPerTick(this.bpm) > SCHEDULER_STALL_THRESHOLD_SEC) {
       preview.sequence.reset();
@@ -1169,9 +1194,7 @@ export class SY1StudioEngine {
     const anchor = Math.max(now, preview.anchorTime);
     preview.sequence.drain(preview.track, start, end, this.bpm, hit => {
       const at = anchor + (hit.tick - tick) * this.secondsPerTick(this.bpm);
-      preview.voice.noteOn(hit.midi, hit.velocity, at);
-      this.dispatchObserver?.({ trackId: preview.track.id, source: "drum-preview",
-        event: { type: "noteOn", tick: hit.tick, midi: hit.midi, velocity: hit.velocity }, audioTime: at });
+      this.dispatchPreviewHit(preview,hit,at);
     });
     preview.cursorTick = end;
   }
