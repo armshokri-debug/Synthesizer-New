@@ -21,6 +21,9 @@ import { renderInstrumentFrame, renderInstrumentSection, renderInstrumentTabs, r
 
 // Per-track selected drum voice in the Studio drum editor (never touches standalone drums.ts)
 const selectedDrumVoiceByTrack = new Map<string, DrumVoice>();
+const previewDrumByTrack = new WeakMap<SY1TrackEngine, boolean>();
+export function setTrackDrumPreviewView(track: SY1TrackEngine, enabled: boolean): void { previewDrumByTrack.set(track, enabled); }
+
 const liveDrumByTrack = new WeakMap<SY1TrackEngine, boolean>();
 export const setTrackDrumLiveView = (track:SY1TrackEngine, enabled:boolean):void => { liveDrumByTrack.set(track,enabled); };
 const drumEditByTrack = new WeakMap<SY1TrackEngine, StepEdit>();
@@ -227,8 +230,9 @@ function renderStudioDrumPadsAndKits(track: SY1TrackEngine, m: MachineDef): stri
     <div class="synth-choice drum-len" role="group" aria-label="Pattern length">${[16,12].map(len=>`<button type="button" class="synth-choice-btn${pat.len===len?" active":""}" data-st-action="track-drum-len" data-len="${len}" aria-pressed="${pat.len===len}">${len}</button>`).join("")}</div>
     <button type="button" class="synth-choice-btn drum-acc${mode!=="hit"?" active":""}" data-st-action="track-drum-edit" title="Cycle step edit mode">✎ ${mode.toUpperCase()}</button>
     <button type="button" class="synth-choice-btn" data-st-action="track-drum-clear">Clear</button>
+    <button type="button" class="synth-choice-btn${previewDrumByTrack.get(track) ? " active" : ""}" data-st-action="track-drum-preview" aria-pressed="${!!previewDrumByTrack.get(track)}" title="Preview this pattern at project tempo with the transport stopped">${previewDrumByTrack.get(track) ? "Stop Preview" : "Preview"}</button>
     <button type="button" class="synth-choice-btn${liveDrumByTrack.get(track) ? " active" : ""}" data-st-action="track-drum-live" aria-pressed="${!!liveDrumByTrack.get(track)}" title="Enable live pattern; use Studio Play or Record. Requires an empty track.">Live</button>
-    <button type="button" class="synth-choice-btn" data-st-action="track-drum-insert" title="Insert pattern at snapped playhead; probability is resolved once">+ MIDI</button>
+    <button type="button" class="synth-choice-btn" data-st-action="track-drum-insert" title="Insert pattern at the first free grid position from the playhead">+ MIDI</button>
     </div>${padsHtml}${kitsHtml}`;
 }
 

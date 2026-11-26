@@ -1,3 +1,4 @@
+import { drumPatternMidi } from "./track-drum-patterns";
 import { LiveDrumSequence } from "./live-drum-sequence";
 import { arpStepBeats } from "./track-arpeggiator";
 /**
@@ -175,6 +176,7 @@ export interface ScheduledDispatchRecord {
   trackId: string;
   event: StudioMidiEvent;
   audioTime: number;
+  source?: "drum-preview";
 }
 
 export interface StudioEngineOptions {
@@ -250,6 +252,16 @@ export class SY1StudioEngine {
   private anchorBpm: number;
 
   private schedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private drumPreview: {
+    track: SY1TrackEngine;
+    voice: SY1TrackEngine;
+    sequence: LiveDrumSequence;
+    anchorTime: number;
+    anchorTick: number;
+    cursorTick: number;
+    timer?: ReturnType<typeof setInterval>;
+    unsubscribe: () => void;
+  } | null = null;
   private liveDrums = new Map<string, LiveDrumSequence>();
   private pendingDrumCapture: {track: SY1TrackEngine; tick: number; midi: number; velocity: number; duration: number; at: number}[] = [];
   private recordedDrumHits = new Set<string>();
@@ -435,6 +447,7 @@ export class SY1StudioEngine {
    */
   handleAudioContextStateChange(state: string, nowAudioTime = this.nowAudioTime()): void {
     if (state === "interrupted" || state === "suspended") {
+      this.stopDrumPreview();
       this.metronome.cancel();
       if (this.playing || this.active) {
         this.releasePlaybackNotes(0);
@@ -591,6 +604,7 @@ export class SY1StudioEngine {
     if (!this.tracks.some((t) => t.id === id)) return;
     if (this.focusedTrackId === id) return;
     this.focusedTrackId = id;
+    if (this.drumPreview?.track.id !== id) this.stopDrumPreview();
     this.notify();
     this.notifyKeys();
   }
@@ -787,6 +801,12 @@ export class SY1StudioEngine {
   private handleTempoChange(nextBpm: number): void {
     if (!(nextBpm > 0)) return;
     const now = this.nowAudioTime();
+    const preview = this.drumPreview;
+    if (preview) {
+      preview.anchorTick = this.getDrumPreviewTick(now);
+      preview.anchorTime = Math.max(now, preview.anchorTime);
+      preview.voice.syncTempo(nextBpm);
+    }
     this.metronome.cancel();
     if (this.countInEnd !== null && this.countInStart !== null && now < this.countInEnd) {
       const remaining = (this.countInEnd - now) * this.bpm / 60;
@@ -853,11 +873,13 @@ export class SY1StudioEngine {
 
   async play(countInSeconds = 0): Promise<void> {
     if (this.playing) return;
+    this.stopDrumPreview();
     const epoch = this.transportEpoch;
     if (!this.clockNowOverride) {
       await this.ensureAudio();
     }
     if (epoch !== this.transportEpoch || this.playing) return;
+    this.stopDrumPreview();
     if (this.playheadTick >= this.getTotalTicks()) {
       this.playheadTick = 0;
     }
@@ -885,6 +907,7 @@ export class SY1StudioEngine {
     this.recordedDrumHits.clear();
     this.pendingDrumCapture = [];
     this.preparingRecord = true;
+    this.stopDrumPreview();
     const epoch = this.transportEpoch;
     try {
       if (!this.clockNowOverride) {
@@ -922,6 +945,7 @@ export class SY1StudioEngine {
   }
 
   async stop(): Promise<void> {
+    this.stopDrumPreview();
     this.flushDrumCapture(this.nowAudioTime(), true);
     this.liveDrums.clear(); this.pendingDrumCapture = []; this.recordedDrumHits.clear();
     this.stopLiveArpTimer();
@@ -994,7 +1018,7 @@ export class SY1StudioEngine {
    * Public so deterministic tests can step exact clock timelines without timers.
    */
   stepScheduler(nowAudioTime: number): void {
-    if (!this.playing) return;
+    if (!this.playing) { this.stepDrumPreview(nowAudioTime); return; }
     this.flushDrumCapture(nowAudioTime);
     this.finishRecordingLoopBoundary(nowAudioTime);
     this.metronome.schedule(this.masterBus?.ctx || null, nowAudioTime, this.anchorAudioTime, this.anchorTick / STUDIO_PPQ,
@@ -1064,6 +1088,88 @@ export class SY1StudioEngine {
       this.cursorAudioTime = windowEnd;
       this.cursorTick = segEndTickRaw;
     }
+  }
+
+  isDrumPreviewEnabled(id: string): boolean {
+    return this.drumPreview?.track.id === id;
+  }
+
+  /** Preview has its own disposable voice graph, with no arrangement or recording dispatch. */
+  startDrumPreview(id: string): void {
+    if (this.playing || this.recording || this.preparingRecord) throw new Error("Stop the transport before previewing a pattern.");
+    const track = this.getTrack(id);
+    if (!track?.isDrumTrack()) throw new Error("Choose a drum track.");
+    this.stopDrumPreview();
+    const context = this.clockNowOverride ? null : this.prepareAudioSync();
+    if (!this.clockNowOverride && (!context || !this.masterBus)) throw new Error("Audio is unavailable.");
+    const voice = new SY1TrackEngine({ id: "drum-preview", name: "Drum Preview", machineId: track.machineId,
+      volume: track.volume, pan: track.pan });
+    const copySound = () => {
+      if (voice.machineId !== track.machineId) { this.stopDrumPreview(); return; }
+      voice.loadPatchSnapshot(track.patch, track.presetId, track.presetName);
+      voice.setVolume(track.volume);
+      voice.setPan(track.pan);
+    };
+    copySound();
+    voice.syncTempo(this.bpm);
+    if (context && this.masterBus) void voice.attachAudio(context, this.masterBus.sum);
+    const now = this.nowAudioTime();
+    const preview = {
+      track, voice, sequence: new LiveDrumSequence(),
+      anchorTime: now + (context ? PLAY_START_LEAD_SEC : 0), anchorTick: 0, cursorTick: 0,
+      unsubscribe: track.onChange(copySound),
+      timer: this.clockNowOverride ? undefined : setInterval(() => this.stepDrumPreview(this.nowAudioTime()), SCHEDULER_INTERVAL_MS)
+    };
+    this.drumPreview = preview;
+    this.stepDrumPreview(now);
+    this.notify();
+  }
+
+  stopDrumPreview(): void {
+    const preview = this.drumPreview;
+    if (!preview) return;
+    this.drumPreview = null;
+    if (preview.timer !== undefined) clearInterval(preview.timer);
+    preview.unsubscribe();
+    preview.voice.dispose();
+    this.notify();
+  }
+
+  private getDrumPreviewTick(now: number): number {
+    const preview = this.drumPreview!;
+    return preview.anchorTick + Math.max(0, now - preview.anchorTime) * this.ticksPerSecond(this.bpm);
+  }
+
+  private stepDrumPreview(now: number): void {
+    const preview = this.drumPreview;
+    if (!preview) return;
+    const tick = this.getDrumPreviewTick(now);
+    if ((tick - preview.cursorTick) * this.secondsPerTick(this.bpm) > SCHEDULER_STALL_THRESHOLD_SEC) {
+      preview.sequence.reset();
+    }
+    const start = Math.max(tick, preview.cursorTick);
+    const end = tick + LOOKAHEAD_SEC * this.ticksPerSecond(this.bpm);
+    if (end <= start) return;
+    const anchor = Math.max(now, preview.anchorTime);
+    preview.sequence.drain(preview.track, start, end, this.bpm, hit => {
+      const at = anchor + (hit.tick - tick) * this.secondsPerTick(this.bpm);
+      preview.voice.noteOn(hit.midi, hit.velocity, at);
+      this.dispatchObserver?.({ trackId: preview.track.id, source: "drum-preview",
+        event: { type: "noteOn", tick: hit.tick, midi: hit.midi, velocity: hit.velocity }, audioTime: at });
+    });
+    preview.cursorTick = end;
+  }
+
+  insertDrumPattern(id: string, tick = this.getCurrentTick()): number {
+    const track = this.getTrack(id);
+    if (!track?.isDrumTrack()) throw new Error("Choose a drum track.");
+    const bank = track.getTrackDrumBank();
+    const pattern = drumPatternMidi(bank.patterns[bank.selected], track.patch, this.bpm);
+    const start = this.regions.insertPattern(id, tick, pattern.length, pattern.events, true);
+    this.liveDrums.delete(id);
+    if (this.isDrumPreviewEnabled(id)) this.stopDrumPreview();
+    this.notify();
+    return start;
   }
 
   isLiveDrumEnabled(id: string): boolean { return this.liveDrums.has(id); }

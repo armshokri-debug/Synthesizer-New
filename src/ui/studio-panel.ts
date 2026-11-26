@@ -1,4 +1,4 @@
-import { drumPatternMidi, editTrackDrumStep } from "../studio/track-drum-patterns";
+import { editTrackDrumStep } from "../studio/track-drum-patterns";
 import { renderArpPanelHtml } from "./arp-view";
 import { renderInstrumentControl } from "./instrument-controls";
 import { renderOrientalPanelHtml } from "./oriental-view";
@@ -45,7 +45,7 @@ import {
 import { machineArt } from "./machine-browser";
 import {
   getStudioSelectedDrumVoice,
-  getTrackDrumEdit, setTrackDrumEdit, setTrackDrumLiveView,
+  getTrackDrumEdit, setTrackDrumEdit, setTrackDrumLiveView, setTrackDrumPreviewView,
   renderStudioInstrumentHtml,
   setStudioSelectedDrumVoice,
   updateStudioInstrumentKnobDOM,
@@ -178,6 +178,7 @@ export function isStudioInstrumentFocusOpen(): boolean {
 }
 
 function exitInstrumentFocusMode(restoreState = true): void {
+  studioEngine.stopDrumPreview();
   if (!instrumentFocusMode) return;
   instrumentFocusMode = false;
   arpTrackKey = null;
@@ -217,6 +218,7 @@ function openInstrumentPage(): void {
 }
 export function setStudioDockTab(tab: StudioDockTab): void {
   if (tab === "instrument") { openInstrumentPage(); return; }
+  studioEngine.stopDrumPreview();
   if (instrumentFocusMode) exitInstrumentFocusMode(true);
   activeDockTab = tab;
   if (tab === "piano-roll" && preferExpandedNoteEditor()) dockExpanded = true;
@@ -744,6 +746,7 @@ export function renderStudioHtml(): string {
     .join("");
 
   setTrackDrumLiveView(focused,studioEngine.isLiveDrumEnabled(focused.id));
+  setTrackDrumPreviewView(focused,studioEngine.isDrumPreviewEnabled(focused.id));
   let dockContent = "";
   if (instrumentFocusMode) {
     const orient = studioOrientalTrack();
@@ -1889,6 +1892,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
         case "dock-collapse":
           dockCollapsed = !dockCollapsed;
           if (dockCollapsed) {
+            studioEngine.stopDrumPreview();
             dockExpanded = false;
             dockPinnedOpen = false;
           } else {
@@ -1954,6 +1958,14 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           }
           break;
         }
+        case "track-drum-preview": {
+          const track = resolveInstrumentTrack(btn);
+          try {
+            if (studioEngine.isDrumPreviewEnabled(track.id)) studioEngine.stopDrumPreview();
+            else studioEngine.startDrumPreview(track.id);
+          } catch (error) { setStatus(error instanceof Error ? error.message : String(error), "error"); }
+          renderStudioPanel(); break;
+        }
         case "track-drum-live": {
           const ft = resolveInstrumentTrack(btn);
           try {
@@ -1977,10 +1989,9 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
             setTrackDrumEdit(ft, STEP_EDITS[(STEP_EDITS.indexOf(getTrackDrumEdit(ft))+1)%STEP_EDITS.length]);
           } else if (action === "track-drum-insert") {
             try {
-              if (studioEngine.isLiveDrumEnabled(ft.id)) throw new Error("Turn off Live before inserting MIDI.");
-              const result = drumPatternMidi(pat, ft.patch, studioEngine.getBpm());
-              studioEngine.regions.insertPattern(ft.id, studioEngine.getCurrentTick(), result.length, result.events);
-              setStatus("Pattern inserted as MIDI", "ok");
+              const tick = studioEngine.insertDrumPattern(ft.id);
+              const bar = Math.floor(tick / STUDIO_TICKS_PER_BAR) + 1;
+              setStatus(`Pattern inserted as MIDI · bar ${bar}`, "ok");
               if (instrumentFocusMode) exitInstrumentFocusMode(true);
             } catch (error) { setStatus(error instanceof Error ? error.message : String(error), "error"); }
           } else {

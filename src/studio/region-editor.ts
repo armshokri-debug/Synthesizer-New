@@ -233,17 +233,26 @@ export class RegionEditor {
     this.host.focus(trackId);
   }
 
-  insertPattern(trackId: string, tick: number, length: number, events: StudioMidiEvent[]): void {
+  insertPattern(trackId: string, tick: number, length: number, events: StudioMidiEvent[], nextFree = false): number {
     this.assertEditable();
     if (!Number.isInteger(length) || length < 1 || !events.length) throw new Error("Pattern contains no hits.");
     if (!Number.isFinite(tick) || events.some(e => !Number.isInteger(e.tick) || e.tick < 0 || e.tick > length || (e.type === "noteOn" && e.tick === length))) throw new Error("Invalid pattern timing.");
-    const startTick = Math.max(0, snapRegionTick(tick, this.grid));
-    if (startTick + length > this.host.length()) throw new Error("Extend the arrangement before inserting this pattern.");
+    let startTick = Math.max(0, snapRegionTick(tick, this.grid));
     const existing = this.regions(trackId);
+    if (nextFree) {
+      const grid = Math.max(1, this.grid);
+      for (const region of [...existing].sort((a, b) => a.startTick - b.startTick)) {
+        if (startTick + length <= region.startTick) break;
+        const end = region.startTick + region.length;
+        if (startTick < end) startTick = Math.ceil(end / grid) * grid;
+      }
+    }
+    if (startTick + length > this.host.length()) throw new Error("Extend the arrangement before inserting this pattern.");
     if (existing.some(r => r.startTick < startTick + length && startTick < r.startTick + r.length)) throw new Error("Choose an empty position on this track before inserting the pattern.");
     const region: MidiRegion = {id:regionId(),trackId,startTick,length,sourceLength:length,offset:0,loop:false,events:events.map(e=>({...e}))};
     this.edit(new Map([[trackId,[...existing,region]]]),[region.id]);
     this.host.focus(trackId);
+    return startTick;
   }
 
   copy(): void {
