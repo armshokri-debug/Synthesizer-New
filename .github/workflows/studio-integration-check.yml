@@ -34,6 +34,7 @@ jobs:
           node scripts/studio-unified-edit-verify.mjs
           node scripts/studio-phase7-8c-verify.mjs
           node scripts/studio-mix-recovery-verify.mjs
+          node scripts/daw-preview-cancel-pcm.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: sy1-studio-preview
