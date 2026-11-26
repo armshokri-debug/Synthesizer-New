@@ -33,3 +33,18 @@ export function renderInstrumentPresetLabel(name: string, sub: string): string {
   return `<span class="pd-text"><span class="pd-name">${escapeHtml(name)}</span><span class="pd-sub">${escapeHtml(sub)}</span></span>` +
     `<svg class="pd-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg>`;
 }
+
+export interface OriginalFaceplate {
+  attributes:string; machineName:string; machineOptions?:string; studioButton:string; identity?:string;
+  output:string; connections:string; previous:string; presetLabel:string; next:string;
+  tempo:string; tabs:string; sections:string; sectionClass?:string; hint?:string; overlay?:string;
+}
+export function renderOriginalFaceplate(v:OriginalFaceplate):string {
+  return renderInstrumentFrame({
+    attributes:v.attributes,
+    top:`<div class="synth-brand">${v.identity||'<span class="synth-brand-maker">SY-1 </span>'}<button type="button" class="synth-machine-select" id="machine-btn" aria-haspopup="dialog" aria-expanded="false" title="Choose an instrument">${escapeHtml(v.machineName)}</button>${v.machineOptions||""}${v.studioButton}</div>
+        <canvas class="synth-scope" width="320" height="56" aria-hidden="true"></canvas><div class="synth-out">${v.output}</div>${v.connections}`,
+    subbar:`<div class="synth-preset-nav"><button type="button" class="synth-midi-btn preset-step-btn" ${v.previous} aria-label="Previous preset">◀</button><button type="button" class="preset-display synth-preset-select" id="preset-btn" aria-haspopup="dialog" aria-expanded="false" title="Open the sound library">${v.presetLabel}</button><button type="button" class="synth-midi-btn preset-step-btn" ${v.next} aria-label="Next preset">▶</button></div>${v.tempo}${v.tabs}`,
+    sections:v.sections,sectionClass:v.sectionClass,hint:v.hint,overlay:v.overlay
+  });
+}

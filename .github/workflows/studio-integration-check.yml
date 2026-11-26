@@ -23,20 +23,35 @@ jobs:
         run: |
           set -euo pipefail
           export SY1_CHROME_BIN="$(command -v google-chrome || command -v chromium)"
+          "$SY1_CHROME_BIN" --version
+          export CHROME_LOG_FILE=/tmp/sy1-chromium.log
           npm run preview -- --host 127.0.0.1 --port 4178 > /tmp/sy1-preview.log 2>&1 &
           pid=$!
-          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          trap 'code=$?; kill "$pid" 2>/dev/null || true; if [ "$code" -ne 0 ]; then cat /tmp/sy1-preview.log; tail -100 /tmp/sy1-chromium.log 2>/dev/null || true; fi' EXIT
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:4178/ >/dev/null; then break; fi
             sleep 1
           done
           curl -fsS http://127.0.0.1:4178/ >/dev/null
           node scripts/studio-unified-edit-verify.mjs
+          node scripts/yazd-design-verify.mjs
+          node scripts/tehran-design-verify.mjs
+          node scripts/bushehr-design-verify.mjs
+          node scripts/studio-midi-workflow-verify.mjs
           node scripts/studio-phase7-8c-verify.mjs
           node scripts/studio-mix-recovery-verify.mjs
+          node scripts/daw-preview-cancel-pcm.mjs
+          node scripts/daw-preview-cancel-pcm.mjs arrangement
+          node scripts/daw-preview-cancel-pcm.mjs record
       - uses: actions/upload-artifact@v4
         with:
           name: sy1-studio-preview
           path: dist
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yazd-design-screenshots
+          path: design-preview
           if-no-files-found: error
           retention-days: 7

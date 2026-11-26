@@ -255,6 +255,9 @@ export function setDrumHitListener(fn: ((v: DrumVoice, vel: number, at: number) 
   hitListener = fn;
 }
 
+/** Cancellation of a not-yet-rendered track hit. Never kills an already sounding hit. */
+export interface ScheduledDrumHit { at: number; cancel(): boolean }
+
 export interface TrackDrumTriggerOptions {
   ctx: BaseAudioContext;
   dest: DrumDest;
@@ -267,6 +270,7 @@ export interface TrackDrumTriggerOptions {
   at?: number;
   timers?: Set<ReturnType<typeof setTimeout>>;
   deterministic?: boolean;
+  onScheduled?: (hit: ScheduledDrumHit) => void;
 }
 
 interface InternalDrumHitOptions {
@@ -282,6 +286,7 @@ interface InternalDrumHitOptions {
   timers?: Set<ReturnType<typeof setTimeout>>;
   scheduleDisconnect: boolean;
   deterministic: boolean;
+  onScheduled?: (hit: ScheduledDrumHit) => void;
 }
 
 function renderDrumHitInternal(opts: InternalDrumHitOptions): void {
@@ -351,15 +356,18 @@ function renderDrumHitInternal(opts: InternalDrumHitOptions): void {
     chain.push(sg);
   }
   const life = 3 * dec + 0.2;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   if (scheduleDisconnect) {
     const delayMs = Math.max(0, (t - ctx.currentTime + life) * 1000 + 100);
     const tid = setTimeout(() => {
       if (timers) timers.delete(tid);
       for (const n of chain) { try { n.disconnect(); } catch (e) {} }
     }, delayMs);
+    cleanupTimer = tid;
     if (timers) timers.add(tid);
   }
 
+  const priorHat = openHatRef.node;
   // hi-hat pair: the closed hat chokes a ringing open hat (on machines that have one)
   if (CHOKES.has(model)) {
     if (v === "ch" && openHatRef.node) {
@@ -369,6 +377,23 @@ function renderDrumHitInternal(opts: InternalDrumHitOptions): void {
     } else if (v === "oh") {
       openHatRef.node = out;
     }
+  }
+
+  // Track scheduling only. Cancel in reverse dispatch order so the hat
+  // reference and a future choke can be restored before rescheduling.
+  if (opts.onScheduled) {
+    let cancelled=false;
+    opts.onScheduled({at:t,cancel:()=>{
+      if(cancelled || ctx.currentTime >= t) return false;
+      cancelled=true;
+      if(cleanupTimer!==undefined){clearTimeout(cleanupTimer);timers?.delete(cleanupTimer);}
+      for(const node of chain){try{node.disconnect();}catch{}}
+      if(CHOKES.has(model)){
+        if(v==="ch"&&priorHat) priorHat.gain.cancelScheduledValues(t);
+        if(v==="ch"||v==="oh") openHatRef.node=priorHat;
+      }
+      return true;
+    }});
   }
 
   if (model !== "analog") {
@@ -486,7 +511,8 @@ export function triggerTrackDrum(opts: TrackDrumTriggerOptions): void {
     t,
     timers,
     scheduleDisconnect: !isOffline,
-    deterministic: Boolean(deterministic || isOffline)
+    deterministic: Boolean(deterministic || isOffline),
+    onScheduled: opts.onScheduled
   });
 }
 

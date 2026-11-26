@@ -1,3 +1,5 @@
+import { getProjectInstrumentSession } from "./instrument-session";
+import { getStudioMachineDef } from "../studio/track-engine";
 /**
  * SY-1 UI — Preset library (inspired by GarageBand's sound browser and the
  * Korg Gadget patch list).
@@ -18,6 +20,14 @@ import { fmtBpm, getTempo, isHostSynced } from "../engine/tempo";
 import type { DrumKitDef, DrumStyleDef, PresetDef } from "../machines/types";
 import { previewPreset, setPanelRenderHook } from "./panel";
 
+const viewMachine=()=>{const s=getProjectInstrumentSession();return s?getStudioMachineDef(s.track.machineId):getMachine();};
+const viewPreset=()=>getProjectInstrumentSession()?.track.presetId??getSynthPresetId();
+const viewKit=()=>{const s=getProjectInstrumentSession();return s?s.track.presetId.replace(/^kit:/,""):getDrumKitId();};
+let projectKeepKit=false;
+const viewKeepKit=()=>getProjectInstrumentSession()?projectKeepKit:getKeepKit();
+const viewKitEdited=()=>getProjectInstrumentSession()?false:isDrumKitEdited();
+const viewBpm=()=>getProjectInstrumentSession()?.bpm??getTempo();
+const viewSynced=()=>!!getProjectInstrumentSession()||isHostSynced();
 let open = false;
 let category = "all";
 let query = "";
@@ -28,7 +38,7 @@ const favKey = (machineId: string) => `sy1.m.${machineId}.favs`;
 
 function getFavs(): Set<string> {
   try {
-    const raw = JSON.parse(localStorage.getItem(favKey(getMachine().id)) || "[]");
+    const raw = JSON.parse(localStorage.getItem(favKey(viewMachine().id)) || "[]");
     return new Set(Array.isArray(raw) ? raw.map(String) : []);
   } catch (e) {
     return new Set();
@@ -39,7 +49,7 @@ function toggleFav(id: string): void {
   const favs = getFavs();
   if (favs.has(id)) favs.delete(id);
   else favs.add(id);
-  try { localStorage.setItem(favKey(getMachine().id), JSON.stringify(Array.from(favs))); } catch (e) {}
+  try { localStorage.setItem(favKey(viewMachine().id), JSON.stringify(Array.from(favs))); } catch (e) {}
 }
 
 // ------------------------------------------------------------- icons ----
@@ -85,7 +95,7 @@ function iconSvg(id: IconId, size = 18): string {
 
 function iconFor(group: string): IconId {
   const g = group.toLowerCase();
-  const m = getMachine();
+  const m = viewMachine();
   if (m.kind === "drums") return "drum";
   if (m.id === "konya") return "ring";
   if (/pad|atmos|warm|bright|dark|cinematic|string machine/.test(g)) return "pad";
@@ -108,22 +118,22 @@ function iconFor(group: string): IconId {
 function kitIcon(k: DrumKitDef): IconId {
   const p = k.patch as Record<string, unknown>;
   const models = Object.keys(p).filter((x) => x.endsWith("Model") && p[x]).length;
-  const km = String(p.kitModel || getMachine().drumModel || "analog");
+  const km = String(p.kitModel || viewMachine().drumModel || "analog");
   if (models > 1 || (models === 1 && !p.kitModel)) return "hybrid";
-  if (km === "acoustic" || km === "lm80" && getMachine().drumModel === "acoustic") return "acoustic";
+  if (km === "acoustic" || km === "lm80" && viewMachine().drumModel === "acoustic") return "acoustic";
   if (km === "persian") return "frame";
   if (km === "minimal") return "hand";
   return "machine";
 }
 
-const isDrums = () => getMachine().kind === "drums" && !!getMachine().styles;
+const isDrums = () => viewMachine().kind === "drums" && !!viewMachine().styles;
 const favId = (id: string) => (isDrums() && tab === "kits" ? "kit:" + id : id);
 
 // ------------------------------------------------------------ render ----
 interface Item { id: string; name: string; group: string; search: string }
 
 function items(): Item[] {
-  const m = getMachine();
+  const m = viewMachine();
   if (isDrums() && tab === "kits") return (m.kits || []).map((k) => ({ id: k.id, name: k.name, group: k.group, search: `${k.name} ${k.group} ${k.tag} ${k.desc}` }));
   if (isDrums()) return (m.styles || []).map((st) => ({ id: st.id, name: st.name, group: st.group, search: `${st.name} ${st.group} ${st.bpm}` }));
   return m.presets.map((p) => ({ id: p.id, name: p.name, group: p.group, search: `${p.name} ${p.group}` }));
@@ -155,25 +165,25 @@ function catButton(id: string, label: string, icon: IconId, count: number): stri
 }
 
 function drumTile(it: Item): string {
-  const m = getMachine();
+  const m = viewMachine();
   const favs = getFavs();
   const fav = favs.has(favId(it.id));
   let active: boolean, icon: IconId, sub: string, desc = "";
   if (tab === "kits") {
     const k = (m.kits || []).find((x) => x.id === it.id) as DrumKitDef;
-    active = k.id === getDrumKitId();
+    active = k.id === viewKit();
     icon = kitIcon(k);
-    sub = escapeHtml(k.tag) + (active && isDrumKitEdited() ? " · edited" : "");
+    sub = escapeHtml(k.tag) + (active && viewKitEdited() ? " · edited" : "");
     desc = `<span class="lib-desc">${escapeHtml(k.desc)}</span>`;
   } else {
     const st = (m.styles || []).find((x) => x.id === it.id) as DrumStyleDef;
     const kit = (m.kits || []).find((x) => x.id === st.kit);
-    active = st.id === getSynthPresetId();
+    active = st.id === viewPreset();
     icon = "rhythm";
     const len = st.patterns[0]?.len === 12 ? " · 12 steps" : "";
     // the style's own tempo; while the DAW sets the tempo (SYNC) and it differs, show both
-    const now = getTempo();
-    const bpmTxt = isHostSynced() && Math.abs(now - st.bpm) > 0.005 ? `style ${st.bpm} · now ${fmtBpm(now)} BPM` : `${st.bpm} BPM`;
+    const now = viewBpm();
+    const bpmTxt = viewSynced() && Math.abs(now - st.bpm) > 0.005 ? `style ${st.bpm} · now ${fmtBpm(now)} BPM` : `${st.bpm} BPM`;
     sub = `${bpmTxt}${len} · ${escapeHtml(kit ? kit.name : "")}`;
   }
   return `<div class="lib-tile${active ? " active" : ""}${desc ? " lib-tile-kit" : ""}" role="listitem">
@@ -187,9 +197,9 @@ function drumTile(it: Item): string {
 }
 
 function html(): string {
-  const m = getMachine();
+  const m = viewMachine();
   const favs = getFavs();
-  const cur = getSynthPresetId();
+  const cur = viewPreset();
   const drums = isDrums();
   const all = items();
   const allIcon: IconId = drums ? (tab === "kits" ? "machine" : "rhythm") : "all";
@@ -229,7 +239,7 @@ function html(): string {
       </div>`
     : "";
   const keep = drums && tab === "styles"
-    ? `<button type="button" class="lib-keep${getKeepKit() ? " on" : ""}" data-lib-keep role="switch" aria-checked="${getKeepKit()}" title="On: a style plays on the kit you have loaded. Off: each style loads the kit it was written for.">Keep kit</button>`
+    ? `<button type="button" class="lib-keep${viewKeepKit() ? " on" : ""}" data-lib-keep role="switch" aria-checked="${viewKeepKit()}" title="On: a style plays on the kit you have loaded. Off: each style loads the kit it was written for.">Keep kit</button>`
     : "";
   const count = drums
     ? `${(m.styles || []).length} styles · ${(m.kits || []).length} kits`
@@ -309,7 +319,7 @@ export function initLibrary(): void {
     if (isDrums()) { render(); return; }
     document.querySelectorAll(".lib-tile").forEach((el) => {
       const id = el.querySelector<HTMLElement>("[data-lib-pick]")?.dataset.libPick;
-      const on = id === getSynthPresetId();
+      const on = id === viewPreset();
       el.classList.toggle("active", on);
       const pick = el.querySelector(".lib-pick");
       if (pick) {
@@ -339,7 +349,7 @@ export function initLibrary(): void {
       if (active) active.scrollIntoView({ block: "nearest" });
       return;
     }
-    if (t.closest("[data-lib-keep]")) { setKeepKit(!getKeepKit()); render(); return; }
+    if(t.closest("[data-lib-keep]")){if(getProjectInstrumentSession())projectKeepKit=!projectKeepKit;else setKeepKit(!viewKeepKit());render();return;}
     const cat = t.closest<HTMLElement>("[data-lib-cat]");
     if (cat) {
       category = cat.dataset.libCat || "all";
@@ -358,6 +368,7 @@ export function initLibrary(): void {
     const pick = t.closest<HTMLElement>("[data-lib-pick]");
     if (pick) {
       const id = pick.dataset.libPick || "";
+      const session=getProjectInstrumentSession();if(session){session.choosePreset(id,!isDrums()?"sound":tab==="kits"?"kit":"style",projectKeepKit);render();return;}
       if (!isDrums()) previewPreset(id);
       else if (tab === "kits") { applyDrumKit(id); auditionKit(); }
       else { applyDrumStyle(id); if (!isDrumPlaying()) startDrums(); }

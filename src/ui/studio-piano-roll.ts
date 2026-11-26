@@ -198,6 +198,7 @@ export function setPianoRollSnap(snapTicks: number): void {
   state.snapTicks = Math.max(0, Math.round(snapTicks));
 }
 
+let editOptionsOpen=false;
 export function setPianoRollQuantize(quantizeTicks: number): void {
   state.quantizeTicks = Math.max(1, Math.round(quantizeTicks));
 }
@@ -560,12 +561,23 @@ export function renderPianoRollHtml(): string {
           <span class="st-pr-track-badge">${escapeHtml(mDef.name)}${region ? (region.loop ? " · Loop source" : " · Region") : ""}</span>
           <span class="st-pr-meta">${spans.length} ${isDrum ? (spans.length === 1 ? "hit" : "hits") : spans.length === 1 ? "note" : "notes"}${state.selectedIndices.size > 0 ? ` · ${state.selectedIndices.size} sel` : ""}</span>
           <div class="st-pr-sel-grp" role="group" aria-label="Note selection">
-            <button type="button" class="st-btn st-pr-btn${state.multiSelectMode ? " is-active" : ""}" id="st-pr-select-mode" data-pr-action="toggle-select-mode" aria-pressed="${state.multiSelectMode}" title="Multi-select touch mode: tap notes to add/remove, or long-press and drag on grid for marquee selection">Select</button>
-            <button type="button" class="st-btn st-pr-btn" id="st-pr-select-all" data-pr-action="select-all"${spans.length === 0 ? " disabled" : ""} title="Select all notes in region (Cmd/Ctrl+A)">All</button>
-            <button type="button" class="st-btn st-pr-btn" id="st-pr-deselect-all" data-pr-action="deselect-all"${state.selectedIndices.size === 0 ? " disabled" : ""} title="Clear note selection (Esc)">None</button>
+            <button type="button" class="st-btn st-pr-btn" id="st-pr-select-all" data-pr-action="select-all"${spans.length === 0 ? " disabled" : ""} title="Select all notes in region (Cmd/Ctrl+A)">Select All</button>
           </div>
         </div>
         <div class="st-pr-tb-group">
+          <div class="st-pr-quantize-grp" role="group" aria-label="Quantize settings">
+            <select class="st-select st-pr-select" id="st-pr-quantize-div" aria-label="Quantize settings" title="Quantize grid subdivision (independent from Snap)">
+              ${quantizeOptionsHtml}
+            </select>
+            <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize" data-pr-action="quantize"${spans.length === 0 ? " disabled" : ""} title="Quantize selected notes (or all notes when none selected) to Quantize subdivision">Quantize</button>
+            </div>
+          <button type="button" class="st-btn st-pr-btn" id="st-pr-delete" data-pr-action="delete-selected"${state.selectedIndices.size === 0 ? " disabled" : ""} title="Delete selected notes (Delete / Backspace)">Delete</button>
+        </div>
+        <div class="st-pr-tb-group">
+          <details class="st-pr-edit-options"${editOptionsOpen?" open":""}><summary>Settings</summary><div class="st-pr-option-body">
+          <button type="button" class="st-btn st-pr-btn${state.audition ? " is-active" : ""}" id="st-pr-audition" data-pr-action="toggle-audition" aria-pressed="${state.audition}" title="Audition notes while editing">Audition</button>
+            <button type="button" class="st-btn st-pr-btn" id="st-pr-deselect-all" data-pr-action="deselect-all"${state.selectedIndices.size === 0 ? " disabled" : ""} title="Clear note selection (Esc)">Deselect</button>
+            <button type="button" class="st-btn st-pr-btn${state.multiSelectMode ? " is-active" : ""}" id="st-pr-select-mode" data-pr-action="toggle-select-mode" aria-pressed="${state.multiSelectMode}" title="Multi-select touch mode: tap notes to add/remove, or long-press and drag on grid for marquee selection">Select</button>
           <button type="button" class="st-btn st-pr-btn st-pr-vel-mode-btn${state.velMode ? " is-active" : ""}" id="st-pr-vel-mode" data-pr-action="toggle-vel-mode" aria-pressed="${state.velMode}" title="Velocity mode — drag up/down directly on notes to adjust velocity (1–127) without changing pitch or timing">Velocity</button>
           <div class="st-pr-vel-ctrl" role="group" aria-label="Note velocity">
             <label class="st-pr-vel-tag" for="st-pr-vel-input">Vel</label>
@@ -583,20 +595,11 @@ export function renderPianoRollHtml(): string {
               ${snapOptionsHtml}
             </select>
           </label>
-          <div class="st-pr-quantize-grp" role="group" aria-label="Note quantization">
-            <select class="st-select st-pr-select" id="st-pr-quantize-div" aria-label="Quantize subdivision" title="Quantize grid subdivision (independent from Snap)">
-              ${quantizeOptionsHtml}
-            </select>
-            <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize" data-pr-action="quantize"${spans.length === 0 ? " disabled" : ""} title="Quantize selected notes (or all notes when none selected) to Quantize subdivision">Quantize</button>
-            <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize-all" data-pr-action="quantize-all"${spans.length === 0 ? " disabled" : ""} title="Explicitly quantize all notes in the current region">Q All</button>
-          </div>
-          <button type="button" class="st-btn st-pr-btn" id="st-pr-delete" data-pr-action="delete-selected"${state.selectedIndices.size === 0 ? " disabled" : ""} title="Delete selected notes (Delete / Backspace)">Delete</button>
-          <button type="button" class="st-btn st-pr-btn${state.audition ? " is-active" : ""}" id="st-pr-audition" data-pr-action="toggle-audition" aria-pressed="${state.audition}" title="Audition notes while editing">Audition</button>
-        </div>
-        <div class="st-pr-tb-group">
+          <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize-all" data-pr-action="quantize-all"${spans.length === 0 ? " disabled" : ""} title="Explicitly quantize all notes in the current region">Q All</button>
           <button type="button" class="st-btn st-pr-btn" data-pr-action="zoom-out" aria-label="Zoom out piano roll">−</button>
           <span class="st-pr-zoom-lbl">${Math.round(state.zoom * 100)}%</span>
           <button type="button" class="st-btn st-pr-btn" data-pr-action="zoom-in" aria-label="Zoom in piano roll">+</button>
+          </div></details>
         </div>
       </div>
 
@@ -1126,6 +1129,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     }
   });
 
+  container.addEventListener("toggle", e=>{const el=e.target;if(el instanceof HTMLDetailsElement && el.classList.contains("st-pr-edit-options"))editOptionsOpen=el.open;},true);
   container.addEventListener("click", (e) => {
     const target = e.target as HTMLElement | null;
     if (!target) return;
@@ -1244,20 +1248,37 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     commitSpans(spans);
   });
 
-  // Right-click a note to delete it
-  container.addEventListener("contextmenu", (e) => {
-    const target = e.target as HTMLElement | null;
-    const noteEl = target?.closest<HTMLElement>(".st-pr-note");
-    if (!noteEl) return;
+  // Contextual editing is explicit: right click never destroys data.
+  const noteMenu=document.createElement("div");
+  noteMenu.className="st-region-menu st-note-context";noteMenu.hidden=true;document.body.append(noteMenu);
+  const closeNoteMenu=()=>{noteMenu.hidden=true;};
+  document.addEventListener("pointerdown",e=>{if(!noteMenu.contains(e.target as Node))closeNoteMenu();});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape")closeNoteMenu();});
+  document.addEventListener("sy1-view-change",closeNoteMenu);
+  container.addEventListener("contextmenu",e=>{
+    const target=e.target as HTMLElement;
+    if(!target.closest("#st-pr-grid"))return;
     e.preventDefault();
-    const idx = Number(noteEl.getAttribute("data-pr-note-idx"));
-    if (!Number.isFinite(idx)) return;
-    const track = studioEngine.getFocusedTrack();
-    const spans = editorNotes(track.id);
-    if (idx < 0 || idx >= spans.length) return;
-    spans.splice(idx, 1);
-    state.selectedIndices.clear();
-    commitSpans(spans);
+    const note=target.closest<HTMLElement>(".st-pr-note");
+    if(note){
+      const idx=Number(note.dataset.prNoteIdx);
+      if(!state.selectedIndices.has(idx)){state.selectedIndices.clear();state.selectedIndices.add(idx);}
+      syncSelectionDOM(editorNotes(studioEngine.getFocusedTrack().id));
+    }
+    noteMenu.replaceChildren();
+    const actions:[string,()=>void,boolean][]=[
+      ["Select All",()=>{selectAllPianoRollNotes();requestRender();},true],
+      ["Deselect",()=>{state.selectedIndices.clear();requestRender();},state.selectedIndices.size>0],
+      ["Quantize",()=>runQuantize(false),true],
+      ["Delete selected notes",deleteSelectedNotes,state.selectedIndices.size>0]
+    ];
+    for(const [label,action,enabled] of actions){
+      const button=document.createElement("button");button.type="button";button.textContent=label;button.disabled=!enabled;
+      button.addEventListener("click",()=>{closeNoteMenu();action();});noteMenu.append(button);
+    }
+    noteMenu.hidden=false;
+    noteMenu.style.left=Math.max(8,Math.min(e.clientX,innerWidth-noteMenu.offsetWidth-8))+"px";
+    noteMenu.style.top=Math.max(8,Math.min(e.clientY,innerHeight-noteMenu.offsetHeight-8))+"px";
   });
 
   const activateMarquee = (
@@ -1284,6 +1305,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     marqueeEl.style.top = `${y.toFixed(1)}px`;
     marqueeEl.style.width = "10px";
     marqueeEl.style.height = "10px";
+    gridEl.focus({preventScroll:true});
     gridEl.append(marqueeEl);
     gridEl.classList.add("is-marquee-active");
     try { gridEl.setPointerCapture(pointerId); } catch {}
@@ -1446,6 +1468,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     if (noteEl) {
       e.preventDefault();
       e.stopPropagation();
+      container.querySelector<HTMLElement>("#st-pr-grid")?.focus({preventScroll:true});
       const idx = Number(noteEl.getAttribute("data-pr-note-idx"));
       const prRoot = container.querySelector<HTMLElement>("#st-piano-roll");
       if (!prRoot || !Number.isFinite(idx)) return;
@@ -1622,10 +1645,11 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
 
     if (longPressPending && e.pointerId === longPressPending.pointerId) {
       const dist = Math.hypot(e.clientX - longPressPending.startClientX, e.clientY - longPressPending.startClientY);
-      if (longPressPending.pointerType !== "touch" && longPressPending.addMode && dist > 4) {
+      if (longPressPending.pointerType !== "touch" && dist > 4) {
         const pending = longPressPending;
         clearLongPress();
         activateMarquee(pending.pointerId, pending.gridEl, pending.prRoot, pending.startClientX, pending.startClientY, pending.addMode);
+        suppressGridClickUntil = performance.now() + 600;
         updateMarquee(e.clientX, e.clientY);
         return;
       }
@@ -1916,7 +1940,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       requestRender();
       return;
     }
-    if (state.selectedIndices.size === 0) return;
+    if (state.selectedIndices.size === 0 || !active?.closest("#st-piano-roll")) return;
     if (e.key !== "Delete" && e.key !== "Backspace") return;
     e.preventDefault();
     deleteSelectedNotes();

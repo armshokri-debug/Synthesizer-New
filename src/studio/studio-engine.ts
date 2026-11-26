@@ -17,6 +17,7 @@ import {
   unlockAudio
 } from "../engine/bus";
 import { encodeWav, ensureRecorderWorklet, RECORDER_MAX_SECONDS } from "../engine/daw";
+import { trimCaptureWindow } from "./recording-window";
 import { getTempo, onTempoChange, setTempo } from "../engine/tempo";
 import { encodeStudioMidi } from "./midi-io";
 import {
@@ -170,6 +171,8 @@ interface LiveRecorderSession {
   chunks: Float32Array[][];
   frames: number;
   bpm: number;
+  firstFrame: number | null;
+  startAt: number | null;
 }
 
 export interface ScheduledDispatchRecord {
@@ -227,6 +230,7 @@ export class SY1StudioEngine {
   private recording = false;
   private transportEpoch = 0;
   private preparingRecord = false;
+  private finalizingRecord = false;
   private countInStart: number | null = null;
   private countInEnd: number | null = null;
   // The capture boundary is not the moving transport anchor (which changes at loops).
@@ -256,13 +260,21 @@ export class SY1StudioEngine {
     track: SY1TrackEngine;
     voice: SY1TrackEngine;
     sequence: LiveDrumSequence;
+    scheduled: {tick:number;midi:number;velocity:number;at:number;handle?: ReturnType<SY1TrackEngine['scheduleDrumNote']>}[];
     anchorTime: number;
     anchorTick: number;
     cursorTick: number;
     unsubscribe: () => void;
   } | null = null;
   private liveDrums = new Map<string, LiveDrumSequence>();
+  // Explicit instrument recording may overdub on an occupied track. Original
+  // arrangement hits remain the playback source at colliding tick/note pairs.
+  private patternOverdub = new Map<string, Set<string>>();
+  private patternCapturedEvents = new WeakSet<StudioMidiEvent>();
   private pendingDrumCapture: {track: SY1TrackEngine; tick: number; midi: number; velocity: number; duration: number; at: number}[] = [];
+  // Future transport-owned percussion events retain their audio cancellation
+  // handle and the corresponding capture record. Never re-trigger a sounding hit.
+  private scheduledTransportDrums: {track:SY1TrackEngine;tick:number;midi:number;velocity:number;at:number;handle?:ReturnType<SY1TrackEngine['scheduleDrumNote']>;capture?:SY1StudioEngine['pendingDrumCapture'][number]}[]=[];
   private recordedDrumHits = new Set<string>();
   private liveArpTimer: ReturnType<typeof setInterval> | null = null;
   private cursorAudioTime = 0;
@@ -448,6 +460,7 @@ export class SY1StudioEngine {
     if (state === "interrupted" || state === "suspended") {
       this.stopDrumPreview();
       this.flushDrumCapture(nowAudioTime, true);
+      this.cancelTransportDrums();
       this.pendingDrumCapture = [];
       this.metronome.cancel();
       if (this.playing || this.active) {
@@ -804,11 +817,31 @@ export class SY1StudioEngine {
     const now = this.nowAudioTime();
     const preview = this.drumPreview;
     if (preview) {
-      preview.anchorTick = this.getDrumPreviewTick(now);
-      preview.anchorTime = Math.max(now, preview.anchorTime);
+      const tick=this.getDrumPreviewTick(now);
+      // Invalidate only future hits, retaining sounding tails and musical phase.
+      // Cancel reverse dispatch order for reversible hi-hat choke scheduling.
+      const redo: typeof preview.scheduled=[];
+      for(let i=preview.scheduled.length-1;i>=0;i--){
+        const hit=preview.scheduled[i];
+        if(hit.at>now && (hit.handle?.cancel() ?? !!this.clockNowOverride))redo.push(hit);
+      }
+      preview.scheduled=[];
+      preview.anchorTick=tick;
+      preview.anchorTime=Math.max(now,preview.anchorTime);
       preview.voice.syncTempo(nextBpm);
+      for(const hit of redo.reverse()){
+        const at=preview.anchorTime+(hit.tick-tick)*this.secondsPerTick(nextBpm);
+        this.dispatchPreviewHit(preview,hit,at);
+      }
     }
     this.metronome.cancel();
+    // Rescale the future audio-time offsets against the old/new tempo ratio.
+    // Tick identities stay unchanged even when the lookahead crosses a loop.
+    if(this.playing){
+      const anchor = this.countInEnd!==null && now<this.countInEnd
+        ? now : this.pendingLoopWrap ? now : Math.max(now,this.anchorAudioTime);
+      this.retimeTransportDrums(now, anchor, this.bpm/nextBpm);
+    }
     if (this.countInEnd !== null && this.countInStart !== null && now < this.countInEnd) {
       const remaining = (this.countInEnd - now) * this.bpm / 60;
       this.countInEnd = now + remaining * 60 / nextBpm;
@@ -817,6 +850,7 @@ export class SY1StudioEngine {
       for (const track of this.tracks) track.liveArpeggiator.realignUnstarted(this.anchorAudioTime);
       if (this.recording && this.recordingStartAt !== null && now < this.recordingStartAt) {
         this.recordingStartAt = this.countInEnd;
+        if(this.recorder)this.recorder.startAt=this.recordingStartAt;
       }
       this.cursorAudioTime = this.countInEnd;
       this.anchorBpm = nextBpm;
@@ -826,16 +860,29 @@ export class SY1StudioEngine {
     }
     if (this.playing) {
       const curTick = this.getCurrentTick(now);
-      this.anchorAudioTime = now;
-      this.anchorTick = curTick;
+      const wrap = this.pendingLoopWrap;
+      const secPerTick = this.secondsPerTick(nextBpm);
       this.anchorBpm = nextBpm;
-      // Re-align scheduler cursor time to the new tempo so future lookahead stays exact
-      const deltaTicks = this.cursorTick - curTick;
-      if (deltaTicks >= 0) {
-        this.cursorAudioTime = now + deltaTicks * this.secondsPerTick(nextBpm);
+      if (wrap && now < wrap.at) {
+        // The scheduler has already visited the next loop, but the listener
+        // is still on the previous pass. Preserve both sides of the seam.
+        const seamAt = now + (wrap.end - curTick) * secPerTick;
+        this.pendingLoopWrap = { ...wrap, at: seamAt };
+        this.anchorAudioTime = seamAt;
+        this.anchorTick = wrap.start;
+        this.cursorAudioTime = seamAt + (this.cursorTick - wrap.start) * secPerTick;
       } else {
-        this.cursorAudioTime = now;
-        this.cursorTick = curTick;
+        this.finishRecordingLoopBoundary(now);
+        const anchor = Math.max(now, this.anchorAudioTime);
+        this.anchorAudioTime = anchor;
+        this.anchorTick = curTick;
+        const deltaTicks = this.cursorTick - curTick;
+        if (deltaTicks >= 0) {
+          this.cursorAudioTime = anchor + deltaTicks * secPerTick;
+        } else {
+          this.cursorAudioTime = anchor;
+          this.cursorTick = curTick;
+        }
       }
     } else {
       this.anchorBpm = nextBpm;
@@ -847,6 +894,7 @@ export class SY1StudioEngine {
 
   seekToTick(tick: number): void {
     if (this.recording) return;
+    this.cancelTransportDrums();
     this.pendingDrumCapture = [];
     this.pendingLoopWrap = null;
     this.metronome.cancel();
@@ -874,7 +922,7 @@ export class SY1StudioEngine {
   }
 
   async play(countInSeconds = 0): Promise<void> {
-    if (this.playing) return;
+    if (this.playing || this.finalizingRecord) return;
     this.stopDrumPreview();
     const epoch = this.transportEpoch;
     if (!this.clockNowOverride) {
@@ -889,7 +937,10 @@ export class SY1StudioEngine {
     const startLead = countInSeconds > 0 ? countInSeconds : (!this.clockNowOverride ? PLAY_START_LEAD_SEC : 0);
     this.playing = true;
     this.anchorAudioTime = now + startLead;
-    if (this.recording) this.recordingStartAt = this.anchorAudioTime;
+    if (this.recording) {
+      this.recordingStartAt = this.anchorAudioTime;
+      if (this.recorder) this.recorder.startAt = this.recordingStartAt;
+    }
     this.anchorTick = this.playheadTick;
     this.anchorBpm = this.bpm;
     this.cursorAudioTime = now + startLead;
@@ -904,12 +955,15 @@ export class SY1StudioEngine {
     this.notify();
   }
 
-  async record(options: { midiOnly?: boolean; onStart?: (at: number) => void } = {}): Promise<void> {
-    if (this.recording || this.preparingRecord) return;
+  async record(options: { midiOnly?: boolean; patternTrackId?: string; onStart?: (at: number) => void } = {}): Promise<void> {
+    if (this.recording || this.preparingRecord || this.finalizingRecord) return;
     this.recordedDrumHits.clear();
+    this.patternOverdub.clear();
+    this.patternCapturedEvents = new WeakSet();
     // Keep already scheduled live hits so punch-in captures those that sound
     // after the recording boundary, not just hits scheduled after Record.
     this.preparingRecord = true;
+    const patternTrackId = options.patternTrackId ?? this.drumPreview?.track.id;
     this.stopDrumPreview();
     const epoch = this.transportEpoch;
     try {
@@ -917,26 +971,42 @@ export class SY1StudioEngine {
         await this.ensureAudio();
       }
       if (epoch !== this.transportEpoch) return;
+      // Prepare the PCM recorder before establishing the MIDI capture boundary.
+      if (!this.clockNowOverride && !options.midiOnly) {
+        await this.startLiveMixRecorder();
+        if(epoch!==this.transportEpoch){await this.stopLiveMixRecorder();return;}
+      }
       // Ensure at least one track is armed; if none armed, arm the focused track
+      const instrumentTarget = patternTrackId ? this.getTrack(patternTrackId) : undefined;
+      if (instrumentTarget?.isDrumTrack() && !options.onStart) instrumentTarget.armed = true;
       if (!this.tracks.some((t) => t.armed)) {
         this.getFocusedTrack().armed = true;
       }
       const total = this.getTotalTicks();
+      // Explicit instrument Record plays the selected pattern even when the
+      // track already has regions. Overdub keeps old notes and avoids collisions;
+      // explicit Replace retains its existing replacement semantics.
+      const focused = patternTrackId ? this.getTrack(patternTrackId) : undefined;
+      if (!options.onStart && focused?.armed && focused.isDrumTrack()) {
+        const existing = new Set<string>();
+        if (this.recordingMode !== "replace") {
+          for (const event of focused.events) {
+            if(event.type==="noteOn") existing.add(event.tick+":"+event.midi);
+          }
+        }
+        this.patternOverdub.set(focused.id,existing);
+        if (!this.liveDrums.has(focused.id)) this.liveDrums.set(focused.id,new LiveDrumSequence());
+      }
       for (const track of this.tracks) {
         track.beginRegionTake(total, track.armed ? this.recordingMode : "overdub");
       }
       this.recording = true;
       this.recordingStartAt = this.playing
         ? Math.max(this.nowAudioTime(), this.pendingLoopWrap ? -Infinity : this.anchorAudioTime) : null;
+      if(this.recorder)this.recorder.startAt=this.recordingStartAt;
       this.performanceCaptureTimes = new WeakMap();
       this.pendingRecordingStart = options.onStart ?? null;
       this.liveRecordedOpenNotes.clear();
-
-      // Start live 24-bit WAV recorder on StudioMasterBus.tap if audio context is live
-      if (!this.clockNowOverride && !options.midiOnly) {
-        await this.startLiveMixRecorder();
-      }
-      if (epoch !== this.transportEpoch) { await this.stopLiveMixRecorder(); return; }
 
       if (!this.playing) {
         await this.play(this.countInEnabled ? 4 * 60 / this.bpm : 0);
@@ -947,10 +1017,19 @@ export class SY1StudioEngine {
     } finally { this.preparingRecord = false; }
   }
 
-  async stop(): Promise<void> {
+  /** Pause retains the current musical position; explicit Stop keeps its rewind behavior. */
+  async pause(): Promise<void> { await this.stop(true); }
+
+  async stop(preservePosition = false): Promise<void> {
+    const stopAt=this.nowAudioTime();
     this.stopDrumPreview();
     this.flushDrumCapture(this.nowAudioTime(), true);
-    this.liveDrums.clear(); this.pendingDrumCapture = []; this.recordedDrumHits.clear();
+    this.cancelTransportDrums();
+    if (!preservePosition || this.recording) this.liveDrums.clear();
+    else for (const sequence of this.liveDrums.values()) sequence.reset();
+    this.pendingDrumCapture = []; this.recordedDrumHits.clear();
+    this.patternOverdub.clear();
+    this.patternCapturedEvents = new WeakSet();
     this.stopLiveArpTimer();
     for (const track of this.tracks) track.liveArpeggiator.stop();
     this.transportEpoch++;
@@ -980,20 +1059,24 @@ export class SY1StudioEngine {
       }
       this.regions.registerTake(previous);
       this.recording = false;
-      await this.stopLiveMixRecorder();
+      this.finalizingRecord = true;
     }
 
     this.playing = false;
     this.pendingLoopWrap = null;
-    this.playheadTick = 0;
-    this.anchorTick = 0;
-    this.cursorTick = 0;
+    this.playheadTick = preservePosition ? stopTick : 0;
+    this.anchorTick = this.playheadTick;
+    this.cursorTick = this.playheadTick;
     this.releasePlaybackNotes(0);
     this.allNotesOff();
 
     if (wasPlaying || wasRecording) {
       this.notify();
       this.notifyKeys();
+    }
+    if (wasRecording) {
+      try { await this.stopLiveMixRecorder(stopAt); }
+      finally { this.finalizingRecord = false; this.notify(); }
     }
   }
 
@@ -1022,6 +1105,7 @@ export class SY1StudioEngine {
    */
   stepScheduler(nowAudioTime: number): void {
     if (!this.playing) { this.stepDrumPreview(nowAudioTime); return; }
+    this.scheduledTransportDrums=this.scheduledTransportDrums.filter(h=>h.at>nowAudioTime);
     this.flushDrumCapture(nowAudioTime);
     this.finishRecordingLoopBoundary(nowAudioTime);
     this.metronome.schedule(this.masterBus?.ctx || null, nowAudioTime, this.anchorAudioTime, this.anchorTick / STUDIO_PPQ,
@@ -1118,7 +1202,7 @@ export class SY1StudioEngine {
     if (context && this.masterBus) void voice.attachAudio(context, this.masterBus.sum);
     const now = this.nowAudioTime();
     const preview = {
-      track, voice, sequence: new LiveDrumSequence(),
+      track, voice, sequence: new LiveDrumSequence(), scheduled: [] as NonNullable<SY1StudioEngine['drumPreview']>['scheduled'],
       anchorTime: now + (context ? PLAY_START_LEAD_SEC : 0), anchorTick: 0, cursorTick: 0,
       unsubscribe: track.onChange(copySound)
     };
@@ -1136,6 +1220,8 @@ export class SY1StudioEngine {
       clearInterval(this.schedulerTimer);
       this.schedulerTimer = null;
     }
+    for(let i=preview.scheduled.length-1;i>=0;i--)preview.scheduled[i].handle?.cancel();
+    preview.scheduled=[];
     preview.unsubscribe();
     preview.voice.dispose();
     this.notify();
@@ -1146,9 +1232,18 @@ export class SY1StudioEngine {
     return preview.anchorTick + Math.max(0, now - preview.anchorTime) * this.ticksPerSecond(this.bpm);
   }
 
+  private dispatchPreviewHit(preview: NonNullable<SY1StudioEngine['drumPreview']>, hit: {tick:number;midi:number;velocity:number}, at:number): void {
+    const handle=preview.voice.scheduleDrumNote(hit.midi,hit.velocity,at);
+    const actualAt=handle?.at??at;
+    preview.scheduled.push({tick:hit.tick,midi:hit.midi,velocity:hit.velocity,at:actualAt,handle});
+    this.dispatchObserver?.({trackId:preview.track.id,source:"drum-preview",
+      event:{type:"noteOn",tick:hit.tick,midi:hit.midi,velocity:hit.velocity},audioTime:actualAt});
+  }
+
   private stepDrumPreview(now: number): void {
     const preview = this.drumPreview;
     if (!preview) return;
+    preview.scheduled=preview.scheduled.filter(h=>h.at>now);
     const tick = this.getDrumPreviewTick(now);
     if ((tick - preview.cursorTick) * this.secondsPerTick(this.bpm) > SCHEDULER_STALL_THRESHOLD_SEC) {
       preview.sequence.reset();
@@ -1159,9 +1254,7 @@ export class SY1StudioEngine {
     const anchor = Math.max(now, preview.anchorTime);
     preview.sequence.drain(preview.track, start, end, this.bpm, hit => {
       const at = anchor + (hit.tick - tick) * this.secondsPerTick(this.bpm);
-      preview.voice.noteOn(hit.midi, hit.velocity, at);
-      this.dispatchObserver?.({ trackId: preview.track.id, source: "drum-preview",
-        event: { type: "noteOn", tick: hit.tick, midi: hit.midi, velocity: hit.velocity }, audioTime: at });
+      this.dispatchPreviewHit(preview,hit,at);
     });
     preview.cursorTick = end;
   }
@@ -1192,6 +1285,27 @@ export class SY1StudioEngine {
     this.notify();
   }
 
+  private dispatchTransportDrum(track:SY1TrackEngine,hit:{tick:number;midi:number;velocity:number},at:number,capture?:SY1StudioEngine['pendingDrumCapture'][number]):void {
+    const handle=track.audible?track.scheduleDrumNote(hit.midi,hit.velocity,at):undefined;
+    const actualAt=handle?.at??at;
+    if(capture)capture.at=actualAt;
+    this.scheduledTransportDrums.push({track,tick:hit.tick,midi:hit.midi,velocity:hit.velocity,at:actualAt,handle,capture});
+    this.dispatchObserver?.({trackId:track.id,event:{type:"noteOn",tick:hit.tick,midi:hit.midi,velocity:hit.velocity},audioTime:actualAt});
+  }
+  private cancelTransportDrums():void {
+    for(let i=this.scheduledTransportDrums.length-1;i>=0;i--)this.scheduledTransportDrums[i].handle?.cancel();
+    this.scheduledTransportDrums=[];
+  }
+  private retimeTransportDrums(now:number,anchor:number,ratio:number):void {
+    const redo:typeof this.scheduledTransportDrums=[];
+    for(let i=this.scheduledTransportDrums.length-1;i>=0;i--){
+      const h=this.scheduledTransportDrums[i];
+      if(h.at>now && (h.handle?h.handle.cancel():true))redo.push(h);
+    }
+    this.scheduledTransportDrums=[];
+    for(const h of redo.reverse())this.dispatchTransportDrum(h.track,h,anchor+(h.at-anchor)*ratio,h.capture);
+  }
+
   private flushDrumCapture(now: number, stopping = false): void {
     if (!this.pendingDrumCapture.length) return;
     const remaining: typeof this.pendingDrumCapture = [];
@@ -1203,8 +1317,11 @@ export class SY1StudioEngine {
       this.recordedDrumHits.add(key);
       const limit = this.loopEnabled && h.tick < this.getLoopEndTick() ? this.getLoopEndTick() : this.getTotalTicks();
       const duration = stopping ? Math.min(h.duration, Math.max(1,Math.round((now-h.at)*this.ticksPerSecond()))) : h.duration;
-      this.addRecordedEvent(h.track,{type:"noteOn",tick:h.tick,midi:h.midi,velocity:h.velocity},h.at);
-      this.addRecordedEvent(h.track,{type:"noteOff",tick:Math.min(limit,h.tick+duration),midi:h.midi},h.at);
+      const on:StudioMidiEvent={type:"noteOn",tick:h.tick,midi:h.midi,velocity:h.velocity};
+      const off:StudioMidiEvent={type:"noteOff",tick:Math.min(limit,h.tick+duration),midi:h.midi};
+      if(this.patternOverdub.has(h.track.id)){this.patternCapturedEvents.add(on);this.patternCapturedEvents.add(off);}
+      this.addRecordedEvent(h.track,on,h.at);
+      this.addRecordedEvent(h.track,off,h.at);
     }
     this.pendingDrumCapture = remaining;
   }
@@ -1216,20 +1333,20 @@ export class SY1StudioEngine {
     for (let ti = 0; ti < this.tracks.length; ti++) {
       const track = this.tracks[ti];
       const sequence = this.liveDrums.get(track.id);
+      const overdub = this.recording ? this.patternOverdub.get(track.id) : undefined;
       if (sequence && track.isDrumTrack()) {
         // Live is an explicit source on an empty track. If a clip was added
         // during preview, restore normal arrangement playback instead of doubling.
         if (!this.recording && (track.events.length || track.getRegions(this.getTotalTicks()).length)) this.liveDrums.delete(track.id);
         else {
           sequence.drain(track, startTick, endTick, this.bpm, hit => {
+            if(overdub?.has(hit.tick+":"+hit.midi))return;
             const at = segStartAudio + (hit.tick - startTick) * secPerTick;
-            if (track.audible) track.noteOn(hit.midi, hit.velocity, at);
-            observer?.({trackId:track.id,event:{type:"noteOn",tick:hit.tick,midi:hit.midi,velocity:hit.velocity},audioTime:at});
-            // Queue each scheduled hit until its actual audio time. The capture
-            // gate at that time determines whether it belongs to the take.
-            this.pendingDrumCapture.push({track,...hit,at});
+            const capture={track,...hit,at};
+            this.dispatchTransportDrum(track,hit,at,capture);
+            this.pendingDrumCapture.push(capture);
           });
-          continue;
+          if(!overdub || replacingArmed)continue;
         }
       }
       if (track.events.length === 0) continue;
@@ -1239,6 +1356,7 @@ export class SY1StudioEngine {
       let openSet: Set<number> | undefined;
       const skipMutedNoteOn = !track.audible && !observer;
       track.forEachEventInRange(startTick, endTick, (ev) => {
+        if(overdub && this.patternCapturedEvents.has(ev))return;
         if (skipMutedNoteOn && ev.type === "noteOn") return;
         const at = segStartAudio + (ev.tick - startTick) * secPerTick;
         const capturedAt = this.performanceCaptureTimes.get(ev);
@@ -1253,6 +1371,10 @@ export class SY1StudioEngine {
           }
         }
         if (skipMutedNoteOn && ev.type === "noteOff" && !openSet.has(ev.midi)) return;
+        if(track.isDrumTrack() && ev.type==="noteOn"){
+          this.dispatchTransportDrum(track,ev,at);
+          return;
+        }
         this.dispatchEventToTrack(track, ev, at, openSet);
         if (observer) {
           observer({ trackId: track.id, event: ev, audioTime: at });
@@ -1533,12 +1655,15 @@ export class SY1StudioEngine {
       sink,
       chunks: [[], []],
       frames: 0,
-      bpm: this.bpm
+      bpm: this.bpm,
+      firstFrame:null,
+      startAt:null
     };
 
     this.liveRecWarning = "";
     node.port.onmessage = (e) => {
       const d = e.data;
+      if(d && Number.isFinite(d.start))rec.firstFrame=Math.round(d.start*ctx.sampleRate);
       if (d && d.l) {
         rec.chunks[0].push(d.l);
         rec.chunks[1].push(d.r);
@@ -1573,7 +1698,7 @@ export class SY1StudioEngine {
     return true;
   }
 
-  private stopLiveMixRecorder(): Promise<void> {
+  private stopLiveMixRecorder(endAt = this.nowAudioTime()): Promise<void> {
     const rec = this.recorder;
     if (!rec) return Promise.resolve();
     this.recorder = null;
@@ -1586,13 +1711,18 @@ export class SY1StudioEngine {
         try { rec.node.port.onmessage = null; } catch (e) {}
         try { this.masterBus?.tap.disconnect(rec.node); } catch (e) {}
         try { rec.node.disconnect(); rec.sink.disconnect(); } catch (e) {}
-        if (rec.frames > 0) {
-          const wav = encodeWav(rec.chunks, rec.frames, rec.ctx.sampleRate);
+        const rate=rec.ctx.sampleRate;
+        const trimmed=rec.firstFrame!==null&&rec.startAt!==null&&endAt>rec.startAt
+          ? trimCaptureWindow(rec.chunks,rec.firstFrame,Math.round(rec.startAt*rate),Math.round(endAt*rate))
+          : {chunks:[[],[]],frames:0,missingFrames:0};
+        if(trimmed.missingFrames>0)this.liveRecWarning='Recording audio was incomplete; missing '+trimmed.missingFrames+' frames';
+        if (trimmed.frames > 0) {
+          const wav = encodeWav(trimmed.chunks, trimmed.frames, rate);
           this.lastLiveTake = {
             wav,
             sampleRate: rec.ctx.sampleRate,
-            durationSec: rec.frames / rec.ctx.sampleRate,
-            frames: rec.frames,
+            durationSec: trimmed.frames / rate,
+            frames: trimmed.frames,
             bpm: rec.bpm,
             kind: "live",
             createdAt: Date.now()

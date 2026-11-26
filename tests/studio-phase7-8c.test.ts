@@ -66,14 +66,15 @@ describe("Phase 7.8C drum preview and safe MIDI insertion", () => {
     engine.dispose();
   });
 
-  test("Record stops preview and cannot capture preview hits", async () => {
+  test("Record replaces Preview with a single transport-owned recorded pattern", async () => {
     const {engine, track, advance} = setup();
     engine.startDrumPreview(track.id);
     await engine.record({midiOnly: true});
     advance(10.8);
     await engine.stop();
     expect(engine.isDrumPreviewEnabled(track.id)).toBe(false);
-    expect(engine.regions.regions(track.id)).toEqual([]);
+    expect(track.events.filter(e=>e.type==="noteOn").map(e=>e.tick)).toEqual([0,480]);
+    expect(engine.regions.regions(track.id).length).toBe(1);
     engine.dispose();
   });
 
@@ -119,7 +120,7 @@ describe("Phase 7.8C drum preview and safe MIDI insertion", () => {
     engine.dispose();
   });
 
-  test("insert disarms Live after success and the toolbar keeps both features", () => {
+  test("insert disarms Live and the original toolbar preserves pattern audition and insertion without extra Live control", () => {
     const {engine, track} = setup();
     engine.setLiveDrumEnabled(track.id, true);
     engine.insertDrumPattern(track.id, 0);
@@ -127,8 +128,14 @@ describe("Phase 7.8C drum preview and safe MIDI insertion", () => {
     setTrackDrumPreviewView(track, true);
     const html = renderStudioInstrumentHtml(track, "steps", true);
     expect(html).toContain('data-st-action="track-drum-preview" aria-pressed="true"');
-    expect(html).toContain('data-st-action="track-drum-live"');
+    expect(html).not.toContain('data-st-action="track-drum-live"');
+    expect(html).toContain('class="drum-play active"');
+    expect(html).toContain('class="drum-transport drum-transport-2"');
     expect(html).toContain('data-st-action="track-drum-insert"');
+    expect(html).toContain('data-st-action="track-drum-download"');
+    expect(html).toContain('data-st-action="track-seq-toggle"');
+    expect(html).toContain('data-st-action="track-seq-options"');
+    expect(html.indexOf("st-seq-grid")).toBeLessThan(html.indexOf('data-custom="drum-voice"'));
     engine.dispose();
   });
 });

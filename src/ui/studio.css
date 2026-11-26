@@ -5,11 +5,11 @@
    ========================================================================== */
 
 /* Full-bleed DAW viewport when Studio is open (standalone .sy1-shell untouched) */
-html.is-studio body {
+html.is-studio:not(.is-studio-instrument) body {
   overflow: hidden;
 }
 
-html.is-studio .sy1-shell {
+html.is-studio:not(.is-studio-instrument) .sy1-shell {
   max-width: none;
   width: 100%;
   margin: 0;
@@ -24,8 +24,8 @@ html.is-studio .sy1-shell {
 }
 
 /* Hide standalone wooden/metal hardware side cheeks while Studio DAW is active (standalone untouched) */
-html.is-studio .sy1-shell::before,
-html.is-studio .sy1-shell::after {
+html.is-studio:not(.is-studio-instrument) .sy1-shell::before,
+html.is-studio:not(.is-studio-instrument) .sy1-shell::after {
   display: none;
 }
 
@@ -3112,3 +3112,52 @@ html.is-studio:not(.is-studio-instrument) #kb-scale-notes {
 #sy1-studio .st-instrument-page .st-embedded-chassis { padding:var(--shell-pad,8px); background:var(--shell-bg); border-radius:var(--panel-radius,12px); }
 #sy1-studio .st-track-pattern-toolbar { display:flex; flex-wrap:wrap; gap:5px; }
 #sy1-studio .st-track-pattern-toolbar button { min-height:36px; }
+
+#sy1-panel[hidden],#sy1-studio[hidden]{display:none!important;}
+html.is-studio-instrument #sy1-panel .oriental-pop,html.is-studio-instrument #sy1-panel .st-arp-pop{z-index:40;}
+
+/* Compact MIDI controls: keep advanced options in a single disclosure. */
+.st-pr-edit-options {font-size:.75rem;max-width:100%;}
+.st-pr-edit-options>summary {cursor:pointer;min-height:34px;display:flex;align-items:center;padding:0 9px;border:1px solid var(--st-border-hi);border-radius:5px;white-space:nowrap;}
+.st-pr-edit-options>summary::after {content:" ▾";margin-left:5px;}
+.st-pr-edit-options[open]>summary::after {content:" ▴";}
+.st-pr-option-body {display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:5px 0;}
+.st-region-clipboard {flex-wrap:wrap;}
+@media (pointer:coarse){#sy1-studio .st-pr-toolbar .st-pr-btn,#sy1-studio .st-pr-toolbar select,.st-pr-edit-options>summary {min-height:40px;}}
+
+/* Arrangement selection and contextual commands */
+.st-arr-marquee {position:fixed;z-index:1100;pointer-events:none;border:1.5px solid #ffd58c;background:rgba(240,162,51,.16);border-radius:2px;box-sizing:border-box;}
+.st-arr-marquee[hidden]{display:none;}
+.st-region-menu .st-menu-shortcut{margin-left:auto;padding-left:12px;color:#aaa;font-size:.72rem;}
+.st-region-menu summary{cursor:pointer;padding:9px 8px;color:inherit;}
+.st-region-menu details{border-top:1px solid #46484d;margin-top:4px;}
+.st-region-menu button{gap:8px;}
+.st-export-menu .st-region-clipboard{padding:4px 6px;gap:4px;}
+.st-export-menu .st-arr-snap-field{display:flex;justify-content:space-between;padding:6px 8px;}
+.st-midi-region.is-dragging{z-index:25;}
+
+@media(pointer:coarse){.st-lane{touch-action:none;}}
+
+/* Compact project drum instruments: the sequencer lives at the top of the
+   original faceplate, with pattern settings disclosed on demand. */
+#sy1-panel[data-studio-instrument] .synth-panel[data-compact-drums] .synth-sections {align-content:start;grid-auto-rows:max-content;gap:6px;overscroll-behavior:contain;}
+#sy1-panel[data-studio-instrument] .synth-panel[data-compact-drums] .synth-sec:has([data-custom="drum-transport"]) {grid-column:1/-1;min-height:0;gap:5px;padding:6px 8px;}
+#sy1-panel[data-studio-instrument] .st-seq-toolbar {display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:4px;}
+#sy1-panel[data-studio-instrument] .st-seq-toolbar .drum-slots {flex:0 1 auto;display:grid;grid-template-columns:repeat(8,minmax(26px,34px));gap:3px;}
+#sy1-panel[data-studio-instrument] .st-seq-toolbar button {flex:0 0 auto;width:auto;min-height:30px;height:30px;min-width:30px;padding:0 7px;font-size:.72rem;white-space:nowrap;}
+#sy1-panel[data-studio-instrument] .st-seq-toolbar .drum-play{min-width:65px;}
+#sy1-panel[data-studio-instrument] .st-seq-settings[hidden],#sy1-panel[data-studio-instrument] .st-seq-grid[hidden]{display:none!important;}
+#sy1-panel[data-studio-instrument] .st-seq-settings {padding:5px 0;border-top:1px solid var(--sec-border);}
+#sy1-panel[data-studio-instrument] .st-seq-settings .drum-transport {flex-wrap:wrap;gap:5px;font-size:.72rem;}
+#sy1-panel[data-studio-instrument] .st-seq-settings .drum-len {display:flex;flex-wrap:nowrap;gap:3px;}
+#sy1-panel[data-studio-instrument] .st-seq-settings .synth-choice-btn {flex:0 0 auto;min-height:30px;white-space:nowrap;padding:0 9px;}
+#sy1-panel[data-studio-instrument] .st-seq-grid {display:flex;flex-direction:column;gap:5px;}
+#sy1-panel[data-studio-instrument] .st-seq-grid .drum-steps {grid-template-columns:repeat(var(--len),minmax(0,1fr));gap:3px;}
+#sy1-panel[data-studio-instrument] .st-seq-grid .drum-step {min-height:30px;height:32px;}
+#sy1-panel[data-studio-instrument] .st-seq-grid .drum-voice-btn,#sy1-panel[data-studio-instrument] .st-sound-voices .drum-voice-btn {font-size:.65rem;min-height:28px;}
+#sy1-panel[data-studio-instrument] .st-sound-voices {grid-column:1/-1;width:100%;margin-bottom:4px;}
+html.is-studio-instrument .sy1-shell .kb-area.is-drums {--keys-h:clamp(94px,16vh,150px);}
+html.is-studio-instrument .sy1-shell .kb-area.is-drums .kb.is-pads {grid-template-columns:repeat(8,minmax(0,1fr));}
+#sy1-panel[data-studio-instrument] .st-inst-knob {cursor:ns-resize;}
+@media(max-width:650px){#sy1-panel[data-studio-instrument] .st-seq-toolbar .drum-slots{order:2;flex:1 0 100%;grid-template-columns:repeat(8,minmax(0,1fr));}#sy1-panel[data-studio-instrument] .st-seq-grid .drum-steps{grid-template-columns:repeat(calc(var(--len)/2),minmax(0,1fr));}html.is-studio-instrument .sy1-shell .kb-area.is-drums .kb.is-pads{grid-template-columns:repeat(4,minmax(0,1fr));}}
+@media(pointer:coarse){#sy1-panel[data-studio-instrument] .st-seq-toolbar button,#sy1-panel[data-studio-instrument] .st-seq-settings .synth-choice-btn,#sy1-panel[data-studio-instrument] .st-seq-grid .drum-step,#sy1-panel[data-studio-instrument] .st-seq-grid .drum-voice-btn{min-height:38px;}}

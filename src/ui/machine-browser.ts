@@ -1,3 +1,5 @@
+import { getProjectInstrumentSession } from "./instrument-session";
+import { getStudioMachineDef } from "../studio/track-engine";
 /**
  * SY-1 UI — Instrument browser (inspired by the Korg Gadget gadget list).
  *
@@ -152,7 +154,7 @@ export function machineArt(m: MachineDef): string {
 
 // ------------------------------------------------------------ render ----
 function card(m: MachineDef): string {
-  const cur = getMachine().id === m.id;
+  const cur = (getProjectInstrumentSession()?.track.machineId??getMachine().id) === m.id;
   const count = m.kind === "drums" && m.kits && m.styles
     ? `${m.kits.length} kits · ${m.styles.length} styles`
     : `${m.presets.length} sounds`;
@@ -203,7 +205,7 @@ function render(): void {
 
 export function setMachineBrowserOpen(v: boolean): void {
   open = v;
-  if (v) shelf = getMachine().kind === "drums" ? "drums" : "synth";
+  if (v) shelf = (getProjectInstrumentSession()?getStudioMachineDef(getProjectInstrumentSession()!.track.machineId).kind:getMachine().kind) === "drums" ? "drums" : "synth";
   render();
   if (v) {
     const active = document.querySelector(".mb-card.active");
@@ -231,7 +233,7 @@ export function initMachineBrowser(): void {
     const pick = t.closest<HTMLElement>("[data-mb-pick]");
     if (pick) {
       const id = pick.dataset.mbPick || "";
-      if (id !== getMachine().id) setMachine(id);
+      const session=getProjectInstrumentSession();if(session){if(id!==session.track.machineId)session.chooseMachine(id);}else if(id!==getMachine().id)setMachine(id);
       setMachineBrowserOpen(false);
     }
   });

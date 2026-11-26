@@ -22,6 +22,7 @@ import {
   DrumVoice,
   drumVoiceForNote,
   TrackDrumBus,
+  type ScheduledDrumHit,
   triggerTrackDrum
 } from "../engine/drums";
 import { createFmNode } from "../engine/fm";
@@ -770,27 +771,30 @@ export class SY1TrackEngine {
     this.startVoice(pulse.midi, pulse.velocity, pulse.at)?.release(pulse.off);
   }
 
+  /** Studio-only adapter for cancelable future drum events. */
+  scheduleDrumNote(midi: number, velocity: number, at: number): ScheduledDrumHit | undefined {
+    let handle: ScheduledDrumHit | undefined;
+    this.triggerDrumNote(midi, velocity, at, h => { handle = h; });
+    return handle;
+  }
+
+  private triggerDrumNote(midi: number, vel: number, at: number, onScheduled?: (hit: ScheduledDrumHit) => void): void {
+    const voice = drumVoiceForNote(midi);
+    if (!this.isDrumTrack() || !voice || !this.ctx || !this.bus || !this.drumBus) return;
+    const machine = getStudioMachineDef(this.machineId);
+    triggerTrackDrum({
+      ctx: this.ctx, dest: {main: this.bus.input, send: this.bus.sendIn},
+      drumBus: this.drumBus, patch: this.patch, fallbackModel: machine.drumModel || "analog",
+      openHatRef: this.drumOpenHat, voice, vel, at, timers: this.drumTimers, onScheduled
+    });
+  }
+
   noteOn(midi: number, velocity = 0.85, at = 0): void {
     const m = Math.max(0, Math.min(127, Math.round(midi)));
     const vel = Math.max(1 / 127, Math.min(1, Number(velocity) || 0.85));
 
     if (this.isDrumTrack()) {
-      const voice = drumVoiceForNote(m);
-      if (voice && this.ctx && this.bus && this.drumBus) {
-        const machine = getStudioMachineDef(this.machineId);
-        triggerTrackDrum({
-          ctx: this.ctx,
-          dest: { main: this.bus.input, send: this.bus.sendIn },
-          drumBus: this.drumBus,
-          patch: this.patch,
-          fallbackModel: machine.drumModel || "analog",
-          openHatRef: this.drumOpenHat,
-          voice,
-          vel,
-          at,
-          timers: this.drumTimers
-        });
-      }
+      this.triggerDrumNote(m, vel, at);
       return;
     }
 

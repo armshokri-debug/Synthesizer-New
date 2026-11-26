@@ -1,4 +1,4 @@
-import { showStudioPianoRoll } from "./studio-panel";
+import { isStudioInstrumentFocusOpen } from "./studio-panel";
 import { allNotesOff, getMachine, getSynthPatch, getSynthPresetId, getPitchBend, getModWheel, getSustainPedal, onMachineChange, onParamChange, onPresetChange } from "../engine/synth";
 import { getMidiChannel } from "../engine/cc-map";
 import { onPerformanceMidi } from "../engine/daw";
@@ -21,7 +21,6 @@ export function initSynthRecording(engine: SY1StudioEngine, options: { ready: Pr
     <button id="sr-count-in" type="button" aria-pressed="false" title="One bar before recording">1-bar in</button>
     <output id="sr-position" aria-label="Bar and beat">01 : 1</output>
     <span id="sr-status" role="status" aria-live="polite">Ready · MIDI overdub</span>
-    <button id="sr-edit" type="button">Edit in Studio ↗</button>
     <details class="sr-settings"><summary>Options</summary><label>Click volume <input id="sr-click-volume" type="range" min="0" max="1" step="0.01" value="0.25"></label><label id="sr-pattern-option"><input id="sr-auto-pattern" type="checkbox" checked> Start drum pattern with recording</label><small>Click is monitor-only. Record adds notes to the project.</small></details>
   </div>`;
   document.getElementById("sy1-panel")!.before(root);
@@ -37,14 +36,14 @@ export function initSynthRecording(engine: SY1StudioEngine, options: { ready: Pr
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => root.querySelector<T>(`#${id}`)!;
   const update = () => {
     frame = 0;
-    root.hidden = engine.isActive();
+    root.hidden = engine.isActive()&&!isStudioInstrumentFocusOpen();
     const state = engine.getTransportSnapshot(), settings = engine.getRecordingSettings(), count = engine.getCountInBeat();
     if (ownsPatternClock && ((!state.recording && !busy) || engine.isActive())) releasePatternClock();
     if (captureTrackId && !state.recording && !busy) {
       captureTrackId = null;
       unsubscribePerformance?.(); unsubscribePerformance = null;
     }
-    $("sr-pattern-option").hidden = getMachine().kind !== "drums";
+    $("sr-pattern-option").hidden = engine.isActive()||getMachine().kind !== "drums";
     $<HTMLInputElement>("sr-auto-pattern").disabled = busy || state.recording;
     $("sr-record").setAttribute("aria-pressed", String(state.recording));
     $("sr-play").setAttribute("aria-pressed", String(state.playing));
@@ -75,6 +74,15 @@ export function initSynthRecording(engine: SY1StudioEngine, options: { ready: Pr
     error = "";
     try {
       if (id === "sr-record" || id === "sr-play") engine.prepareAudioSync();
+      if(engine.isActive()){
+        const track=engine.getFocusedTrack();
+        if(id==="sr-record"){if(engine.getTransportSnapshot().recording)await engine.pause();else await engine.record({patternTrackId:track.isDrumTrack()?track.id:undefined});}
+        else if(id==="sr-stop")await engine.stop();
+        else if(id==="sr-play"){if(engine.isPlaying())await engine.pause();else await engine.play();}
+        else if(id==="sr-click")engine.setRecordingSettings({metronome:!engine.getRecordingSettings().metronome});
+        else if(id==="sr-count-in")engine.setRecordingSettings({countIn:!engine.getRecordingSettings().countIn});
+        options.autosave();refresh();return;
+      }
       if (id === "sr-record") {
         if (busy || engine.getTransportSnapshot().recording) return;
         const token = ++operation; busy = true; refresh();
@@ -117,15 +125,6 @@ export function initSynthRecording(engine: SY1StudioEngine, options: { ready: Pr
         busy = false; options.autosave(); refresh();
       } else if (id === "sr-stop") await finish();
       else if (id === "sr-play") { await options.ready; engine.setBpm(engine.getBpm()); await engine.play(); refresh(); }
-      else if (id === "sr-edit") {
-        await options.ready;
-        if (captureTrackId) await finish();
-        const track = engine.getFocusedTrack();
-        const region = track.latestRecordedRegion(engine.getTotalTicks());
-        if (region) engine.regions.select(region.id);
-        options.openStudio();
-        showStudioPianoRoll();
-      }
       else if (id === "sr-click") engine.setRecordingSettings({metronome:!engine.getRecordingSettings().metronome});
       else if (id === "sr-count-in") engine.setRecordingSettings({countIn:!engine.getRecordingSettings().countIn});
       options.autosave();
@@ -146,7 +145,7 @@ export function initSynthRecording(engine: SY1StudioEngine, options: { ready: Pr
     if(!engine.isActive()&&track?.machineId===getMachine().id){track.loadPatchSnapshot({...getSynthPatch()},getSynthPresetId(),"Custom",track.machineId);options.autosave();}
   });
   onMachineChange(()=>{if(captureTrackId&&!engine.isActive()){void finish();}else refresh();});
-  engine.onChange(refresh); refresh();
+  engine.onChange(refresh);document.addEventListener("sy1-view-change",refresh);refresh();
   return {
     captureController(cmd:number,d1:number,d2:number,channel:number) {
       const selected=getMidiChannel();

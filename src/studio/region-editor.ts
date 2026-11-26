@@ -70,7 +70,7 @@ export class RegionEditor {
   private selected = new Set<string>();
   private history: History[] = [];
   private future: History[] = [];
-  private clipboard: { region: MidiRegion; machineId: string }[] = [];
+  private clipboard: MidiRegion[] = [];
   grid = 120;
 
   constructor(private host: TimelineHost) {}
@@ -94,6 +94,18 @@ export class RegionEditor {
     if (additive && this.selected.has(id)) this.selected.delete(id);
     else this.selected.add(id);
     this.host.focus(region.trackId);
+  }
+
+  selectMany(ids: readonly string[], additive = false): void {
+    const all = this.all(), valid = new Map(all.map(region => [region.id, region]));
+    const selected = additive ? new Set(this.selected) : new Set<string>();
+    for (const id of ids) if (valid.has(id)) selected.add(id);
+    this.selected = selected;
+    const primary = ids.at(-1);
+    if (primary && valid.has(primary)) this.host.focus(valid.get(primary)!.trackId);
+  }
+  selectAll(trackId?: string): void {
+    this.selectMany((trackId ? this.regions(trackId) : this.all()).map(r => r.id));
   }
 
   clearSelection(): void { this.selected.clear(); }
@@ -166,11 +178,24 @@ export class RegionEditor {
     this.edit(tracks);
   }
 
-  move(delta: number): void {
+  /** Move/copy a whole selection while retaining relative track and time offsets. */
+  move(delta: number, trackDelta = 0, copy = false): void {
+    this.assertEditable();
     const regions = this.selectedRegions();
-    const preview = previewMoveRegions(regions, delta, this.grid, this.host.length());
-    if (!preview || !preview.shift) return;
-    this.change(regions.map(region => ({ ...region, startTick: region.startTick + preview.shift })));
+    const preview = previewMoveRegions(regions, delta, delta===0?0:this.grid, this.host.length());
+    if (!preview || (!preview.shift && !trackDelta && !copy)) return;
+    const trackIds = this.host.tracks().map(track => track.id);
+    const destinations = regions.map(region => trackIds[trackIds.indexOf(region.trackId) + trackDelta]);
+    if (destinations.some(id => !id)) throw new Error("Selection cannot move outside the track list.");
+    const affected = new Set([...regions.map(region => region.trackId), ...destinations]);
+    const after: Tracks = new Map([...affected].map(id => [id, this.regions(id).filter(region => copy || !this.selected.has(region.id))]));
+    const next = regions.map((region, i) => ({
+      ...cloneRegion(region), id: copy ? regionId() : region.id,
+      startTick: region.startTick + preview.shift, trackId: destinations[i]
+    }));
+    for (const region of next) after.get(region.trackId)!.push(region);
+    this.edit(after, next.map(region => region.id));
+    this.host.focus(next.at(-1)!.trackId);
   }
 
   resize(id: string, edge: "left" | "right" | "loop", tick: number): void {
@@ -257,7 +282,7 @@ export class RegionEditor {
 
   copy(): void {
     const regions = this.selectedRegions();
-    if (regions.length) this.clipboard = regions.map(region => ({ region: cloneRegion(region), machineId: this.track(region.trackId).machineId }));
+    if (regions.length) this.clipboard = regions.map(cloneRegion);
   }
 
   remove(): void {
@@ -279,15 +304,20 @@ export class RegionEditor {
 
   cut(): void { this.assertEditable(); this.copy(); this.remove(); }
 
-  paste(trackId: string, tick: number): void {
+  pasteInPlace(trackId: string): void {
     if (!this.clipboard.length) return;
-    const machine = this.track(trackId).machineId;
-    if (this.clipboard.some(item => item.machineId !== machine)) throw new Error("Paste onto a track with the same instrument.");
-    const first = Math.min(...this.clipboard.map(item => item.region.startTick));
-    const maxEnd = Math.max(...this.clipboard.map(item => item.region.startTick + item.region.length));
+    this.paste(trackId, Math.min(...this.clipboard.map(region => region.startTick)), true);
+  }
+
+  paste(trackId: string, tick: number, exact = false): void {
+    if (!this.clipboard.length) return;
+    // MIDI is instrument-independent; preserve pitch, velocity, controllers and source offsets.
+    this.track(trackId);
+    const first = Math.min(...this.clipboard.map(region => region.startTick));
+    const maxEnd = Math.max(...this.clipboard.map(region => region.startTick + region.length));
     const span = Math.max(1, maxEnd - first);
-    const targetStart = clampGridStart(tick, this.grid, Math.max(1, this.host.length() - span + 1));
-    this.insert(this.clipboard.map(item => ({ ...item.region, trackId })), targetStart);
+    const targetStart = exact ? Math.max(0, Math.round(tick)) : clampGridStart(tick, this.grid, Math.max(1, this.host.length() - span + 1));
+    this.insert(this.clipboard.map(region => ({ ...region, trackId })), targetStart);
     this.host.focus(trackId);
   }
 

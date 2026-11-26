@@ -134,7 +134,7 @@ export function initKnobInteractions(): void {
   // some phones: outside LEARN mode that must never unmap, so only block the menu.
   document.addEventListener("contextmenu", (e) => {
     const target = (e.target as HTMLElement)?.closest?.(".sk[data-param], .synth-choice[data-param], .vec-axis-pill[data-param]") as HTMLElement | null;
-    if (!target || target.closest("#sy1-studio")) return;
+    if (!target || target.closest("#sy1-studio, #sy1-panel[data-studio-instrument]")) return;
     const key = target.getAttribute("data-param");
     if (!key || !isParamMapped(key)) return;
     e.preventDefault();
@@ -149,7 +149,7 @@ export function initKnobInteractions(): void {
     if (e.button === 2) return;
 
     const choiceEl = (e.target as HTMLElement)?.closest?.(".synth-choice[data-param], .vec-axis-pill[data-param]") as HTMLElement | null;
-    if (choiceEl && !choiceEl.closest("#sy1-studio") && isLearnMode()) {
+    if (choiceEl && !choiceEl.closest("#sy1-studio, #sy1-panel[data-studio-instrument]") && isLearnMode()) {
       const cKey = choiceEl.getAttribute("data-param");
       if (cKey) {
         learnPointerDown(e, cKey);
@@ -158,7 +158,7 @@ export function initKnobInteractions(): void {
     }
 
     const knob = (e.target as HTMLElement)?.closest?.(".sk") as HTMLElement | null;
-    if (!knob || knob.closest("#sy1-studio")) return;
+    if (!knob || knob.closest("#sy1-studio, #sy1-panel[data-studio-instrument]")) return;
     e.preventDefault();
     prepareAudio();
     const key = knob.getAttribute("data-param");
@@ -218,7 +218,7 @@ export function initKnobInteractions(): void {
 
   document.addEventListener("dblclick", (e) => {
     const knob = (e.target as HTMLElement)?.closest?.(".sk") as HTMLElement | null;
-    if (!knob || knob.closest("#sy1-studio")) return;
+    if (!knob || knob.closest("#sy1-studio, #sy1-panel[data-studio-instrument]")) return;
     const key = knob.getAttribute("data-param");
     if (key && SYNTH_PARAMS[key]) {
       setSynthParam(key, SYNTH_PARAMS[key].def);
@@ -229,7 +229,7 @@ export function initKnobInteractions(): void {
     "wheel",
     (e) => {
       const knob = (e.target as HTMLElement)?.closest?.(".sk") as HTMLElement | null;
-      if (!knob || knob.closest("#sy1-studio")) return;
+      if (!knob || knob.closest("#sy1-studio, #sy1-panel[data-studio-instrument]")) return;
       e.preventDefault();
       const key = knob.getAttribute("data-param");
       if (!key) return;
@@ -243,7 +243,7 @@ export function initKnobInteractions(): void {
     "keydown",
     (e) => {
       const knob = (e.target as HTMLElement)?.closest?.(".sk") as HTMLElement | null;
-      if (!knob || knob.closest("#sy1-studio")) return;
+      if (!knob || knob.closest("#sy1-studio, #sy1-panel[data-studio-instrument]")) return;
       const dirMap: Record<string, number> = {
         ArrowUp: 1,
         ArrowRight: 1,

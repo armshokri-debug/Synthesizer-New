@@ -101,7 +101,7 @@ describe("Phase 6 MIDI regions", () => {
     engine.dispose();
   });
 
-  test("Copy, cut, paste and delete preserve ownership and reject incompatible instruments atomically", () => {
+  test("Copy, cut, paste and delete preserve independent MIDI ownership across instruments", () => {
     const { engine, track, editor, legacy } = setup();
     const target = engine.getTracks()[1];
     editor.copy();
@@ -115,10 +115,17 @@ describe("Phase 6 MIDI regions", () => {
     editor.redo();
     expect(target.events.length).toBe(0);
     engine.setTrackMachinePreset(target.id, "kerman", "init");
-    let rejected = false;
-    try { editor.paste(target.id, 0); } catch { rejected = true; }
-    expect(rejected).toBe(true);
-    expect(target.events.length).toBe(0);
+    const targetPatch=JSON.stringify(target.patch);
+    editor.pasteInPlace(target.id);
+    expect(editor.current(target.id)?.events).toEqual(phrase);
+    expect(editor.current(target.id)?.id).not.toBe(legacy.id);
+    // Cut replaces the clipboard with the copied region at bar 3.
+    expect(editor.current(target.id)?.startTick).toBe(bar * 2);
+    expect(target.machineId).toBe("kerman");
+    expect(JSON.stringify(target.patch)).toBe(targetPatch);
+    expect(track.events).toEqual(phrase);
+    editor.undo();expect(target.events.length).toBe(0);
+    editor.redo();expect(editor.current(target.id)?.events).toEqual(phrase);
     editor.select(legacy.id);
     editor.remove();
     expect(track.events.length).toBe(0);
@@ -127,6 +134,38 @@ describe("Phase 6 MIDI regions", () => {
     engine.dispose();
   });
 
+  test("Paste in place preserves unsnapped timing, trim, loop and independent note edits",()=>{
+    const {engine,track,editor,legacy}=setup();
+    editor.grid=0;editor.move(137);editor.resize(legacy.id,"left",257);editor.resize(legacy.id,"loop",bar*2);
+    const original=editor.current(track.id)!;editor.copy();
+    const target=engine.getTracks()[1];engine.setTrackMachine(target.id,"yazd");editor.grid=480;editor.pasteInPlace(target.id);
+    const pasted=editor.current(target.id)!;
+    expect({...pasted,id:original.id,trackId:original.trackId}).toEqual(original);
+    expect(pasted.id).not.toBe(original.id);expect(target.machineId).toBe("yazd");
+    editor.editNotes(target.id,[]);expect(editor.regions(track.id)[0]).toEqual(original);
+    editor.undo();expect(editor.current(target.id)?.events).toEqual(original.events);engine.dispose();
+  });
+
+  test("Grouped move across tracks and Option-drag copy are independent and undo atomically",()=>{
+    const {engine,track,editor,legacy}=setup();
+    const target=engine.getTracks()[1];engine.setTrackMachine(target.id,"yazd");
+    editor.duplicate();const second=editor.current(track.id)!;
+    editor.selectMany([legacy.id,second.id]);expect(editor.selection().length).toBe(2);
+    const before=editor.regions(track.id);
+    editor.move(bar,1,true);
+    expect(editor.regions(track.id)).toEqual(before);
+    const copied=editor.regions(target.id);
+    expect(copied.map(r=>r.startTick)).toEqual([bar,bar*2]);
+    expect(copied.every(r=>r.events.length===phrase.length)).toBe(true);
+    expect(copied.every(r=>!before.some(b=>b.id===r.id))).toBe(true);
+    editor.undo();expect(editor.regions(target.id)).toEqual([]);
+    editor.redo();expect(editor.regions(target.id)).toEqual(copied);
+    editor.move(0,-1);expect(editor.regions(target.id)).toEqual([]);
+    expect(editor.regions(track.id).length).toBe(4);
+    editor.undo();expect(editor.regions(track.id)).toEqual(before);
+    expect(editor.regions(target.id)).toEqual(copied);
+    engine.dispose();
+  });
   test("Piano Roll only edits the chosen source and preserves hidden notes and controllers", () => {
     const { engine, track, editor, legacy } = setup();
     editor.duplicate();

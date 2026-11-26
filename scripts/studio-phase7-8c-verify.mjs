@@ -1,11 +1,15 @@
 // Verify the production UI and Web Audio graph in a disposable Chromium session.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CdpClient, sleep, waitForCdp } from "./studio-cdp.mjs";
 
 const port = 9278;
+const profile = mkdtempSync(join(tmpdir(), "sy1-ci-chrome-"));
 const chrome = spawn(process.env.SY1_CHROME_BIN || "/usr/bin/chromium",
-  ["--headless", "--no-sandbox", "--disable-gpu", "--autoplay-policy=no-user-gesture-required",
+  ["--user-data-dir="+profile, "--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--enable-logging", "--autoplay-policy=no-user-gesture-required",
     `--remote-debugging-port=${port}`, "about:blank"], { stdio: "ignore" });
 let cdp;
 const errors = [];
@@ -55,6 +59,21 @@ try {
   assert.deepEqual(await tempo(), [119, 119]);
   await cdp.evaluate('document.querySelector("#sy1-panel [data-st-action=bpm-up]").click()');
   assert.deepEqual(await tempo(), [120, 120]);
+  // Compact sequencer is the first section, and can hide/show without affecting the pattern.
+  assert(await cdp.evaluate('document.querySelector(".synth-sections").firstElementChild.querySelector(".st-seq-grid")!==null'));
+  assert(await cdp.evaluate('!document.querySelector(".st-seq-grid").hidden'));
+  await click("track-seq-toggle");
+  assert(await cdp.evaluate('document.querySelector(".st-seq-grid").hidden'));
+  await click("track-seq-toggle");
+  assert(await cdp.evaluate('!document.querySelector(".st-seq-grid").hidden'));
+  await click("track-seq-options");
+  assert(await cdp.evaluate('!document.querySelector(".st-seq-settings").hidden'));
+  await click("track-seq-options");
+  await cdp.evaluate('document.querySelector("[data-st-page=sound]").click()');
+  const knobTest=await cdp.evaluate(`(()=>{const k=document.querySelector(".synth-sec.is-on-page .st-inst-knob"),e=SY1_STUDIO.engine,t=e.getFocusedTrack(),key=k.dataset.stParam,before=t.patch[key];k.dispatchEvent(new WheelEvent("wheel",{deltaY:100,bubbles:true,cancelable:true}));return {before,after:t.patch[key]};})()`);
+  assert.equal(knobTest.before,knobTest.after,"ordinary scrolling must not alter sound");
+  await cdp.evaluate('document.querySelector("[data-st-page=steps]").click()');
+  console.log("PASS: compact top sequencer, fold/unfold, explicit settings and safe scroll");
   await click("track-drum-preview");
   assert.equal(await cdp.evaluate("document.querySelector('[data-st-action=track-drum-preview]').getAttribute('aria-pressed')"), "true");
   const signal = await cdp.evaluate(`(async () => {
@@ -140,6 +159,7 @@ try {
   assert(recordHandoff.hits.every(h=>h.source===undefined));
   await cdp.evaluate("SY1_STUDIO.engine.stop()");
   assert.deepEqual(await regions(),before);
+  await click("track-seq-options");
   await click("track-drum-insert");
   const after = await regions();
   assert.deepEqual(after[0], before[0]);
@@ -150,4 +170,5 @@ try {
 } finally {
   cdp?.close();
   chrome.kill();
+  chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}});
 }
