@@ -1,3 +1,5 @@
+import { getProjectInstrumentSession } from "./instrument-session";
+import { getStudioMachineDef } from "../studio/track-engine";
 /**
  * SY-1 UI — export the drum pattern as a MIDI file (GM drums, channel 10).
  *
@@ -18,6 +20,14 @@ function hasNotes(i: number): boolean {
 
 /** The file for the current pattern (or all patterns with notes), and its name. */
 export function drumMidiFile(all: boolean): { blob: Blob; name: string } {
+  const session=getProjectInstrumentSession();
+  if(session){
+    const t=session.track,m=getStudioMachineDef(t.machineId),bank=t.getTrackDrumBank();
+    const ids=all?[0,1,2,3,4,5,6,7].filter(i=>DRUM_VOICES.some(v=>bank.patterns[i].steps[v].some(n=>n>0))):[bank.selected];
+    const pats=(ids.length?ids:[bank.selected]).map(i=>bank.patterns[i]);
+    const name=m.name+" Pattern "+(all?"A-H":"ABCDEFGH"[bank.selected]);
+    return {blob:drumPatternsMidi(pats,session.bpm,Number(t.patch.drumSwing)||0,Number(t.patch.drumAccent)||0,name).blob,name};
+  }
   const m = getMachine();
   const p = getSynthPatch();
   const idx = all ? [0, 1, 2, 3, 4, 5, 6, 7].filter(hasNotes) : [getPatternIndex()];

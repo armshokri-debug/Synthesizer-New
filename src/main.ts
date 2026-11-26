@@ -1,3 +1,7 @@
+import { renderMasterKnob as projectMasterKnob } from "./ui/daw-panel";
+import { setLibraryOpen as closeProjectLibrary } from "./ui/library";
+import { setMachineBrowserOpen as closeProjectMachineBrowser } from "./ui/machine-browser";
+import { exportDrumMidi as exportProjectDrumMidi } from "./ui/drum-export";
 /**
  * SY-1 Main Entry Point
  */
@@ -222,12 +226,13 @@ function initApp(): void {
       setMidiInputInterceptor((cmd,d1,d2,ch)=>synthRecording.captureController(cmd,d1,d2,ch));
       setKeyboardTarget(null);
       hideStudioPanel();
+      applySkin(getMachine().skin);
       renderPanel();
       syncArpButton();
       fitPanel();
     };
 
-    initStudioPanel({ onClose: exitStudioMode });
+    initStudioPanel({onClose:exitStudioMode,instrumentHeader:()=>({output:projectMasterKnob(),connections:""}),closeInstrumentMenus:()=>{closeProjectLibrary(false);closeProjectMachineBrowser(false);},exportInstrumentPattern:()=>exportProjectDrumMidi(false)});
     setStudioOpenHandler(enterStudioMode);
     const readyHydrate = hydrateStudioFromStorage();
     synthRecording = initSynthRecording(studioEngine, { ready: readyHydrate, openStudio: enterStudioMode, autosave: scheduleAutosave, save: saveStudioProjectNow });

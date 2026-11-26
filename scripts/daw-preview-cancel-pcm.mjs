@@ -46,8 +46,8 @@ try {
         // engine call; another track remains armed to expose wrong routing.
         const other=e.getTracks().find(x=>x.id!==t.id);
         if(other){e.setTrackArmed(t.id,false);e.setTrackArmed(other.id,true);}
-        document.querySelector('[data-st-action="open-track-instrument"][data-track-id="'+CSS.escape(t.id)+'"]').click();
-        document.getElementById("st-rec-btn").click();
+        document.getElementById("st-tab-instrument").click();
+        document.getElementById("sr-record").click();
         await until(()=>e.getTransportSnapshot().playing&&e.getTransportSnapshot().recording);
       }
       await until(()=>hits.length>=1);
@@ -66,7 +66,7 @@ try {
       let wav=null;
       if(mode==="record"){
         const start=e.recordingStartAt,stop=ctx.currentTime;
-        document.getElementById("st-rec-btn").click();
+        document.getElementById("sr-record").click();
         await until(()=>!e.getTransportSnapshot().recording&&!e.getTransportSnapshot().playing);
         await until(()=>!!e.getLastLiveTake());
         const take=e.getLastLiveTake();

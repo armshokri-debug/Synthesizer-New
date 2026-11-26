@@ -17,7 +17,7 @@ import { evalOrbitPoint } from "../engine/vector";
 import type { ControlDef, MachineDef, SectionDef } from "../machines/types";
 import { getDrumLabelsForTrack, getStudioMachineDef, SY1TrackEngine } from "../studio/track-engine";
 import { renderInstrumentKnob, renderInstrumentChoice, renderInstrumentControl } from "./instrument-controls";
-import { renderInstrumentFrame, renderInstrumentSection, renderInstrumentTabs, renderInstrumentPresetLabel } from "./instrument-frame";
+import { renderOriginalFaceplate, renderInstrumentSection, renderInstrumentTabs, renderInstrumentPresetLabel } from "./instrument-frame";
 
 // Per-track selected drum voice in the Studio drum editor (never touches standalone drums.ts)
 const selectedDrumVoiceByTrack = new Map<string, DrumVoice>();
@@ -123,53 +123,24 @@ function renderStudioVectorPad(track: SY1TrackEngine): string {
   </div>`;
 }
 
-function renderStudioDrumPadsAndKits(track: SY1TrackEngine, m: MachineDef): string {
-  const labels = getDrumLabelsForTrack(m.id, track.patch, track.presetId);
-  const activeVoice = getStudioSelectedDrumVoice(track.id);
-
-  const padsHtml = `<div class="drum-voices st-drum-pads" role="group" aria-label="Audition and select drum voices">${DRUM_VOICES.map((v) => {
-    const midi = DRUM_NOTES[v];
-    return `<button type="button" class="drum-voice-btn st-drum-pad${v === activeVoice ? " active" : ""}" data-st-action="drum-audition" data-st-drum-voice="${v}" data-track-id="${escapeHtml(track.id)}" title="Click to audition & edit ${escapeHtml(labels[v])} (GM MIDI ${midi})">
-      <span class="st-drum-pad-name">${escapeHtml(labels[v])}</span>
-      <span class="st-drum-pad-midi">M${midi}</span>
-    </button>`;
-  }).join("")}</div>`;
-
-  const kitsHtml =
-    m.kits && m.kits.length > 0
-      ? `<div class="st-drum-kits-row">
-          <span class="st-drum-kits-lbl">KIT</span>
-          <div class="st-drum-kits-list">${m.kits
-            .map((k) => {
-              const isCur = track.presetId === `kit:${k.id}` || track.presetName === k.name;
-              return `<button type="button" class="synth-choice-btn${isCur ? " active" : ""}" data-st-action="drum-pick-kit" data-st-kit="${escapeHtml(k.id)}" data-track-id="${escapeHtml(track.id)}" title="${escapeHtml(k.desc)}">${escapeHtml(k.name)}</button>`;
-            })
-            .join("")}</div>
-        </div>`
-      : "";
-
-  const bank = track.getTrackDrumBank(), pat = bank.patterns[bank.selected], mode = getTrackDrumEdit(track);
-  return `<div class="drum-transport st-track-pattern-toolbar">
-    <div class="drum-slots" role="group" aria-label="Pattern">${Array.from({length:8},(_,i)=>`<button type="button" class="drum-slot${i===bank.selected?" active":""}" data-st-action="track-drum-pattern" data-index="${i}" aria-pressed="${i===bank.selected}">${"ABCDEFGH"[i]}</button>`).join("")}</div>
-    <div class="synth-choice drum-len" role="group" aria-label="Pattern length">${[16,12].map(len=>`<button type="button" class="synth-choice-btn${pat.len===len?" active":""}" data-st-action="track-drum-len" data-len="${len}" aria-pressed="${pat.len===len}">${len}</button>`).join("")}</div>
-    <button type="button" class="synth-choice-btn drum-acc${mode!=="hit"?" active":""}" data-st-action="track-drum-edit" title="Cycle step edit mode">✎ ${mode.toUpperCase()}</button>
-    <button type="button" class="synth-choice-btn" data-st-action="track-drum-clear">Clear</button>
-    <button type="button" class="synth-choice-btn${previewDrumByTrack.get(track) ? " active" : ""}" data-st-action="track-drum-preview" aria-pressed="${!!previewDrumByTrack.get(track)}" title="Preview this pattern at project tempo with the transport stopped">${previewDrumByTrack.get(track) ? "Stop Preview" : "Preview"}</button>
-    <button type="button" class="synth-choice-btn${liveDrumByTrack.get(track) ? " active" : ""}" data-st-action="track-drum-live" aria-pressed="${!!liveDrumByTrack.get(track)}" title="Enable live pattern; use Studio Play or Record. Requires an empty track.">Live</button>
-    <button type="button" class="synth-choice-btn" data-st-action="track-drum-insert" title="Insert pattern at the first free grid position from the playhead">+ MIDI</button>
-    </div>${padsHtml}${kitsHtml}`;
+function renderStudioDrumPadsAndKits(track:SY1TrackEngine):string {
+  const bank=track.getTrackDrumBank(),pat=bank.patterns[bank.selected],mode=getTrackDrumEdit(track);
+  const playing=!!previewDrumByTrack.get(track)||!!liveDrumByTrack.get(track);
+  return `<div class="drum-transport">
+    <button type="button" class="drum-play ${playing?"active":""}" data-st-action="track-drum-preview" aria-pressed="${playing}">${playing?"■ Stop":"▶ Play"}</button>
+    <div class="drum-slots" role="group" aria-label="Pattern">${Array.from({length:8},(_,i)=>`<button type="button" class="drum-slot ${i===bank.selected?"active":""}" data-st-action="track-drum-pattern" data-index="${i}">${"ABCDEFGH"[i]}</button>`).join("")}</div></div>
+    <div class="drum-transport drum-transport-2">
+      <div class="synth-choice drum-len">${[16,12].map(len=>`<button type="button" class="synth-choice-btn ${pat.len===len?"active":""}" data-st-action="track-drum-len" data-len="${len}">${len}</button>`).join("")}</div>
+      <button type="button" class="synth-choice-btn drum-acc ${mode!=="hit"?"active":""}" data-st-action="track-drum-edit">✎ ${mode.toUpperCase()}</button>
+      <button type="button" class="synth-choice-btn" data-st-action="track-drum-clear">CLEAR</button>
+      <button type="button" class="synth-choice-btn drum-export" data-st-action="track-drum-insert" title="Insert pattern as MIDI in Studio; Shift-click to download MIDI" draggable="true">⤓ MIDI</button>
+    </div>`;
 }
 
 function renderStudioDrumVoice(track: SY1TrackEngine, m: MachineDef): string {
   const v = getStudioSelectedDrumVoice(track.id);
   const labels = getDrumLabelsForTrack(m.id, track.patch, track.presetId);
-  const voicesStrip = `<div class="drum-voices" role="group" aria-label="Select drum voice to edit">${DRUM_VOICES.map(
-    (dv) =>
-      `<button type="button" class="drum-voice-btn${dv === v ? " active" : ""}" data-st-action="drum-select-voice" data-st-drum-voice="${dv}" data-track-id="${escapeHtml(track.id)}">${escapeHtml(labels[dv])}</button>`
-  ).join("")}</div>`;
-
-  return `${voicesStrip}
-    <div class="drum-voice-name">${escapeHtml(labels[v])}</div>
+  return `    <div class="drum-voice-name">${escapeHtml(labels[v])}</div>
     <div class="sk-row">${
       renderStudioSynthKnob(track, v + "Tune", "TUNE") +
       renderStudioSynthKnob(track, v + "Decay", "DECAY") +
@@ -195,18 +166,18 @@ function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionD
 
   if (sec.custom) {
     if (sec.custom === "euclid-rings") {
-      body = `<div class="synth-custom" data-st-custom="euclid-rings">${renderStudioEuclidRings(track)}</div>`;
+      body = `<div class="synth-custom" data-st-custom="euclid-rings" data-custom="euclid-rings">${renderStudioEuclidRings(track)}</div>`;
     } else if (sec.custom === "fm-algo") {
-      body = `<div class="synth-custom" data-st-custom="fm-algo">${renderStudioFmAlgo(track)}</div>`;
+      body = `<div class="synth-custom" data-st-custom="fm-algo" data-custom="fm-algo">${renderStudioFmAlgo(track)}</div>`;
     } else if (sec.custom === "vector-pad") {
-      body = `<div class="synth-custom" data-st-custom="vector-pad">${renderStudioVectorPad(track)}</div>`;
+      body = `<div class="synth-custom" data-st-custom="vector-pad" data-custom="vector-pad">${renderStudioVectorPad(track)}</div>`;
     } else if (sec.custom === "drum-voice") {
-      body = `<div class="synth-custom" data-st-custom="drum-voice">${renderStudioDrumVoice(track, m)}</div>`;
+      body = `<div class="synth-custom" data-st-custom="drum-voice" data-custom="drum-voice">${renderStudioDrumVoice(track, m)}</div>`;
     } else if (sec.custom === "drum-steps") {
       const bank = track.getTrackDrumBank(), labels = getDrumLabelsForTrack(m.id, track.patch, track.presetId);
-      body = `<div class="synth-custom" data-st-custom="drum-steps">${renderDrumStepsHtml(bank.patterns[bank.selected],getStudioSelectedDrumVoice(track.id),v=>escapeHtml(labels[v]),true)}</div>`;
+      body = `<div class="synth-custom" data-st-custom="drum-steps" data-custom="drum-steps">${renderDrumStepsHtml(bank.patterns[bank.selected],getStudioSelectedDrumVoice(track.id),v=>escapeHtml(labels[v]),true)}</div>`;
     } else if (sec.custom === "drum-transport") {
-      body = `<div class="synth-custom" data-st-custom="drum-pads">${renderStudioDrumPadsAndKits(track, m)}</div>`;
+      body = `<div class="synth-custom" data-st-custom="drum-pads" data-custom="drum-transport">${renderStudioDrumPadsAndKits(track)}</div>`;
     }
   } else {
     body = sec.controls.map((c) => renderStudioControl(track, c)).join("");
@@ -215,7 +186,7 @@ function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionD
   return renderInstrumentSection(sec,index,body,isOnPage);
 }
 
-export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string, focusMode = false, overlay = "", projectBpm?: number): string {
+export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string, _focusMode = false, overlay = "", projectBpm?: number, output = "", connections = ""): string {
   const m: MachineDef = getStudioMachineDef(track.machineId);
   const pages = m.pages;
   const validPage = pageFilter === "all" || pages.some((p) => p.id === pageFilter) ? pageFilter : "all";
@@ -227,27 +198,21 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
     : null;
   const presetLabel = curKit ? curKit.name : curPreset ? curPreset.name : track.presetName || "Custom";
   const presetGroup = curKit ? `${curKit.group} · Kit` : curPreset ? curPreset.group : "Edited sound";
-  const frame = renderInstrumentFrame({
-    attributes: `class="synth-panel st-embedded-synth" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}" data-page="${escapeHtml(validPage)}"`,
-    top: `<div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" data-st-action="open-browser-for-track" title="Choose instrument for this track">${escapeHtml(m.name)}</button>${focusMode ? '<button type="button" class="synth-midi-btn synth-studio-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio arrangement">Studio</button>' : ""}</div>
-      <span class="st-embedded-track-tag">${escapeHtml(track.name)}</span>`,
-    subbar: `<div class="synth-preset-nav">
-      <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-prev" aria-label="Previous preset">◀</button>
-      <button type="button" class="preset-display synth-preset-select" data-st-action="open-browser-for-track" title="Choose preset">${renderInstrumentPresetLabel(presetLabel,presetGroup)}</button>
-      <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-next" aria-label="Next preset">▶</button>
-      </div>
-      ${m.tempo && projectBpm !== undefined ? `<div class="synth-tempo" role="group" aria-label="Project tempo">
-        <button type="button" class="synth-midi-btn tempo-step-btn" data-st-action="bpm-down" aria-label="Slower">−</button>
-        <button type="button" class="synth-tempo-val" data-st-action="bpm-tap" data-st-project-bpm title="Project BPM · Tap tempo">${projectBpm}</button>
-        <button type="button" class="synth-midi-btn tempo-step-btn" data-st-action="bpm-up" aria-label="Faster">+</button>
-        <button type="button" class="synth-midi-btn tempo-tap-btn" data-st-action="bpm-tap">TAP</button>
-      </div>` : ""}
-      ${renderInstrumentTabs([{id:"all",label:"ALL"},...pages],validPage,true)}`,
-    sections: m.sections.map((sec, idx) => renderStudioSection(track, m, sec, idx, validPage)).join(""),
-    sectionClass: validPage !== "all" ? " is-filtered" : "",
-    overlay
+  const tempo=m.tempo&&projectBpm!==undefined?`<div class="synth-tempo" role="group" aria-label="Project tempo">
+    <button type="button" class="synth-midi-btn tempo-step-btn" data-st-action="bpm-down" aria-label="Slower">−</button>
+    <button type="button" class="synth-tempo-val" data-st-action="bpm-tap" data-st-project-bpm title="Project BPM · Tap tempo">${projectBpm}</button>
+    <button type="button" class="synth-midi-btn tempo-step-btn" data-st-action="bpm-up" aria-label="Faster">+</button>
+    <button type="button" class="synth-midi-btn tempo-tap-btn" data-st-action="bpm-tap">TAP</button></div>`:"";
+  return renderOriginalFaceplate({
+    attributes:`class="synth-panel" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin||m.id)}" data-page="${escapeHtml(validPage)}"`,
+    machineName:m.name,studioButton:'<button type="button" class="synth-midi-btn synth-studio-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio">Studio</button>',
+    output,connections,
+    previous:'data-st-action="inst-preset-prev"',presetLabel:renderInstrumentPresetLabel(presetLabel,presetGroup),next:'data-st-action="inst-preset-next"',
+    tempo,tabs:renderInstrumentTabs([{id:"all",label:"ALL"},...pages],validPage,true),
+    sections:m.sections.map((sec,idx)=>renderStudioSection(track,m,sec,idx,validPage)).join(""),
+    sectionClass:validPage!=="all"?" is-filtered":"",
+    hint:"Drag a knob up/down (or scroll / arrow keys) · double-click to reset · keys A W S E D F G H U J K · Z/X = octave",overlay
   });
-  return `<div class="st-inst-wrap"><div class="st-embedded-chassis" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}">${frame}</div></div>`;
 }
 
 /** Fast DOM-only knob update during Studio Instrument drag (zero innerHTML rebuild). */
@@ -257,7 +222,7 @@ export function updateStudioInstrumentKnobDOM(container: HTMLElement, track: SY1
   const val = Number(track.patch[key]);
   const n = Math.max(0, Math.min(1, synthNorm(key, val)));
   const fmt = def.fmt ? def.fmt(val) : String(val);
-  const root = container.querySelector<HTMLElement>(`.st-embedded-synth[data-track-id="${track.id}"]`);
+  const root = container.querySelector<HTMLElement>(`.synth-panel[data-track-id="${track.id}"]`);
   if (!root) return;
   const knobs = root.querySelectorAll<HTMLElement>(`.st-inst-knob[data-st-param="${key}"]`);
   knobs.forEach((knob) => {
@@ -271,7 +236,7 @@ export function updateStudioInstrumentKnobDOM(container: HTMLElement, track: SY1
 
 /** Fast DOM-only Nishapur Vector XY pad update during pointer drag (zero innerHTML rebuild). */
 export function updateStudioVectorPadDOM(container: HTMLElement, track: SY1TrackEngine): void {
-  const root = container.querySelector<HTMLElement>(`.st-embedded-synth[data-track-id="${track.id}"]`);
+  const root = container.querySelector<HTMLElement>(`.synth-panel[data-track-id="${track.id}"]`);
   if (!root) return;
   const cx = Math.max(0, Math.min(1, Number(track.patch.vecX ?? 0.5)));
   const cy = Math.max(0, Math.min(1, Number(track.patch.vecY ?? 0.5)));

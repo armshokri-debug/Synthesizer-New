@@ -1,3 +1,4 @@
+import { getProjectInstrumentSession } from "./instrument-session";
 /**
  * SY-1 UI — Oscilloscope Visualization
  */
@@ -19,10 +20,7 @@ export function startSynthScope(): void {
 
   const draw = () => {
     const canvas = document.querySelector(".synth-panel:not([hidden]) .synth-scope") as HTMLCanvasElement | null;
-    if (!canvas) {
-      synthScopeRaf = null;
-      return;
-    }
+    if(!canvas){if(!plugin)synthScopeRaf=requestAnimationFrame(draw);return;}
 
     const g = canvas.getContext("2d");
     if (!g) {
@@ -41,7 +39,7 @@ export function startSynthScope(): void {
     g.stroke();
 
     const ctx = getAudioCtxIfAny();
-    const bus = ctx ? getSynthBus(ctx, getSynthPatch()) : null;
+    const session=getProjectInstrumentSession();const bus=session?session.track.getBus():ctx?getSynthBus(ctx,getSynthPatch()):null;
 
     if (bus) {
       bus.analyser.getByteTimeDomainData(data);

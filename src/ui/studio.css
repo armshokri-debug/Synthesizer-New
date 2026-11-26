@@ -5,11 +5,11 @@
    ========================================================================== */
 
 /* Full-bleed DAW viewport when Studio is open (standalone .sy1-shell untouched) */
-html.is-studio body {
+html.is-studio:not(.is-studio-instrument) body {
   overflow: hidden;
 }
 
-html.is-studio .sy1-shell {
+html.is-studio:not(.is-studio-instrument) .sy1-shell {
   max-width: none;
   width: 100%;
   margin: 0;
@@ -24,8 +24,8 @@ html.is-studio .sy1-shell {
 }
 
 /* Hide standalone wooden/metal hardware side cheeks while Studio DAW is active (standalone untouched) */
-html.is-studio .sy1-shell::before,
-html.is-studio .sy1-shell::after {
+html.is-studio:not(.is-studio-instrument) .sy1-shell::before,
+html.is-studio:not(.is-studio-instrument) .sy1-shell::after {
   display: none;
 }
 
@@ -3112,3 +3112,6 @@ html.is-studio:not(.is-studio-instrument) #kb-scale-notes {
 #sy1-studio .st-instrument-page .st-embedded-chassis { padding:var(--shell-pad,8px); background:var(--shell-bg); border-radius:var(--panel-radius,12px); }
 #sy1-studio .st-track-pattern-toolbar { display:flex; flex-wrap:wrap; gap:5px; }
 #sy1-studio .st-track-pattern-toolbar button { min-height:36px; }
+
+#sy1-panel[hidden],#sy1-studio[hidden]{display:none!important;}
+html.is-studio-instrument #sy1-panel .oriental-pop,html.is-studio-instrument #sy1-panel .st-arp-pop{z-index:40;}

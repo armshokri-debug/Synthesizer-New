@@ -55,15 +55,16 @@ try {
     const root = document.getElementById("sy1-panel");
     const panel = root.querySelector(".synth-panel");
     const visible = !!panel && !root.hidden && panel.getClientRects().length > 0;
-    return { visible, sameHost: root === window.__originalInstrumentHost, active: e.isActive(), focused: e.getFocusedTrack().id,
+    return {visible, originalShell:root.parentElement.classList.contains("sy1-shell"), studioHidden:document.getElementById("sy1-studio").hidden, alternate:!!document.querySelector(".st-instrument-page,.st-embedded-chassis"), sameHost: root === window.__originalInstrumentHost, active: e.isActive(), focused: e.getFocusedTrack().id,
       machine: panel?.dataset.machine,
       keys: panel ? [...panel.querySelectorAll(".sk")].map(el => el.getAttribute("data-param") || el.getAttribute("data-st-param")) : [],
       bpm: e.getBpm(), tick: e.getCurrentTick(),
       regions: e.getTracks().map(t => [t.id,e.regions.regions(t.id)]) };
   })()`);
-  const edit = id => cdp.evaluate(`document.querySelector('[data-st-action="open-track-instrument"][data-track-id=' + CSS.escape(${JSON.stringify(id)}) + ']').click()`);
+  const edit = id => cdp.evaluate(`(()=>{const e=SY1_STUDIO.engine;e.setFocusedTrack(${JSON.stringify(id)});document.querySelector("#st-tab-instrument").click();})()`);
   await edit(baseline.a);
   let view = await inspect();
+  assert(view.originalShell&&view.studioHidden&&!view.alternate);
   assert(view.visible && view.sameHost, "Edit must reuse the original instrument host element");
   assert(view.active, "Edit must keep the Studio project active");
   assert.equal(view.focused, baseline.a);
@@ -97,6 +98,7 @@ try {
   })()`);
   await back();
   view = await inspect();
+  assert(!view.studioHidden&&!view.alternate);
   assert(!view.visible && view.sameHost && view.active, "Studio button must restore the same host and active arrangement");
   assert.equal(view.tick, baseline.tick);
   assert.equal(view.bpm, baseline.bpm);

@@ -82,7 +82,7 @@ import { onArpStep } from "../engine/arp";
 import { getBaseMidi, renderKeyboard } from "./keyboard";
 import { renderSynthKnob, standaloneControlContext, updateMidiLearnDOM, updateSynthControlDOM } from "./knob";
 import { renderInstrumentChoice, renderInstrumentControl } from "./instrument-controls";
-import { renderInstrumentFrame, renderInstrumentSection, renderInstrumentTabs, renderInstrumentPresetLabel } from "./instrument-frame";
+import { renderOriginalFaceplate, renderInstrumentSection, renderInstrumentTabs, renderInstrumentPresetLabel } from "./instrument-frame";
 import { onPluginVisualFrame, queueVisualUpdate } from "./plugin-visuals";
 
 // ------------------------------------------------------------ controls ----
@@ -402,6 +402,7 @@ function renderSection(sec: SectionDef, index: number): string {
 }
 
 function refreshCustom(id: string): void {
+  if(document.getElementById("sy1-panel")?.dataset.studioInstrument)return;
   const el = document.querySelector(`.synth-custom[data-custom="${id}"]`);
   if (el) el.innerHTML = renderCustom(id);
 }
@@ -568,13 +569,12 @@ export function renderSynthPanelHtml(): string {
         <button type="button" class="synth-midi-btn tempo-sync-btn${getSync() ? " active" : ""}" data-action="tempo-sync" aria-pressed="${getSync() ? "true" : "false"}" title="SYNC on: tempo and Play/Stop follow the DAW. Off: SY-1 keeps its own tempo.">SYNC</button>
       </div>`
     : "";
-  return renderInstrumentFrame({
-    attributes: `class="synth-panel" dir="ltr" data-machine="${m.id}"`,
-    top: `
-        <div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" id="machine-btn" aria-haspopup="dialog" aria-expanded="false" title="Choose an instrument">${escapeHtml(m.name)}</button><select class="sr-only" id="machine-select" aria-hidden="true" tabindex="-1">${renderMachineOptions()}</select>${!(globalThis as any).__SY1_PLUGIN__ ? `<button type="button" class="synth-midi-btn synth-studio-btn" id="open-studio-btn" data-action="studio-open" title="Open SY-1 Studio multi-track recorder">Studio</button>` : ""}</div>
-        <canvas class="synth-scope" width="320" height="56" aria-hidden="true"></canvas>
-        <div class="synth-out">${renderMasterKnob()}${renderRecButton()}</div>
-        <div class="synth-conn-wrap">
+  return renderOriginalFaceplate({
+    attributes:`class="synth-panel" dir="ltr" data-machine="${m.id}"`,machineName:m.name,
+    machineOptions:`<select class="sr-only" id="machine-select" aria-hidden="true" tabindex="-1">${renderMachineOptions()}</select>`,
+    studioButton:!(globalThis as any).__SY1_PLUGIN__?'<button type="button" class="synth-midi-btn synth-studio-btn" id="open-studio-btn" data-action="studio-open" title="Open SY-1 Studio multi-track recorder">Studio</button>':"",
+    output:renderMasterKnob()+renderRecButton(),
+    connections:`<div class="synth-conn-wrap">
           <button type="button" class="synth-conn-btn${connOpen ? " is-open" : ""}" id="conn-btn" data-action="conn-toggle" aria-label="Connections" aria-haspopup="dialog" aria-expanded="${connOpen ? "true" : "false"}" title="Connections">
             <svg class="conn-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M2 12h4" />
@@ -607,20 +607,15 @@ export function renderSynthPanelHtml(): string {
             <button type="button" class="synth-midi-btn conn-daw-btn" data-daw="open">DAW &amp; RECORDING…</button>
           </div>
         </div>`,
-    subbar: `
-        <div class="synth-preset-nav">
-          <button type="button" class="synth-midi-btn preset-step-btn" data-action="preset-prev" aria-label="Previous preset">◀</button>
-          <button type="button" class="preset-display synth-preset-select" id="preset-btn" aria-haspopup="dialog" aria-expanded="false" title="Open the sound library">${renderPresetButton()}</button>
-          <button type="button" class="synth-midi-btn preset-step-btn" data-action="preset-next" aria-label="Next preset">▶</button>
-        </div>
-        ${tempo}
-        ${renderInstrumentTabs(allowAllPage() ? [{id:"all",label:"ALL"},...m.pages] : m.pages)}`,
-    sections: m.sections.map(renderSection).join(""),
-    hint: "Drag a knob up/down (or scroll / arrow keys) · double-click to reset · right-click (or long-press in LEARN) unmaps CC · keys A W S E D F T G Y H U J K · Z/X = octave"
+    previous:'data-action="preset-prev"',presetLabel:renderPresetButton(),next:'data-action="preset-next"',
+    tempo,tabs:renderInstrumentTabs(allowAllPage()?[{id:"all",label:"ALL"},...m.pages]:m.pages),
+    sections:m.sections.map(renderSection).join(""),
+    hint:"Drag a knob up/down (or scroll / arrow keys) · double-click to reset · right-click (or long-press in LEARN) unmaps CC · keys A W S E D F T G Y H U J K · Z/X = octave"
   });
 }
 
 export function updateSynthPresetDOM(): void {
+  if(document.getElementById("sy1-panel")?.dataset.studioInstrument)return;
   const btn = document.getElementById("preset-btn");
   if (btn) btn.innerHTML = renderPresetButton();
 }

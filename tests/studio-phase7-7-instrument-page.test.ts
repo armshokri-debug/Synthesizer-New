@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { studioEngine } from "../src/studio/studio-engine";
 import { STUDIO_MACHINES } from "../src/studio/track-engine";
-import { renderStudioHtml, setStudioDockTab, isStudioInstrumentFocusOpen, getStudioDockTab } from "../src/ui/studio-panel";
+import { renderStudioHtml, renderProjectInstrumentHtml, setStudioDockTab, isStudioInstrumentFocusOpen, getStudioDockTab } from "../src/ui/studio-panel";
 import { renderInstrumentTabs } from "../src/ui/instrument-frame";
 
 describe("direct instrument page: shared faceplate and independent track context",()=>{
@@ -14,9 +14,14 @@ describe("direct instrument page: shared faceplate and independent track context
       for(const machine of STUDIO_MACHINES){
         studioEngine.setTrackMachine(track.id,machine.id);
         setStudioDockTab("instrument");
-        const html=renderStudioHtml();
+        const html=renderProjectInstrumentHtml();
         expect(isStudioInstrumentFocusOpen()).toBe(true);
-        expect(html).toContain('class="st-instrument-page"');
+        expect(html).toContain('class="synth-panel"');
+        expect(html).not.toContain("st-instrument-page");
+        expect(html).not.toContain("st-embedded-chassis");
+        expect(html).toContain('id="machine-btn"');
+        expect(html).toContain('id="preset-btn"');
+        expect(renderStudioHtml()).not.toContain(">Edit</button>");
         expect(html).toContain(`data-track-id="${track.id}" data-machine="${machine.id}"`);
         expect(html).toContain('id="st-inst-back-btn"');
         expect(html).toContain('class="synth-subbar"');
