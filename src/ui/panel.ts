@@ -571,8 +571,7 @@ export function renderSynthPanelHtml(): string {
     : "";
   return renderOriginalFaceplate({
     attributes:`class="synth-panel" dir="ltr" data-machine="${m.id}"`,machineName:m.name,
-    identity:m.id==="bushehr"&&allowAllPage()?'<span class="bushehr-identity"><span>SY-1 STUDIO</span><small>PERSIAN · ARABIC PERCUSSION</small></span>':undefined,
-    identity:m.id==="yazd"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="yazd-identity"><span>SY-1 STUDIO</span><small>AMBIENT · PAD SYNTH</small></span>':m.id==="sy1"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="tehran-identity"><span>SY-1 STUDIO</span><small>ALL-ROUNDER SYNTH</small></span>':undefined,
+    identity:m.id==="bushehr"&&allowAllPage()?'<span class="bushehr-identity"><span>SY-1 STUDIO</span><small>PERSIAN · ARABIC PERCUSSION</small></span>':m.id==="yazd"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="yazd-identity"><span>SY-1 STUDIO</span><small>AMBIENT · PAD SYNTH</small></span>':m.id==="sy1"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="tehran-identity"><span>SY-1 STUDIO</span><small>ALL-ROUNDER SYNTH</small></span>':undefined,
     machineOptions:`<select class="sr-only" id="machine-select" aria-hidden="true" tabindex="-1">${renderMachineOptions()}</select>`,
     studioButton:!(globalThis as any).__SY1_PLUGIN__?'<button type="button" class="synth-midi-btn synth-studio-btn" id="open-studio-btn" data-action="studio-open" title="Open SY-1 Studio multi-track recorder">Studio</button>':"",
     output:renderMasterKnob()+renderRecButton(),
