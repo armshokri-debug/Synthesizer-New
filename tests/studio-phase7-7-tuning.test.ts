@@ -26,7 +26,7 @@ describe("7.7B — independent Oriental tuning", () => {
     const a = track("a");
     try {
       setCustomTuning("sy1", offsets(-40));
-      const p = {...a.patch, tuning: "custom", oriental: "on", tuneRoot: 0};
+      const p: typeof a.patch = {...a.patch, tuning: "custom", oriental: "on", tuneRoot: 0};
       delete p[STUDIO_TUNING_KEY];
       a.loadPatchSnapshot(p, "custom", "Custom", "sy1");
       setCustomTuning("sy1", offsets(20));
