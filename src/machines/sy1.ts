@@ -3,7 +3,7 @@ import { MachineDef, row, SEC } from "./types";
 /** SY-1 — the flagship all-rounder (the original panel). */
 export const SY1: MachineDef = {
   id: "sy1",
-  name: "SY-1",
+  name: (globalThis as any).__SY1_PLUGIN__ ? "SY-1" : "Tehran",
   role: "All-rounder",
   skin: "sy1",
   kind: "synth",

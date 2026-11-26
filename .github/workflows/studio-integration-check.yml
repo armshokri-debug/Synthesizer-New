@@ -35,6 +35,7 @@ jobs:
           curl -fsS http://127.0.0.1:4178/ >/dev/null
           node scripts/studio-unified-edit-verify.mjs
           node scripts/yazd-design-verify.mjs
+          node scripts/tehran-design-verify.mjs
           node scripts/studio-midi-workflow-verify.mjs
           node scripts/studio-phase7-8c-verify.mjs
           node scripts/studio-mix-recovery-verify.mjs
