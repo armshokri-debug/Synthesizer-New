@@ -1,4 +1,4 @@
-import { renderDrumStepsHtml } from "./drum-steps-view";
+import { renderDrumStepsHtml, renderBushehrMatrix, renderBushehrPads } from "./drum-steps-view";
 import { renderFmAlgorithm, renderEuclideanRings } from "./instrument-special-views";
 /**
  * SY-1 UI — Panel: rendered from the active machine's definition.
@@ -128,12 +128,12 @@ function renderDrumTransport(): string {
 }
 
 function renderDrumSteps(): string {
-  return renderDrumStepsHtml(getPattern(), drumVoice, drumLabel);
+  return getMachine().id === "bushehr" && allowAllPage() ? renderBushehrMatrix(getPattern(), drumVoice, v => escapeHtml(drumLabel(v))) : renderDrumStepsHtml(getPattern(), drumVoice, drumLabel);
 }
 
 function renderDrumVoice(): string {
   const v = drumVoice;
-  return `<div class="drum-voice-name">${drumLabel(v)}</div><div class="sk-row">${
+  return `${getMachine().id === "bushehr" && allowAllPage() ? renderBushehrPads(v, voice => escapeHtml(drumLabel(voice))) : ""}<div class="drum-voice-name">${drumLabel(v)}</div><div class="sk-row">${
     renderSynthKnob(v + "Tune", "TUNE") + renderSynthKnob(v + "Decay", "DECAY") +
     renderSynthKnob(v + "Tone", "TONE") + renderSynthKnob(v + "Level", "LEVEL")}</div><div class="sk-row">${
     renderSynthKnob(v + "Pan", "PAN") + renderSynthKnob(v + "Color", "COLOR") +
@@ -571,6 +571,7 @@ export function renderSynthPanelHtml(): string {
     : "";
   return renderOriginalFaceplate({
     attributes:`class="synth-panel" dir="ltr" data-machine="${m.id}"`,machineName:m.name,
+    identity:m.id==="bushehr"&&allowAllPage()?'<span class="bushehr-identity"><span>SY-1 STUDIO</span><small>PERSIAN · ARABIC PERCUSSION</small></span>':undefined,
     identity:m.id==="yazd"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="yazd-identity"><span>SY-1 STUDIO</span><small>AMBIENT · PAD SYNTH</small></span>':m.id==="sy1"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="tehran-identity"><span>SY-1 STUDIO</span><small>ALL-ROUNDER SYNTH</small></span>':undefined,
     machineOptions:`<select class="sr-only" id="machine-select" aria-hidden="true" tabindex="-1">${renderMachineOptions()}</select>`,
     studioButton:!(globalThis as any).__SY1_PLUGIN__?'<button type="button" class="synth-midi-btn synth-studio-btn" id="open-studio-btn" data-action="studio-open" title="Open SY-1 Studio multi-track recorder">Studio</button>':"",
@@ -840,8 +841,7 @@ export function initPanelInteractions(): void {
     if (document.getElementById("sy1-panel")?.dataset.studioInstrument) return;
     document.querySelectorAll(".drum-step.playing").forEach((el) => el.classList.remove("playing"));
     if (s >= 0) {
-      const el = document.querySelector(`.drum-step[data-index="${s}"]`);
-      if (el) el.classList.add("playing");
+      document.querySelectorAll(`.drum-step[data-index="${s}"]`).forEach(el => el.classList.add("playing"));
     }
   });
 
@@ -933,7 +933,11 @@ export function initPanelInteractions(): void {
         playDrum(drumVoice, 0.9);
         break;
       }
-      case "drum-step": editStep(drumVoice, Number(btn.getAttribute("data-index")), stepEdit); break;
+      case "drum-step": {
+        const lane = btn.dataset.gridVoice as DrumVoice | undefined;
+        if (lane && getMachine().id === "bushehr" && allowAllPage()) { drumVoice = lane; refreshCustom("drum-voice"); }
+        editStep(drumVoice, Number(btn.getAttribute("data-index")), stepEdit); break;
+      }
       default: break;
     }
   });

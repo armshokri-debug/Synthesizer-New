@@ -1,4 +1,4 @@
-import { renderDrumStepsHtml } from "./drum-steps-view";
+import { renderDrumStepsHtml, renderBushehrMatrix, renderBushehrPads } from "./drum-steps-view";
 /**
  * SY-1 Studio — Embedded Original Synthesizer & Drum Machine Interface
  *
@@ -152,13 +152,13 @@ function renderStudioDrumPadsAndKits(track:SY1TrackEngine):string {
       <button type="button" class="synth-choice-btn" data-st-action="track-drum-download">Download MIDI</button>
     </div>
   </div>
-  <div class="st-seq-grid"${collapsed?" hidden":""}>${renderDrumStepsHtml(pat,getStudioSelectedDrumVoice(track.id),v=>escapeHtml(labels[v]),true)}</div>`;
+  <div class="st-seq-grid"${collapsed?" hidden":""}>${track.machineId==="bushehr"&&!(globalThis as any).__SY1_PLUGIN__?renderBushehrMatrix(pat,getStudioSelectedDrumVoice(track.id),v=>escapeHtml(labels[v]),true):renderDrumStepsHtml(pat,getStudioSelectedDrumVoice(track.id),v=>escapeHtml(labels[v]),true)}</div>`;
 }
 
 function renderStudioDrumVoice(track: SY1TrackEngine, m: MachineDef): string {
   const v = getStudioSelectedDrumVoice(track.id);
   const labels = getDrumLabelsForTrack(m.id, track.patch, track.presetId);
-  return `<div class="st-sound-voices drum-voices" role="group" aria-label="Sound voice">${DRUM_VOICES.map(voice=>`<button type="button" class="drum-voice-btn ${voice===v?"active":""}" data-st-action="drum-select-voice" data-st-drum-voice="${voice}" aria-pressed="${voice===v}">${escapeHtml(labels[voice])}</button>`).join("")}</div><div class="drum-voice-name">${escapeHtml(labels[v])}</div>
+  return `${m.id==="bushehr"&&!(globalThis as any).__SY1_PLUGIN__?renderBushehrPads(v,voice=>escapeHtml(labels[voice]),true):`<div class="st-sound-voices drum-voices" role="group" aria-label="Sound voice">${DRUM_VOICES.map(voice=>`<button type="button" class="drum-voice-btn ${voice===v?"active":""}" data-st-action="drum-select-voice" data-st-drum-voice="${voice}" aria-pressed="${voice===v}">${escapeHtml(labels[voice])}</button>`).join("")}</div>`}<div class="drum-voice-name">${escapeHtml(labels[v])}</div>
     <div class="sk-row">${
       renderStudioSynthKnob(track, v + "Tune", "TUNE") +
       renderStudioSynthKnob(track, v + "Decay", "DECAY") +
@@ -223,7 +223,7 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
     <button type="button" class="synth-midi-btn tempo-tap-btn" data-st-action="bpm-tap">TAP</button></div>`:"";
   return renderOriginalFaceplate({
     attributes:`class="synth-panel" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" aria-label="${escapeHtml(track.name)}" data-skin="${escapeHtml(m.skin||m.id)}" data-page="${escapeHtml(validPage)}"${m.kind==="drums"?' data-compact-drums="true"':""}`,
-    identity:m.id==="yazd"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="yazd-identity"><span>SY-1 STUDIO</span><small>AMBIENT · PAD SYNTH</small></span>':m.id==="sy1"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="tehran-identity"><span>SY-1 STUDIO</span><small>ALL-ROUNDER SYNTH</small></span>':undefined,
+    identity:m.id==="bushehr"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="bushehr-identity"><span>SY-1 STUDIO</span><small>PERSIAN · ARABIC PERCUSSION</small></span>':m.id==="yazd"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="yazd-identity"><span>SY-1 STUDIO</span><small>AMBIENT · PAD SYNTH</small></span>':m.id==="sy1"&&!(globalThis as any).__SY1_PLUGIN__?'<span class="tehran-identity"><span>SY-1 STUDIO</span><small>ALL-ROUNDER SYNTH</small></span>':undefined,
     machineName:m.name,studioButton:'<button type="button" class="synth-midi-btn synth-studio-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio">Studio</button>',
     output,connections,
     previous:'data-st-action="inst-preset-prev"',presetLabel:renderInstrumentPresetLabel(presetLabel,presetGroup),next:'data-st-action="inst-preset-next"',

@@ -13,6 +13,7 @@ import "./ui/keyboard.css";
 import "./ui/studio.css";
 import "./ui/yazd-design.css";
 import "./ui/tehran-design.css";
+import "./ui/bushehr-design.css";
 import { installAudioUnlock } from "./engine/bus";
 import { DRUM_NOTES, DRUM_VOICES, stopDrums } from "./engine/drums";
 import { applySkin } from "./ui/skins";

@@ -2076,7 +2076,12 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
               const i = Number(btn.dataset.index); if (!Number.isInteger(i)||i<0||i>7) break; bank.selected=i;
             } else if (action === "track-drum-len") pat.len=btn.dataset.len==="12"?12:16;
             else if (action === "track-drum-clear") bank.patterns[bank.selected]=emptyPattern(pat.len);
-            else if (!editTrackDrumStep(pat,getStudioSelectedDrumVoice(ft.id),Number(btn.dataset.index),getTrackDrumEdit(ft))) break;
+            else {
+              const lane=btn.dataset.gridVoice as DrumVoice | undefined;
+              const voice=ft.machineId==="bushehr"&&lane&&DRUM_NOTES[lane]!==undefined?lane:getStudioSelectedDrumVoice(ft.id);
+              if(!editTrackDrumStep(pat,voice,Number(btn.dataset.index),getTrackDrumEdit(ft))) break;
+              if(lane&&voice===lane) setStudioSelectedDrumVoice(ft.id,voice);
+            }
             ft.setTrackDrumBank(bank);
           }
           renderStudioPanel(); break;
