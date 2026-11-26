@@ -20,6 +20,8 @@ let sclStatusIsError = false;
 
 
 function render(): void {
+  // Never mutate the track-owned instrument overlay from standalone listeners.
+  if (document.getElementById("sy1-panel")?.dataset.studioInstrument) return;
   const prev = document.querySelector("#sy1-panel .oriental-pop");
   const scroll = prev ? prev.scrollTop : 0;
   document.querySelectorAll("#sy1-panel .oriental-pop").forEach((el) => el.remove());
