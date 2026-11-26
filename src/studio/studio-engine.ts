@@ -267,6 +267,10 @@ export class SY1StudioEngine {
     unsubscribe: () => void;
   } | null = null;
   private liveDrums = new Map<string, LiveDrumSequence>();
+  // Explicit instrument recording may overdub on an occupied track. Original
+  // arrangement hits remain the playback source at colliding tick/note pairs.
+  private patternOverdub = new Map<string, Set<string>>();
+  private patternCapturedEvents = new WeakSet<StudioMidiEvent>();
   private pendingDrumCapture: {track: SY1TrackEngine; tick: number; midi: number; velocity: number; duration: number; at: number}[] = [];
   // Future transport-owned percussion events retain their audio cancellation
   // handle and the corresponding capture record. Never re-trigger a sounding hit.
@@ -954,6 +958,8 @@ export class SY1StudioEngine {
   async record(options: { midiOnly?: boolean; patternTrackId?: string; onStart?: (at: number) => void } = {}): Promise<void> {
     if (this.recording || this.preparingRecord || this.finalizingRecord) return;
     this.recordedDrumHits.clear();
+    this.patternOverdub.clear();
+    this.patternCapturedEvents = new WeakSet();
     // Keep already scheduled live hits so punch-in captures those that sound
     // after the recording boundary, not just hits scheduled after Record.
     this.preparingRecord = true;
@@ -977,14 +983,19 @@ export class SY1StudioEngine {
         this.getFocusedTrack().armed = true;
       }
       const total = this.getTotalTicks();
-      // Direct instrument recording: an armed, focused empty drum track plays
-      // its selected pattern without a second Live command. External producers
-      // own their own MIDI and existing regions remain the playback source.
+      // Explicit instrument Record plays the selected pattern even when the
+      // track already has regions. Overdub keeps old notes and avoids collisions;
+      // explicit Replace retains its existing replacement semantics.
       const focused = patternTrackId ? this.getTrack(patternTrackId) : undefined;
-      if (!options.onStart && focused?.armed && focused.isDrumTrack() &&
-          !focused.events.length && !focused.getRegions(total).length &&
-          !this.liveDrums.has(focused.id)) {
-        this.liveDrums.set(focused.id, new LiveDrumSequence());
+      if (!options.onStart && focused?.armed && focused.isDrumTrack()) {
+        const existing = new Set<string>();
+        if (this.recordingMode !== "replace") {
+          for (const event of focused.events) {
+            if(event.type==="noteOn") existing.add(event.tick+":"+event.midi);
+          }
+        }
+        this.patternOverdub.set(focused.id,existing);
+        if (!this.liveDrums.has(focused.id)) this.liveDrums.set(focused.id,new LiveDrumSequence());
       }
       for (const track of this.tracks) {
         track.beginRegionTake(total, track.armed ? this.recordingMode : "overdub");
@@ -1017,6 +1028,8 @@ export class SY1StudioEngine {
     if (!preservePosition || this.recording) this.liveDrums.clear();
     else for (const sequence of this.liveDrums.values()) sequence.reset();
     this.pendingDrumCapture = []; this.recordedDrumHits.clear();
+    this.patternOverdub.clear();
+    this.patternCapturedEvents = new WeakSet();
     this.stopLiveArpTimer();
     for (const track of this.tracks) track.liveArpeggiator.stop();
     this.transportEpoch++;
@@ -1304,8 +1317,11 @@ export class SY1StudioEngine {
       this.recordedDrumHits.add(key);
       const limit = this.loopEnabled && h.tick < this.getLoopEndTick() ? this.getLoopEndTick() : this.getTotalTicks();
       const duration = stopping ? Math.min(h.duration, Math.max(1,Math.round((now-h.at)*this.ticksPerSecond()))) : h.duration;
-      this.addRecordedEvent(h.track,{type:"noteOn",tick:h.tick,midi:h.midi,velocity:h.velocity},h.at);
-      this.addRecordedEvent(h.track,{type:"noteOff",tick:Math.min(limit,h.tick+duration),midi:h.midi},h.at);
+      const on:StudioMidiEvent={type:"noteOn",tick:h.tick,midi:h.midi,velocity:h.velocity};
+      const off:StudioMidiEvent={type:"noteOff",tick:Math.min(limit,h.tick+duration),midi:h.midi};
+      if(this.patternOverdub.has(h.track.id)){this.patternCapturedEvents.add(on);this.patternCapturedEvents.add(off);}
+      this.addRecordedEvent(h.track,on,h.at);
+      this.addRecordedEvent(h.track,off,h.at);
     }
     this.pendingDrumCapture = remaining;
   }
@@ -1317,18 +1333,20 @@ export class SY1StudioEngine {
     for (let ti = 0; ti < this.tracks.length; ti++) {
       const track = this.tracks[ti];
       const sequence = this.liveDrums.get(track.id);
+      const overdub = this.recording ? this.patternOverdub.get(track.id) : undefined;
       if (sequence && track.isDrumTrack()) {
         // Live is an explicit source on an empty track. If a clip was added
         // during preview, restore normal arrangement playback instead of doubling.
         if (!this.recording && (track.events.length || track.getRegions(this.getTotalTicks()).length)) this.liveDrums.delete(track.id);
         else {
           sequence.drain(track, startTick, endTick, this.bpm, hit => {
+            if(overdub?.has(hit.tick+":"+hit.midi))return;
             const at = segStartAudio + (hit.tick - startTick) * secPerTick;
             const capture={track,...hit,at};
             this.dispatchTransportDrum(track,hit,at,capture);
             this.pendingDrumCapture.push(capture);
           });
-          continue;
+          if(!overdub || replacingArmed)continue;
         }
       }
       if (track.events.length === 0) continue;
@@ -1338,6 +1356,7 @@ export class SY1StudioEngine {
       let openSet: Set<number> | undefined;
       const skipMutedNoteOn = !track.audible && !observer;
       track.forEachEventInRange(startTick, endTick, (ev) => {
+        if(overdub && this.patternCapturedEvents.has(ev))return;
         if (skipMutedNoteOn && ev.type === "noteOn") return;
         const at = segStartAudio + (ev.tick - startTick) * secPerTick;
         const capturedAt = this.performanceCaptureTimes.get(ev);
