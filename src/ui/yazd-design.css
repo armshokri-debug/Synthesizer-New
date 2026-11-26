@@ -9,14 +9,13 @@ html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] {
   --ctl-bg:linear-gradient(#66475f,#3c2b40);--ctl-ink:#f8e9f3;--btn-border:#997393;
   --panel-pad:9px; --sec-gap:6px; --sec-row-gap:4px;
   padding:9px;gap:7px;border-radius:10px;position:relative;isolation:isolate;
-  background:radial-gradient(ellipse at 88% 6%,#b68aa9 0%,#805976 32%,transparent 65%),linear-gradient(125deg,#432e48,#694761 60%,#4b354e);
+  background:linear-gradient(155deg,#503149,#322336 90%);
   border:1px solid #e8c2db;box-shadow:inset 0 1px 0 #fff4,0 4px 14px #2a17354d;
 }
 html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"]::before {
   content:""; position:absolute;z-index:-1;pointer-events:none;inset:0;border-radius:inherit;
-  background:url("./yazd-windcatchers.svg") right top / 100% auto no-repeat;
-  mask-image:linear-gradient(90deg,transparent 0%,transparent 22%,#000 70%),linear-gradient(180deg,#000 0%,#000 18%,transparent 70%);
-  mask-composite:intersect;opacity:.9;
+  background:url("./yazd-windcatchers.svg") center top / 100% 100% no-repeat;
+  opacity:1;
 }
 html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-top {gap:10px;min-height:43px;align-items:center;}
 html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-brand {display:grid;grid-template-columns:auto auto;grid-template-rows:auto auto auto;gap:0 8px;align-items:center;}
@@ -131,4 +130,76 @@ html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] :is(.sk-label,
   html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .sk-label {font-size:10px;letter-spacing:0;margin-top:2px;}
   html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .sk-val {font-size:10px;}
   html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec h4 {padding:2px 0 3px;margin:0;}
+}
+
+/* YAZD Sunset / reference-approved design. Real controls, no UI baked into artwork. */
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] {
+  --ink:#fff4ed;--ink-dim:#f0d4dd;--label-ink:#fff4f2;--value-ink:#f6dce5;--sec-head:#fff0e6;
+  --accent:#eaa0c8;--accent-ink:#271a2d;--scope-bg:linear-gradient(180deg,#301d32,#160f23 55%,#44253c);
+  padding:7px 8px;gap:5px;border:1px solid #edc7df;
+  box-shadow:inset 0 1px 1px #ffe3f4aa, inset 0 -1px 3px #512c4b,0 3px 10px #27172d44;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-top {min-height:43px;gap:9px;align-items:center;display:grid;grid-template-columns:minmax(202px,1fr) minmax(96px,176px) auto minmax(44px,1fr);}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-brand {position:relative;justify-self:start;padding-left:33px;column-gap:10px;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-brand::before {
+  content:"";position:absolute;left:2px;top:50%;transform:translateY(-50%);width:25px;height:25px;
+  background:center/contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='none' stroke='%23f5c79f' stroke-width='1.1'%3E%3Cpath d='M24 1 31 15 47 24 31 31 24 47 17 31 1 24 17 17ZM24 7 41 24 24 41 7 24ZM12 12H36V36H12ZM24 13 35 24 24 35 13 24Z'/%3E%3Ccircle cx='24' cy='24' r='4'/%3E%3C/svg%3E");
+  filter:drop-shadow(0 1px 1px #291827);
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .yazd-identity>span {font:650 9px/1.05 system-ui,sans-serif;letter-spacing:.21em;color:#fce1d5;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .yazd-identity>small {font:600 8px/1.1 system-ui,sans-serif;letter-spacing:.13em;color:#fce3df;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-machine-select {font:500 italic 29px/.95 "Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;letter-spacing:.075em;color:#fff0d5;text-shadow:0 2px 3px #2e192d;padding:1px 13px 1px 0;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-studio-btn {min-height:29px;padding:0 12px;border-color:#ecc2d5;background:linear-gradient(180deg,#f9d2e3,#bb7fa5);box-shadow:inset 0 1px 0 #fff8,0 2px 4px #27172f77;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-scope {width:100%;max-width:100%;min-width:0;height:29px;margin:0;opacity:1;border-radius:7px;border:1px solid #e6bdd3aa;box-shadow:inset 0 1px 6px #180e22,inset 0 -1px 8px #e396cb35,0 1px 3px #29162988;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-out {gap:5px;justify-self:start;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-conn-wrap {justify-self:end;margin:0;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-conn-btn {min-height:29px;min-width:36px;background:linear-gradient(#6d455a99,#322033ed);color:#fff2e7;border-color:#f2c4cf70;box-shadow:inset 0 1px 0 #fff3,0 2px 4px #29192e55;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-subbar {min-height:30px;gap:5px;flex-wrap:wrap;justify-content:space-between;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-preset-nav {flex:0 1 300px;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] :is(.preset-step-btn,.preset-display,.synth-tab) {min-height:29px;border:1px solid #e8bbd075;border-radius:6px;background:linear-gradient(180deg,#6e475fb8,#3a2639ed);box-shadow:inset 0 1px 0 #ffe3ec33,0 2px 5px #2d1a3266;color:#fff1ee;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .pd-name {font-weight:650;letter-spacing:.01em;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .pd-sub {font-size:9px;letter-spacing:.07em;color:#f3d4df;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-tabs {gap:4px;padding:1px;flex:0 1 auto;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-tab {font-size:11px;font-weight:650;padding:0 11px;white-space:nowrap;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-tab.active {background:linear-gradient(180deg,#ffdaed,#dc93bc 70%,#ce83b1);color:#28192e;border-color:#ffe1f2;box-shadow:inset 0 1px 1px #fff9,0 0 9px #edb1dc80;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-sec {
+  background:linear-gradient(165deg,rgba(107,65,91,.67),rgba(45,29,49,.89) 60%,rgba(108,65,87,.75));
+  border:1px solid #f0c3cf8c;border-radius:8px;box-shadow:inset 0 1px 0 #ffe4ed45,inset 0 -1px 7px #dc92a438,0 2px 6px #22142866;
+  color:#fff2ee;text-shadow:0 1px 2px #291629;
+}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-sec h4 {font:650 11px/1.18 "Avenir Next",system-ui,sans-serif;letter-spacing:.075em;color:#ffebdf;padding:1px 0 3px;border-bottom:1px solid #f1c6d040;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-sec h4::before {content:"◇";font-size:9px;color:#f6c59e;margin-right:4px;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-choice-btn {background:linear-gradient(180deg,#79556e80,#3f2b3de8);border:1px solid #e5afc174;border-radius:5px;color:#fff2ee;box-shadow:inset 0 1px 0 #fff3,0 1px 2px #24152455;font-weight:650;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-choice-btn.active {background:linear-gradient(180deg,#ffdaed,#e4a4c9 50%,#c37ca6);border-color:#ffe2ed;color:#281b2c;box-shadow:inset 0 1px 1px #fff8,0 0 7px #ffc1d66b;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .sk-cap {background:radial-gradient(ellipse at 30% 16%,#fff0f6 0%,#d9a6c7 15%,#9d6289 34%,#704762 66%,#44293e 94%);border:1px solid #f0bbd1;box-shadow:inset 0 1px 2px #fff5,0 2px 4px #241326;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .sk-skirt {background:linear-gradient(155deg,#edb7cf,#4f304a 43%,#251c2d 66%,#b47997);border-color:#ca99b0;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .sk-ind {background:#fff5f6;box-shadow:0 0 3px #fff6;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] :is(.sk-label,.sk-val) {color:#fff0eb;font-family:"Avenir Next",system-ui,sans-serif;letter-spacing:.005em;font-weight:600;text-shadow:0 1px 2px #29152b;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .sk-val {color:#f9dce4;font-weight:500;}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .sk-caption {color:#fce0df;font-weight:600;}
+/* Two flush rows at desktop size, all controls including Motion values visible. */
+@media(min-width:981px){
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sections {grid-template-rows:minmax(min-content,1fr) minmax(min-content,1fr);grid-auto-rows:max-content;align-content:stretch;gap:5px;padding:1px 1px 2px;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec:nth-child(n) {padding:5px 6px;gap:3px;min-height:min-content;align-content:start;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec:is(:nth-child(2),:nth-child(3),:nth-child(4)){grid-template-rows:auto auto minmax(0,1fr) auto;align-content:stretch;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec:nth-child(2)>.sk-caption {grid-row:3;align-self:end;line-height:1;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec:is(:nth-child(2),:nth-child(3),:nth-child(4))>.sk-row {grid-row:4;align-self:end;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec:nth-child(5) {gap:2px;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec:nth-child(5) .synth-choice-btn {min-height:19px;height:19px;padding:0 3px;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec:not(:nth-child(5)) .synth-choice-btn {min-height:22px;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .sk-row>.sk {--k:clamp(25px,3.9vh,34px);min-height:0;padding:0;gap:0;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .sk-label {font-size:10px;line-height:1.1;margin-top:2px;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .sk-val {font-size:10px;line-height:1.05;min-height:10px;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"][data-page="all"] .synth-sec:nth-child(n+6) .sk-row {margin-top:3px;}
+}
+@media(max-width:980px){
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-top{display:flex;flex-wrap:nowrap;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-scope{flex:1 1 80px;max-width:28%;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-sections{grid-auto-rows:max-content;}
+}
+@media(max-width:650px){
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-brand{padding-left:0;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-brand::before{display:none;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-machine-select{font-size:22px;}
+  html:not(.is-plugin) #sy1-panel .synth-panel[data-machine="yazd"] .synth-tabs{flex-basis:100%;}
 }

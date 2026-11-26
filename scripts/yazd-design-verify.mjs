@@ -31,6 +31,12 @@ try{
  mkdirSync("design-preview",{recursive:true});
  const snap=async name=>{const shot=await cdp.send("Page.captureScreenshot",{format:"png"});writeFileSync("design-preview/"+name+".png",Buffer.from(shot.data,"base64"));};
  await snap("Yazd-desktop");
+ const checkGlass=await cdp.evaluate(`(()=>{const card=document.querySelector(".synth-sec"),k=document.querySelector(".synth-panel[data-machine=yazd] .synth-scope");return {background:getComputedStyle(card).backgroundImage,scope:k instanceof HTMLCanvasElement};})()`);
+ assert(checkGlass.background.includes("rgba"));assert(checkGlass.scope);
+ await cdp.send("Emulation.setDeviceMetricsOverride",{width:1440,height:775,deviceScaleFactor:1,mobile:false});await sleep(100);
+ const laptop=await inspect();assert(laptop.overflow<=2);assert(laptop.scroll<=8,JSON.stringify({scroll:laptop.scroll,visible:laptop.visible}));
+ const clipped=await cdp.evaluate(`(()=>{const s=document.querySelector(".synth-sections"),r=s.getBoundingClientRect();return [...s.querySelectorAll(".sk-val")].filter(k=>k.getBoundingClientRect().bottom>r.bottom+8).length;})()`);assert.equal(clipped,0,"no clipped parameter values on laptop");await snap("Yazd-laptop");
+ await cdp.send("Emulation.setDeviceMetricsOverride",{width:1440,height:850,deviceScaleFactor:1,mobile:false});await sleep(50);
  await cdp.evaluate('document.querySelector("[data-st-page=osc]").click()');await snap("Yazd-osc");
  for(const page of ["osc","filter","motion","space","all"]){await cdp.evaluate(`document.querySelector('[data-st-page=${page}]').click()`);const state=await inspect();assert.deepEqual(state.keys,initial.keys);assert(state.visible>0);}
  await cdp.send("Emulation.setDeviceMetricsOverride",{width:1024,height:768,deviceScaleFactor:1,mobile:false});
