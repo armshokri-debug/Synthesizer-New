@@ -1792,7 +1792,7 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         case "record":
           if (studioEngine.getTransportSnapshot().recording) void studioEngine.stop();
-          else void studioEngine.record();
+          else void studioEngine.record({ patternTrackId: instrumentFocusMode && studioEngine.getFocusedTrack().isDrumTrack() ? studioEngine.getFocusedTrack().id : undefined });
           break;
         case "toggle-loop":
           studioEngine.setLoopEnabled(!studioEngine.getTransportSnapshot().loopEnabled);
