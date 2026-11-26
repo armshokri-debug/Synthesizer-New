@@ -1,11 +1,15 @@
 // Browser acceptance: actual 3-track project, IndexedDB restore, MIDI and WAV exports.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CdpClient, sleep, waitForCdp } from "./studio-cdp.mjs";
 
 const port = 9281;
+const profile = mkdtempSync(join(tmpdir(), "sy1-ci-chrome-"));
 const chrome = spawn(process.env.SY1_CHROME_BIN || "/usr/bin/chromium",
-  ["--headless", "--no-sandbox", "--disable-gpu", "--autoplay-policy=no-user-gesture-required",
+  ["--user-data-dir="+profile, "--headless", "--no-sandbox", "--disable-gpu", "--autoplay-policy=no-user-gesture-required",
    "--remote-debugging-port=" + port, "about:blank"], { stdio: "ignore" });
 let cdp;
 const errors = [];
@@ -96,4 +100,5 @@ try {
   assert.deepEqual(report.solo,[report.drumId]);
   assert.deepEqual(errors,[]);
   console.log("PASS: three-track IndexedDB save/restore, 96 BPM, PCM24 Mix/Stems, MIDI and mixer routing",JSON.stringify(report));
-} finally { cdp?.close();chrome.kill(); }
+} finally { cdp?.close();chrome.kill();
+  chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}}); }
