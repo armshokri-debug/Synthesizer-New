@@ -5,11 +5,15 @@
 // This is intentionally a new acceptance gate, not evidence of a passing build.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CdpClient, sleep, waitForCdp } from "./studio-cdp.mjs";
 
 const port = 9281;
+const profile = mkdtempSync(join(tmpdir(), "sy1-ci-chrome-"));
 const chrome = spawn(process.env.SY1_CHROME_BIN || "/usr/bin/chromium",
-  ["--headless", "--no-sandbox", "--disable-gpu",
+  ["--user-data-dir="+profile, "--headless", "--no-sandbox", "--disable-gpu",
    "--autoplay-policy=no-user-gesture-required",
    "--remote-debugging-port=" + port, "about:blank"], { stdio: "ignore" });
 let cdp;
@@ -133,4 +137,5 @@ try {
 } finally {
   cdp?.close();
   chrome.kill();
+  chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}});
 }
