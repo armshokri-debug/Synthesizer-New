@@ -45,6 +45,16 @@ try {
   const playing = () => cdp.evaluate("window.SY1_STUDIO.engine.getTransportSnapshot().playing");
   const regions = () => cdp.evaluate("(()=>{const e=window.SY1_STUDIO.engine;return e.regions.regions(e.getFocusedTrack().id);})()");
   const before = await regions();
+  // The original drum faceplate's tempo controls must update the same project BPM.
+  const tempo = () => cdp.evaluate(`(() => {
+    const e = SY1_STUDIO.engine;
+    return [e.getBpm(), Number(document.querySelector("#sy1-panel [data-st-project-bpm]").textContent)];
+  })()`);
+  assert.deepEqual(await tempo(), [120, 120]);
+  await cdp.evaluate('document.querySelector("#sy1-panel [data-st-action=bpm-down]").click()');
+  assert.deepEqual(await tempo(), [119, 119]);
+  await cdp.evaluate('document.querySelector("#sy1-panel [data-st-action=bpm-up]").click()');
+  assert.deepEqual(await tempo(), [120, 120]);
   await click("track-drum-preview");
   assert.equal(await cdp.evaluate("document.querySelector('[data-st-action=track-drum-preview]').getAttribute('aria-pressed')"), "true");
   const signal = await cdp.evaluate(`(async () => {
@@ -62,6 +72,18 @@ try {
   assert(preview.length >= 2 && preview.every(hit => hit.source === "drum-preview"));
   assert(Math.abs(preview[1].audioTime - preview[0].audioTime - 0.5) < 0.005);
 
+  // Measure actual audio-clock dispatch spacing at a second, non-default tempo.
+  await click("track-drum-preview");
+  await cdp.evaluate("SY1_STUDIO.engine.setBpm(90); window.__drumDispatch.length = 0");
+  assert.deepEqual(await tempo(), [90, 90]);
+  await click("track-drum-preview");
+  await sleep(900);
+  const slower = await cdp.evaluate("window.__drumDispatch.filter(hit => hit.event.type === 'noteOn')");
+  assert(slower.length >= 2 && slower.every(hit => hit.source === "drum-preview"));
+  assert(Math.abs(slower[1].audioTime - slower[0].audioTime - 2/3) < 0.005);
+  await click("track-drum-preview");
+  await cdp.evaluate("SY1_STUDIO.engine.setBpm(120)");
+  await click("track-drum-preview");
   await cdp.evaluate("window.__drumDispatch.length = 0; window.SY1_STUDIO.engine.play()");
   await sleep(680);
   assert.equal(await playing(), true);
