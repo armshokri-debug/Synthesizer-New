@@ -229,7 +229,7 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
   const presetGroup = curKit ? `${curKit.group} · Kit` : curPreset ? curPreset.group : "Edited sound";
   const frame = renderInstrumentFrame({
     attributes: `class="synth-panel st-embedded-synth" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}" data-page="${escapeHtml(validPage)}"`,
-    top: `<div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" data-st-action="open-browser-for-track" title="Choose instrument for this track">${escapeHtml(m.name)}</button>${focusMode ? '<button type="button" class="synth-midi-btn synth-studio-btn" id="open-studio-btn" data-st-action="close-track-instrument" title="Return to Studio arrangement">Studio</button>' : ""}</div>
+    top: `<div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" data-st-action="open-browser-for-track" title="Choose instrument for this track">${escapeHtml(m.name)}</button>${focusMode ? '<button type="button" class="synth-midi-btn synth-studio-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio arrangement">Studio</button>' : ""}</div>
       <span class="st-embedded-track-tag">${escapeHtml(track.name)}</span>`,
     subbar: `<div class="synth-preset-nav">
       <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-prev" aria-label="Previous preset">◀</button>
