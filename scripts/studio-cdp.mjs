@@ -3,7 +3,7 @@ export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function waitForCdp(port, timeoutMs = 15000) {
+export async function waitForCdp(port, timeoutMs = 45000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
