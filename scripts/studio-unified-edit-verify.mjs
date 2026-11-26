@@ -87,7 +87,7 @@ try {
   })()`);
   assert(editResult, "Original instrument control must edit the selected track directly");
   const back = () => cdp.evaluate(`(() => {
-    const button = document.querySelector("#sy1-panel #open-studio-btn");
+    const button = document.querySelector("#sy1-panel #st-inst-back-btn");
     if (!button || !button.getClientRects().length) throw new Error("Original Studio button unavailable");
     button.click();
   })()`);
