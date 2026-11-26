@@ -215,7 +215,7 @@ function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionD
   return renderInstrumentSection(sec,index,body,isOnPage);
 }
 
-export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string, focusMode = false, overlay = ""): string {
+export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string, focusMode = false, overlay = "", projectBpm?: number): string {
   const m: MachineDef = getStudioMachineDef(track.machineId);
   const pages = m.pages;
   const validPage = pageFilter === "all" || pages.some((p) => p.id === pageFilter) ? pageFilter : "all";
@@ -236,6 +236,12 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
       <button type="button" class="preset-display synth-preset-select" data-st-action="open-browser-for-track" title="Choose preset">${renderInstrumentPresetLabel(presetLabel,presetGroup)}</button>
       <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-next" aria-label="Next preset">▶</button>
       </div>
+      ${m.tempo && projectBpm !== undefined ? `<div class="synth-tempo" role="group" aria-label="Project tempo">
+        <button type="button" class="synth-midi-btn tempo-step-btn" data-st-action="bpm-down" aria-label="Slower">−</button>
+        <button type="button" class="synth-tempo-val" data-st-action="bpm-tap" data-st-project-bpm title="Project BPM · Tap tempo">${projectBpm}</button>
+        <button type="button" class="synth-midi-btn tempo-step-btn" data-st-action="bpm-up" aria-label="Faster">+</button>
+        <button type="button" class="synth-midi-btn tempo-tap-btn" data-st-action="bpm-tap">TAP</button>
+      </div>` : ""}
       ${renderInstrumentTabs([{id:"all",label:"ALL"},...pages],validPage,true)}`,
     sections: m.sections.map((sec, idx) => renderStudioSection(track, m, sec, idx, validPage)).join(""),
     sectionClass: validPage !== "all" ? " is-filtered" : "",
