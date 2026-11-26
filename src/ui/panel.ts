@@ -832,7 +832,7 @@ export function initPanelInteractions(): void {
   onEngineChange(updateEngineDOM);
   onMachineChange(() => { connOpen = false; renderPanel(); });
   onTempoChange((bpm) => {
-    document.querySelectorAll(".synth-tempo-val").forEach((el) => (el.textContent = fmtBpm(bpm)));
+    document.querySelectorAll(".synth-tempo-val:not([data-st-project-bpm])").forEach((el) => (el.textContent = fmtBpm(bpm)));
   });
   onSyncChange(updateSyncDOM);
   updateSyncDOM();
