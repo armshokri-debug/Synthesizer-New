@@ -10,7 +10,6 @@ import {
   getLearnTargetParam,
   getMidiInputs,
   getMidiStatusMessage,
-  getParamMappedCc,
   getSelectedMidiChannel,
   getSelectedMidiDevice,
   isLearnMode,
@@ -82,54 +81,18 @@ import {
 import type { ControlDef, SectionDef } from "../machines/types";
 import { euclidHit, onArpStep } from "../engine/arp";
 import { getBaseMidi, renderKeyboard } from "./keyboard";
-import { renderSynthKnob, updateMidiLearnDOM, updateSynthControlDOM } from "./knob";
+import { renderSynthKnob, standaloneControlContext, updateMidiLearnDOM, updateSynthControlDOM } from "./knob";
+import { renderInstrumentChoice, renderInstrumentControl } from "./instrument-controls";
+import { renderInstrumentFrame } from "./instrument-frame";
 import { onPluginVisualFrame, queueVisualUpdate } from "./plugin-visuals";
 
 // ------------------------------------------------------------ controls ----
 export function renderSynthChoice(key: string, options: [string, string, string?][]): string {
-  const patch = getSynthPatch();
-  const mapped = isParamMapped(key);
-  const cc = getParamMappedCc(key);
-  const learning = isLearnMode() && getLearnTargetParam() === key;
-  const titleAttr = mapped ? ` title="Mapped to CC${cc} (right-click to unmap)"` : "";
-  return `<div class="synth-choice${mapped ? " is-mapped" : ""}${learning ? " is-learning" : ""}" data-param="${key}"${titleAttr}>` +
-    options.map(([val, txt, title]) =>
-      `<button type="button" class="synth-choice-btn ${patch[key] === val ? "active" : ""}" data-action="synth-set" data-param="${key}" data-value="${val}" title="${title || val}">${txt}</button>`
-    ).join("") +
-    `<span class="sk-dot"></span></div>`;
+  return renderInstrumentChoice(standaloneControlContext(), key, options);
 }
 
 export function renderControl(c: ControlDef): string {
-  const patch = getSynthPatch();
-  if (c.kind === "choice") return renderSynthChoice(c.key, c.options);
-  if (c.kind === "toggles") {
-    return `<div class="synth-choice synth-toggles">` + c.items.map((it) => {
-      const on = it.on || "on";
-      const off = it.off || "off";
-      const active = patch[it.key] === on;
-      return `<button type="button" class="synth-choice-btn synth-toggle-btn ${active ? "active" : ""}" data-action="synth-toggle" data-param="${it.key}" data-on="${on}" data-off="${off}" aria-pressed="${active}" title="${escapeHtml(it.title || it.label)}">${it.label}</button>`;
-    }).join("") + `</div>`;
-  }
-  if (c.kind === "select") {
-    return `<label class="synth-param-select-wrap"><span>${escapeHtml(c.label)}</span><select class="synth-midi-select synth-param-select" data-param="${c.key}" aria-label="${escapeHtml(c.label)}">` +
-      c.options.map(([v, t]) => `<option value="${v}"${patch[c.key] === v ? " selected" : ""}>${escapeHtml(t)}</option>`).join("") +
-      `</select></label>`;
-  }
-  // knob row
-  const isLg =
-    !c.small &&
-    c.knobs.some(
-      ([k]) =>
-        k === "cutoff" ||
-        k === "res" ||
-        k === "oscMix" ||
-        k === "volume" ||
-        k === "delayMix" ||
-        k === "revMix"
-    );
-  const cls = "sk-row" + (c.small ? " sk-row-small" : isLg ? " sk-row-lg" : "");
-  return (c.caption ? `<div class="sk-caption">${escapeHtml(c.caption)}</div>` : "") +
-    `<div class="${cls}">${c.knobs.map(([k, l]) => renderSynthKnob(k, l)).join("")}</div>`;
+  return renderInstrumentControl(standaloneControlContext(), c);
 }
 
 // --------------------------------------------------------- drum sections ----
@@ -601,14 +564,14 @@ function setConnOpen(v: boolean): void {
 
 function applyPageVisibility(): void {
   const m = getMachine();
-  const panel = document.querySelector<HTMLElement>(".synth-panel");
+  const panel = document.querySelector<HTMLElement>("#sy1-panel .synth-panel");
   const shell = document.querySelector<HTMLElement>(".sy1-shell");
   if (!panel) return;
   if (!(allowAllPage() && currentPage === "all") && !m.pages.some((p) => p.id === currentPage)) currentPage = m.pages[0].id;
   panel.setAttribute("data-page", currentPage);
 
   const activePages = new Set<string>(currentPage === "all" ? m.pages.map(p => p.id) : [currentPage]);
-  const wideFitPaged = !!shell && shell.classList.contains("is-fit-paged") && window.innerWidth >= 761;
+  const wideFitPaged = !allowAllPage() && !!shell && shell.classList.contains("is-fit-paged") && window.innerWidth >= 761;
   if (wideFitPaged && m.pages.length > 1) {
     const curSecs = m.sections.filter((s) => s.page === currentPage);
     if (curSecs.length === 1) {
@@ -628,7 +591,7 @@ function applyPageVisibility(): void {
   if (visibleSecs[0]) visibleSecs[0].classList.add("is-page-first");
   panel.setAttribute("data-count", String(visibleSecs.length));
 
-  document.querySelectorAll<HTMLElement>(".synth-tab").forEach((t) => {
+  panel.querySelectorAll<HTMLElement>(".synth-tab").forEach((t) => {
     const pg = t.getAttribute("data-page") || "";
     const isPrimary = pg === currentPage;
     const isShown = activePages.has(pg);
@@ -689,9 +652,9 @@ export function renderSynthPanelHtml(): string {
         <button type="button" class="synth-midi-btn tempo-sync-btn${getSync() ? " active" : ""}" data-action="tempo-sync" aria-pressed="${getSync() ? "true" : "false"}" title="SYNC on: tempo and Play/Stop follow the DAW. Off: SY-1 keeps its own tempo.">SYNC</button>
       </div>`
     : "";
-  return `
-    <div class="synth-panel" dir="ltr" data-machine="${m.id}">
-      <div class="synth-top">
+  return renderInstrumentFrame({
+    attributes: `class="synth-panel" dir="ltr" data-machine="${m.id}"`,
+    top: `
         <div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" id="machine-btn" aria-haspopup="dialog" aria-expanded="false" title="Choose an instrument">${escapeHtml(m.name)}</button><select class="sr-only" id="machine-select" aria-hidden="true" tabindex="-1">${renderMachineOptions()}</select>${!(globalThis as any).__SY1_PLUGIN__ ? `<button type="button" class="synth-midi-btn synth-studio-btn" id="open-studio-btn" data-action="studio-open" title="Open SY-1 Studio multi-track recorder">Studio</button>` : ""}</div>
         <canvas class="synth-scope" width="320" height="56" aria-hidden="true"></canvas>
         <div class="synth-out">${renderMasterKnob()}${renderRecButton()}</div>
@@ -727,9 +690,8 @@ export function renderSynthPanelHtml(): string {
             </div>
             <button type="button" class="synth-midi-btn conn-daw-btn" data-daw="open">DAW &amp; RECORDING…</button>
           </div>
-        </div>
-      </div>
-      <div class="synth-subbar">
+        </div>`,
+    subbar: `
         <div class="synth-preset-nav">
           <button type="button" class="synth-midi-btn preset-step-btn" data-action="preset-prev" aria-label="Previous preset">◀</button>
           <button type="button" class="preset-display synth-preset-select" id="preset-btn" aria-haspopup="dialog" aria-expanded="false" title="Open the sound library">${renderPresetButton()}</button>
@@ -737,13 +699,10 @@ export function renderSynthPanelHtml(): string {
         </div>
         ${tempo}
         <nav class="synth-tabs" role="tablist" aria-label="Panel pages">${(allowAllPage() ? [{id: "all", label: "ALL"}, ...m.pages] : m.pages).map((pg) =>
-          `<button type="button" class="synth-tab" role="tab" data-action="synth-page" data-page="${pg.id}">${escapeHtml(pg.label)}</button>`).join("")}</nav>
-      </div>
-      <div class="synth-sections">
-        ${m.sections.map(renderSection).join("")}
-      </div>
-      <div class="synth-hint">Drag a knob up/down (or scroll / arrow keys) · double-click to reset · right-click (or long-press in LEARN) unmaps CC · keys A W S E D F T G Y H U J K · Z/X = octave</div>
-    </div>`;
+          `<button type="button" class="synth-tab" role="tab" data-action="synth-page" data-page="${pg.id}">${escapeHtml(pg.label)}</button>`).join("")}</nav>`,
+    sections: m.sections.map(renderSection).join(""),
+    hint: "Drag a knob up/down (or scroll / arrow keys) · double-click to reset · right-click (or long-press in LEARN) unmaps CC · keys A W S E D F T G Y H U J K · Z/X = octave"
+  });
 }
 
 export function updateSynthPresetDOM(): void {
@@ -878,7 +837,7 @@ export function renderPanel(): void {
  */
 export function fitPanel(): void {
   const shell = document.querySelector<HTMLElement>(".sy1-shell");
-  const panel = document.querySelector<HTMLElement>(".synth-panel");
+  const panel = document.querySelector<HTMLElement>("#sy1-panel .synth-panel");
   if (!shell || !panel) return;
   shell.classList.remove("is-fit-paged");
   applyPageVisibility();
@@ -890,7 +849,7 @@ export function fitPanel(): void {
     Array.from(panel.querySelectorAll<HTMLElement>(".synth-sec")).some(
       (s) => getComputedStyle(s).display !== "none" && s.scrollHeight > s.clientHeight + 1
     );
-  if (currentPage !== "all" && !window.matchMedia(PAGED_MQ).matches && overflowing()) {
+  if (!allowAllPage() && currentPage !== "all" && !window.matchMedia(PAGED_MQ).matches && overflowing()) {
     shell.classList.add("is-fit-paged");
   }
   applyPageVisibility();
@@ -910,12 +869,12 @@ function bindPanelElements(): void {
   if (chSelect) chSelect.addEventListener("change", () => setSelectedMidiChannel(parseInt(chSelect.value, 10) || 0));
   const machineSel = document.getElementById("machine-select") as HTMLSelectElement | null;
   if (machineSel) machineSel.addEventListener("change", () => { setMachine(machineSel.value); });
-  document.querySelectorAll<HTMLSelectElement>(".synth-param-select").forEach((sel) => {
+  document.querySelectorAll<HTMLSelectElement>("#sy1-panel .synth-param-select").forEach((sel) => {
     sel.addEventListener("change", () => { setSynthParam(sel.getAttribute("data-param")!, sel.value); sel.blur(); });
   });
 
   // Swipe left/right on empty panel space to change page (paged layouts only).
-  const sections = document.querySelector(".synth-sections") as HTMLElement | null;
+  const sections = document.querySelector("#sy1-panel .synth-sections") as HTMLElement | null;
   if (sections) {
     let swipe: { x: number; y: number; id: number } | null = null;
     sections.addEventListener("pointerdown", (e) => {

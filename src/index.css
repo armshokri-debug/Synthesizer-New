@@ -3665,3 +3665,80 @@ html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .synth-sections {
   scrollbar-color: var(--accent) transparent;
 }
 html:not(.is-plugin) #sy1-panel .synth-panel[data-page="all"] .sk-caption { display: block; }
+
+/* Web instrument pages: keep the original materials and controls, but size
+   cards from their content. Never let old full-panel height probes clip a tab.
+   Unlike All, a named tab shows exactly its own page. Native/plugin unchanged. */
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-sec:not(.is-on-page) { display: none; }
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr));
+  grid-template-rows: none;
+  grid-auto-flow: row;
+  grid-auto-rows: minmax(min-content, auto);
+  align-content: start;
+  align-items: stretch;
+  gap: clamp(5px, 0.8vw, 10px);
+  padding: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-sec.is-on-page {
+  display: flex;
+  flex-flow: column nowrap;
+  align-items: stretch;
+  justify-content: start;
+  gap: clamp(4px, 0.8vh, 10px);
+  min-height: min-content;
+  height: auto;
+  max-height: none;
+  grid-column: auto;
+  grid-row: auto;
+  container-type: inline-size;
+  contain: none;
+  padding: clamp(5px, 0.8vw, 12px);
+}
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-sec.is-on-page.sec-wide,
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-sec.is-on-page:has(.drum-steps) { grid-column: 1 / -1; }
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-sec.is-on-page > * {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 100%; min-width: 0; max-width: 100%; margin: 0;
+}
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .sk-row {
+  display: flex; flex-flow: row wrap; align-items: start; justify-content: space-evenly;
+  height: auto; min-height: min-content; width: 100%; margin: 0; gap: 4px;
+  --k-in: clamp(28px, 5vh, 48px);
+}
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .sk-row > .sk {
+  --k: clamp(26px, 4.5vh, 42px);
+  flex: 0 1 clamp(48px, 6vw, 68px); min-width: 46px; width: auto;
+  min-height: min-content; max-width: 100%; box-sizing: border-box;
+  padding: 3px 2px 2px;
+}
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .sk-label,
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .sk-val {
+  font-size: clamp(0.61rem, 1.15vh, 0.78rem); line-height: 1.2; white-space: normal; overflow-wrap: anywhere; text-align: center;
+}
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-choice { flex-wrap: wrap; }
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-choice-btn { flex: 1 1 34px; min-height: 30px; white-space: normal; }
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-custom { min-width: 0; max-width: 100%; }
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: thin; touch-action: pan-x; }
+html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-tab { flex-shrink: 0; }
+@media (max-width: 900px) {
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-subbar { flex-wrap: wrap; }
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-tabs { flex: 1 0 100%; margin-left: 0; }
+}
+@media (max-width: 600px) {
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-sections { grid-template-columns: minmax(0, 1fr); }
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .sk-row > .sk { --k: 36px; flex-basis: 53px; min-height: 58px; }
+}
+@media (min-width: 761px) and (min-height: 561px) {
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .synth-sec.is-on-page { gap: 4px; padding-block: 6px; }
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel:not([data-page="all"]) .sk-row > .sk { --k: clamp(26px, 4.2vh, 40px); padding-block: 2px; }
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel[data-page="sound"]:is([data-machine="kerman"],[data-machine="bushehr"],[data-machine="rasht"],[data-machine="hormoz"]) .synth-sections { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel[data-page="sound"]:is([data-machine="kerman"],[data-machine="bushehr"],[data-machine="rasht"],[data-machine="hormoz"]) .synth-sec.is-on-page { grid-column: auto; }
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel[data-page="sound"]:is([data-machine="kerman"],[data-machine="bushehr"],[data-machine="rasht"],[data-machine="hormoz"]) .synth-custom[data-custom="drum-voice"] { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 4px; align-items: start; }
+  html:not(.is-plugin) :is(#sy1-panel, #sy1-studio) .synth-panel[data-page="sound"] .synth-custom[data-custom="drum-voice"] > .drum-voice-name { grid-column: 1 / -1; }
+}

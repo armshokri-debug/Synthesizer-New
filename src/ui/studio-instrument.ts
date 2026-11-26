@@ -15,7 +15,8 @@ import { escapeHtml, SYNTH_PARAMS, synthNorm } from "../engine/params";
 import { evalOrbitPoint } from "../engine/vector";
 import type { ControlDef, MachineDef, SectionDef } from "../machines/types";
 import { getDrumLabelsForTrack, getStudioMachineDef, SY1TrackEngine } from "../studio/track-engine";
-import { BIPOLAR_SCALE_SVG, UNIPOLAR_SCALE_SVG } from "./knob";
+import { renderInstrumentKnob, renderInstrumentChoice, renderInstrumentControl } from "./instrument-controls";
+import { renderInstrumentFrame } from "./instrument-frame";
 
 // Per-track selected drum voice in the Studio drum editor (never touches standalone drums.ts)
 const selectedDrumVoiceByTrack = new Map<string, DrumVoice>();
@@ -45,30 +46,11 @@ const VEC_PAD_SPAN = 176;
 const toSvgCoord = (norm: number): number => VEC_PAD_MIN + Math.max(0, Math.min(1, norm)) * VEC_PAD_SPAN;
 
 function renderStudioSynthKnob(track: SY1TrackEngine, key: string, label: string): string {
-  const def = SYNTH_PARAMS[key];
-  const raw = track.patch[key];
-  const v = typeof raw === "number" ? raw : Number(def?.def ?? 0);
-  const n = Math.max(0, Math.min(1, synthNorm(key, v)));
-  const fmtVal = def && def.fmt ? def.fmt(v) : String(v);
-  const isBipolar = typeof def?.min === "number" && typeof def?.max === "number" && def.min < 0 && def.max > 0;
-  const scaleSvg = isBipolar ? BIPOLAR_SCALE_SVG : UNIPOLAR_SCALE_SVG;
-
-  return `<div class="sk st-inst-knob" data-st-param="${escapeHtml(key)}" role="slider" tabindex="0" aria-label="${escapeHtml(label)}" aria-valuetext="${escapeHtml(fmtVal)}">
-      <div class="sk-dial" style="--n:${n.toFixed(4)}">${scaleSvg}<span class="sk-skirt"></span><span class="sk-cap"></span><span class="sk-rotor"><span class="sk-ind"></span></span><span class="sk-dot"></span></div>
-      <div class="sk-label">${escapeHtml(label)}</div>
-      <div class="sk-val">${escapeHtml(fmtVal)}</div>
-    </div>`;
+  return renderInstrumentKnob({ kind: "track", patch: track.patch }, key, label);
 }
 
 function renderStudioSynthChoice(track: SY1TrackEngine, key: string, options: [string, string, string?][]): string {
-  const cur = String(track.patch[key]);
-  return `<div class="synth-choice" data-st-choice="${escapeHtml(key)}">` +
-    options
-      .map(([val, txt, title]) =>
-        `<button type="button" class="synth-choice-btn${cur === val ? " active" : ""}" data-st-action="param-choice" data-st-param="${escapeHtml(key)}" data-st-value="${escapeHtml(val)}" title="${escapeHtml(title || val)}">${txt}</button>`
-      )
-      .join("") +
-    `<span class="sk-dot"></span></div>`;
+  return renderInstrumentChoice({ kind: "track", patch: track.patch }, key, options);
 }
 
 function renderStudioEuclidRings(track: SY1TrackEngine): string {
@@ -261,48 +243,7 @@ function renderStudioDrumVoice(track: SY1TrackEngine, m: MachineDef): string {
 }
 
 function renderStudioControl(track: SY1TrackEngine, c: ControlDef): string {
-  const patch = track.patch;
-  if (c.kind === "choice") return renderStudioSynthChoice(track, c.key, c.options);
-  if (c.kind === "toggles") {
-    return (
-      `<div class="synth-choice synth-toggles">` +
-      c.items
-        .map((it) => {
-          const on = it.on || "on";
-          const off = it.off || "off";
-          const active = String(patch[it.key]) === on;
-          return `<button type="button" class="synth-choice-btn synth-toggle-btn${active ? " active" : ""}" data-st-action="param-toggle" data-st-param="${escapeHtml(it.key)}" data-st-on="${escapeHtml(on)}" data-st-off="${escapeHtml(off)}" aria-pressed="${active}" title="${escapeHtml(it.title || it.label)}">${escapeHtml(it.label)}</button>`;
-        })
-        .join("") +
-      `</div>`
-    );
-  }
-  if (c.kind === "select") {
-    return (
-      `<label class="synth-param-select-wrap"><span>${escapeHtml(c.label)}</span>` +
-      `<select class="synth-midi-select st-synth-param-select" data-st-param-select="${escapeHtml(c.key)}" aria-label="${escapeHtml(c.label)}">` +
-      c.options
-        .map(([v, t]) => `<option value="${escapeHtml(v)}"${String(patch[c.key]) === v ? " selected" : ""}>${escapeHtml(t)}</option>`)
-        .join("") +
-      `</select></label>`
-    );
-  }
-  const isLg =
-    !c.small &&
-    c.knobs.some(
-      ([k]) =>
-        k === "cutoff" ||
-        k === "res" ||
-        k === "oscMix" ||
-        k === "volume" ||
-        k === "delayMix" ||
-        k === "revMix"
-    );
-  const cls = "sk-row" + (c.small ? " sk-row-small" : isLg ? " sk-row-lg" : "");
-  return (
-    (c.caption ? `<div class="sk-caption">${escapeHtml(c.caption)}</div>` : "") +
-    `<div class="${cls}">${c.knobs.map(([k, l]) => renderStudioSynthKnob(track, k, l)).join("")}</div>`
-  );
+  return renderInstrumentControl({ kind: "track", patch: track.patch }, c);
 }
 
 function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionDef, index: number, activePageId: string): string {
@@ -334,7 +275,7 @@ function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionD
   return `<section data-page="${escapeHtml(sec.page)}" data-sec="${index}" class="synth-sec${span}${sec.custom ? " synth-sec-custom" : ""}${isOnPage ? " is-on-page" : ""}"><h4>${escapeHtml(title)}</h4>${body}</section>`;
 }
 
-export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string): string {
+export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string, focusMode = false): string {
   const m: MachineDef = getStudioMachineDef(track.machineId);
   const pages = m.kind === "drums"
     ? m.pages.map((p) => (p.id === "steps" ? { id: p.id, label: "Pads & Kits" } : p))
@@ -348,46 +289,20 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
     : null;
   const presetLabel = curKit ? curKit.name : curPreset ? curPreset.name : track.presetName || "Custom";
   const presetGroup = curKit ? `${curKit.group} · Kit` : curPreset ? curPreset.group : "Edited sound";
-  const brandHtml =
-    m.id === "sy1"
-      ? `<span class="st-embedded-machine-name">SY-1</span>`
-      : `<span class="synth-brand-maker">SY-1 </span><span class="st-embedded-machine-name">${escapeHtml(m.name)}</span>`;
-
-  return `
-    <div class="st-inst-wrap">
-      <div class="st-embedded-chassis" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}">
-        <div class="synth-panel st-embedded-synth" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}" data-page="${escapeHtml(validPage)}">
-          <div class="synth-top st-embedded-top">
-            <div class="synth-brand">
-              ${brandHtml}
-              <span class="st-embedded-track-tag">${escapeHtml(track.name)}</span>
-            </div>
-            <div class="synth-preset-nav st-embedded-preset-nav">
-              <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-prev" aria-label="Previous preset">◀</button>
-              <button type="button" class="preset-display synth-preset-select" data-st-action="open-browser-for-track" title="Open Instrument Browser">
-                <span class="pd-text">
-                  <span class="pd-name">${escapeHtml(presetLabel)}</span>
-                  <span class="pd-sub">${escapeHtml(presetGroup)}</span>
-                </span>
-              </button>
-              <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-next" aria-label="Next preset">▶</button>
-            </div>
-            <nav class="st-inst-pages" role="tablist" aria-label="Instrument sections">
-              <button type="button" class="st-inst-page-btn${validPage === "all" ? " is-active" : ""}" role="tab" aria-selected="${validPage === "all"}" data-st-action="inst-page" data-st-page="all">All</button>
-              ${pages
-                .map(
-                  (pg) =>
-                    `<button type="button" class="st-inst-page-btn${validPage === pg.id ? " is-active" : ""}" role="tab" aria-selected="${validPage === pg.id}" data-st-action="inst-page" data-st-page="${escapeHtml(pg.id)}">${escapeHtml(pg.label)}</button>`
-                )
-                .join("")}
-            </nav>
-          </div>
-          <div class="synth-sections${validPage !== "all" ? " is-filtered" : ""}">
-            ${m.sections.map((sec, idx) => renderStudioSection(track, m, sec, idx, validPage)).join("")}
-          </div>
-        </div>
+  const frame = renderInstrumentFrame({
+    attributes: `class="synth-panel st-embedded-synth" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}" data-page="${escapeHtml(validPage)}"`,
+    top: `<div class="synth-brand"><span class="synth-brand-maker">SY-1 </span><button type="button" class="synth-machine-select" data-st-action="open-browser-for-track" title="Choose instrument for this track">${escapeHtml(m.name)}</button>${focusMode ? '<button type="button" class="synth-midi-btn synth-studio-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio arrangement">Studio</button>' : ""}</div>
+      <span class="st-embedded-track-tag">${escapeHtml(track.name)}</span>`,
+    subbar: `<div class="synth-preset-nav">
+      <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-prev" aria-label="Previous preset">◀</button>
+      <button type="button" class="preset-display synth-preset-select" data-st-action="open-browser-for-track" title="Choose preset"><span class="pd-text"><span class="pd-name">${escapeHtml(presetLabel)}</span><span class="pd-sub">${escapeHtml(presetGroup)}</span></span></button>
+      <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-next" aria-label="Next preset">▶</button>
       </div>
-    </div>`;
+      <nav class="synth-tabs st-inst-pages" role="tablist" aria-label="Panel pages">${[{ id: "all", label: "ALL" }, ...pages].map(pg => `<button type="button" class="synth-tab st-inst-page-btn${validPage === pg.id ? " active is-active" : ""}" role="tab" aria-selected="${validPage === pg.id}" data-st-action="inst-page" data-st-page="${escapeHtml(pg.id)}">${escapeHtml(pg.label)}</button>`).join("")}</nav>`,
+    sections: m.sections.map((sec, idx) => renderStudioSection(track, m, sec, idx, validPage)).join(""),
+    sectionClass: validPage !== "all" ? " is-filtered" : ""
+  });
+  return `<div class="st-inst-wrap"><div class="st-embedded-chassis" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}">${frame}</div></div>`;
 }
 
 /** Fast DOM-only knob update during Studio Instrument drag (zero innerHTML rebuild). */

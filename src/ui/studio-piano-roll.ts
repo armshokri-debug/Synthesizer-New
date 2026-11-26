@@ -691,10 +691,7 @@ function previewNote(midi: number, velocity = 0.82, durationMs = 220): void {
   if (!state.audition) return;
   studioEngine.prepareAudioSync();
   const track = studioEngine.getFocusedTrack();
-  track.noteOn(midi, velocity);
-  if (!track.isDrumTrack()) {
-    setTimeout(() => track.noteOff(midi), durationMs);
-  }
+  track.auditionNote(midi, velocity, durationMs);
 }
 
 /** Attach Piano Roll delegated events once on the Studio root container. */
@@ -1388,7 +1385,8 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const midi = Number(keyBtn.getAttribute("data-pr-key"));
       if (!Number.isFinite(midi)) return;
       studioEngine.prepareAudioSync();
-      studioEngine.getFocusedTrack().noteOn(midi, 0.88);
+      if (heldAuditionKey) heldAuditionKey.el.classList.remove("is-pressed");
+      studioEngine.getFocusedTrack().auditionNote(midi, 0.88, 350);
       keyBtn.classList.add("is-pressed");
       heldAuditionKey = { midi, pointerId: e.pointerId, el: keyBtn };
       try { keyBtn.setPointerCapture(e.pointerId); } catch (err) {}
@@ -1773,7 +1771,6 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     }
 
     if (heldAuditionKey && (!e || e.pointerId === heldAuditionKey.pointerId)) {
-      studioEngine.getFocusedTrack().noteOff(heldAuditionKey.midi);
       heldAuditionKey.el.classList.remove("is-pressed");
       heldAuditionKey = null;
     }
@@ -1890,6 +1887,14 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
 
   container.addEventListener("pointerup", endPointerOps);
   container.addEventListener("pointercancel", endPointerOps);
+  // Capture may be lost when a render replaces the key; no live note is owned
+  // by this gesture, but always clear its temporary pressed appearance.
+  container.addEventListener("lostpointercapture", (e) => {
+    if (heldAuditionKey?.pointerId === e.pointerId) {
+      heldAuditionKey.el.classList.remove("is-pressed");
+      heldAuditionKey = null;
+    }
+  });
   window.addEventListener("blur", () => endPointerOps());
 
   document.addEventListener("keydown", (e) => {

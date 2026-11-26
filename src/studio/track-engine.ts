@@ -681,6 +681,25 @@ export class SY1TrackEngine {
     }
   }
 
+  /** Editor-only audition: independent voice with an audio-clock note-off.
+   * Never enters the live/transport pitch maps, mono stack, HOLD or sustain state.
+   * A delayed editor release therefore cannot cut a later performance note.
+   * Normal preset release envelopes and effects are intentionally preserved. */
+  auditionNote(midi: number, velocity = 0.85, durationMs = 220): void {
+    const m = Math.max(0, Math.min(127, Math.round(midi)));
+    const vel = Math.max(1 / 127, Math.min(1, Number.isFinite(velocity) ? velocity : 0.85));
+    if (!Number.isFinite(m) || !this.ctx || !this.bus) return;
+    if (this.isDrumTrack()) {
+      this.noteOn(m, vel); // percussion is a self-terminating one-shot
+      return;
+    }
+    const start = this.ctx.currentTime + 0.005;
+    const duration = Math.max(0.035, Math.min(0.8, (Number.isFinite(durationMs) ? durationMs : 220) / 1000));
+    const voice = this.startVoice(m, vel, start);
+    // Schedule release on the same voice ID, not on the MIDI pitch.
+    voice?.release(start + duration);
+  }
+
   noteOn(midi: number, velocity = 0.85, at = 0): void {
     const m = Math.max(0, Math.min(127, Math.round(midi)));
     const vel = Math.max(1 / 127, Math.min(1, Number(velocity) || 0.85));

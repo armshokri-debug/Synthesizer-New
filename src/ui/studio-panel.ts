@@ -700,7 +700,7 @@ function renderStudioHtml(): string {
 
   let dockContent = "";
   if (instrumentFocusMode) {
-    dockContent = renderStudioInstrumentHtml(focused, instPageFilter);
+    dockContent = renderStudioInstrumentHtml(focused, instPageFilter, true);
   } else if (!dockCollapsed) {
     if (activeDockTab === "piano-roll") {
       dockContent = renderPianoRollHtml();
@@ -820,8 +820,7 @@ function renderStudioHtml(): string {
   }
 
   const topbarLeftHtml = instrumentFocusMode
-    ? `<button type="button" class="st-btn st-inst-back-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio arrangement">← Back to Studio</button>
-       <select class="st-select st-inst-focus-sel" id="st-inst-track-select" data-st-select="focus-track" aria-label="Editing track">
+    ? `<select class="st-select st-inst-focus-sel" id="st-inst-track-select" data-st-select="focus-track" aria-label="Editing track">
          ${tracks
            .map(
              (t) =>

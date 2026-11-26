@@ -3068,3 +3068,20 @@ html.is-studio #kb-scale-notes {
   #sy1-studio .st-daw.is-dock-expanded .st-dock-head .st-dock-focused { flex: 1 1 100px; }
 }
 #sy1-studio .st-arr-toolbar { flex: 0 0 auto; min-height: 44px; }
+
+/* Canonical instrument frame in track context. Studio transport stays active,
+   while Edit shows the original faceplate structure, not a note editor. */
+#sy1-studio .st-embedded-synth .synth-top { flex-wrap: wrap; align-items: center; }
+#sy1-studio .st-embedded-synth .synth-brand { min-width: 0; flex-wrap: nowrap; }
+#sy1-studio .st-embedded-synth .st-embedded-track-tag { margin-left: auto; max-width: 35%; overflow: hidden; text-overflow: ellipsis; }
+#sy1-studio .st-embedded-synth .synth-subbar { display: flex; flex-wrap: wrap; gap: 6px; }
+#sy1-studio .st-embedded-synth .synth-tabs { display: flex; flex-wrap: nowrap; overflow-x: auto; min-width: 0; max-width: 100%; }
+#sy1-studio .st-embedded-synth .synth-tab { flex: 0 0 auto; min-height: 36px; height: auto; }
+#sy1-studio .st-embedded-synth .synth-sections:not(.is-filtered) .synth-sec { min-height: max-content !important; }
+#sy1-studio .st-embedded-synth .synth-sections.is-filtered .synth-sec.is-on-page { min-height: min-content !important; }
+#sy1-studio .st-daw.is-inst-focus .st-inst-wrap { padding: 4px 8px; }
+#sy1-studio .st-daw.is-inst-focus .st-embedded-chassis { max-width: 1200px; padding: 0; box-shadow: none; border: 0; }
+#sy1-studio .st-daw.is-inst-focus .st-embedded-synth .synth-sections.is-filtered { grid-template-columns: repeat(auto-fit, minmax(min(100%,205px),1fr)) !important; }
+@media (max-width: 600px) {
+  #sy1-studio .st-daw.is-inst-focus .st-embedded-synth .synth-sections.is-filtered { grid-template-columns: minmax(0,1fr) !important; }
+}
