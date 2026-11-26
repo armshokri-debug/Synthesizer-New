@@ -1,3 +1,5 @@
+import { STUDIO_DRUM_BANK_KEY, normalizeTrackDrumBank } from "./track-drum-patterns";
+import { STUDIO_TUNING_KEY, normalizeStudioTuning } from "./track-tuning";
 /**
  * SY-1 Studio — Versioned Project Serialization, Export & Strict Validation (.sy1studio)
  *
@@ -95,6 +97,11 @@ function validateAndSanitizePatch(
     }
   }
 
+  if (STUDIO_TUNING_KEY in rawPatch) {
+    const offsets = normalizeStudioTuning(rawPatch[STUDIO_TUNING_KEY]);
+    if (offsets) out[STUDIO_TUNING_KEY] = offsets;
+    else warnings.push(`${trackLabel}: ignored invalid Studio custom tuning`);
+  }
   // Never restore latched keyboard hold from a saved project
   out.hold = "off";
   return out;
@@ -252,6 +259,12 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
     const patch = validateAndSanitizePatch(rt.patch, warnings, label, machineDef.base);
     if (!patch) {
       return { ok: false, error: `${label} is missing a valid patch object.` };
+    }
+
+    if (machineDef.kind === "drums" && isPlainObject(rt.patch) && STUDIO_DRUM_BANK_KEY in rt.patch) {
+      const bank = normalizeTrackDrumBank(rt.patch[STUDIO_DRUM_BANK_KEY]);
+      if (bank) patch[STUDIO_DRUM_BANK_KEY] = bank;
+      else warnings.push(`${label}: ignored invalid Studio drum bank`);
     }
 
     const volume = Number(rt.volume);

@@ -17,3 +17,5 @@
 .sr-settings label { margin-top:8px; }
 .sr-settings small { display:block; margin:6px 0; color:#b9bdc5; }
 @media(max-width:768px) { #synth-recording button,.sr-settings summary { min-height:44px; } #sr-status { order:2; } }
+
+#synth-recording #sr-pattern-option[hidden] { display:none; }

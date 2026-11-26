@@ -2891,9 +2891,9 @@ html.is-studio .sy1-shell::after {
 }
 
 /* ---------------------------------------------------------- Phase 7.3: Full-Size Per-Track Instrument Editor */
-html.is-studio #kb-arp,
-html.is-studio #kb-oriental,
-html.is-studio #kb-scale-notes {
+html.is-studio:not(.is-studio-instrument) #kb-arp,
+html.is-studio:not(.is-studio-instrument) #kb-oriental,
+html.is-studio:not(.is-studio-instrument) #kb-scale-notes {
   display: none !important;
 }
 
@@ -2901,8 +2901,7 @@ html.is-studio #kb-scale-notes {
 .st-daw.is-inst-focus .st-dock-resizer,
 .st-daw.is-inst-focus .st-dock-head,
 .st-daw.is-inst-focus .st-bars-group,
-.st-daw.is-inst-focus #st-open-btn,
-.st-daw.is-inst-focus .st-export-wrap {
+.st-daw.is-inst-focus #st-open-btn {
   display: none;
 }
 
@@ -3085,3 +3084,31 @@ html.is-studio #kb-scale-notes {
 @media (max-width: 600px) {
   #sy1-studio .st-daw.is-inst-focus .st-embedded-synth .synth-sections.is-filtered { grid-template-columns: minmax(0,1fr) !important; }
 }
+
+/* Reuse the original tuning popup in the track editor, without covering keys. */
+#sy1-studio .st-embedded-synth:has(.oriental-pop) { position: relative; }
+#sy1-studio .st-embedded-synth .oriental-pop { position: relative; inset: auto; max-height: min(60dvh, 460px); min-width: 0; margin-top: 6px; }
+#sy1-studio .st-embedded-synth:has(.oriental-pop) .synth-sections { display: none !important; }
+
+#sy1-studio .st-embedded-synth:has(.st-arp-pop) { position: relative; }
+#sy1-studio .st-embedded-synth .st-arp-pop { position: relative; inset: auto; max-height: min(60dvh, 460px); min-width: 0; margin-top: 6px; }
+#sy1-studio .st-embedded-synth:has(.st-arp-pop) .synth-sections { display: none !important; }
+
+/* Phase 7.7D: shared step grid, scoped to the track instrument. */
+#sy1-studio .st-track-pattern-toolbar { flex-wrap: wrap; gap: 6px; }
+#sy1-studio .st-track-pattern-toolbar .drum-slots { flex: 1 1 220px; min-width: 0; }
+#sy1-studio .st-track-pattern-toolbar .drum-slot { min-width: 0; min-height: 34px; }
+#sy1-studio .st-track-pattern-toolbar .synth-choice-btn { min-height: 34px; white-space: nowrap; }
+#sy1-studio .st-embedded-synth .synth-sec:has(.drum-steps) { grid-column: 1 / -1; min-width: 0; }
+#sy1-studio .st-embedded-synth .drum-steps { grid-template-columns: repeat(var(--len), minmax(0,1fr)); gap: 4px; }
+@media (max-width: 600px) {
+ #sy1-studio .st-embedded-synth .drum-steps { grid-template-columns: repeat(calc(var(--len) / 2), minmax(0,1fr)); }
+ #sy1-studio .st-embedded-synth .drum-step { min-height: 38px; }
+}
+
+/* The shared instrument faceplate is a full page, not another Studio dock. */
+#sy1-studio .st-instrument-page { display:flex; flex:1 1 auto; min-width:0; min-height:0; overflow:hidden; }
+#sy1-studio .st-instrument-page .st-inst-wrap { width:100%; }
+#sy1-studio .st-instrument-page .st-embedded-chassis { padding:var(--shell-pad,8px); background:var(--shell-bg); border-radius:var(--panel-radius,12px); }
+#sy1-studio .st-track-pattern-toolbar { display:flex; flex-wrap:wrap; gap:5px; }
+#sy1-studio .st-track-pattern-toolbar button { min-height:36px; }

@@ -1,3 +1,8 @@
+import { drumPatternMidi, editTrackDrumStep } from "../studio/track-drum-patterns";
+import { renderArpPanelHtml } from "./arp-view";
+import { renderInstrumentControl } from "./instrument-controls";
+import { renderOrientalPanelHtml } from "./oriental-view";
+import { getScale } from "../engine/scales";
 import { snapRegionTick } from "../studio/midi-regions";
 import { bindRegionControls, renderRegions } from "./studio-regions";
 /**
@@ -15,8 +20,8 @@ import { bindRegionControls, renderRegions } from "./studio-regions";
  */
 
 import { getMasterVolume, setMasterVolume } from "../engine/bus";
-import { DRUM_NOTES, DrumVoice } from "../engine/drums";
-import { escapeHtml, SYNTH_PARAMS, synthDenorm, synthNorm } from "../engine/params";
+import { DRUM_NOTES, DrumVoice, STEP_EDITS, emptyPattern } from "../engine/drums";
+import { escapeHtml, SYNTH_PARAMS, synthDenorm, synthNorm, parseScalaScl } from "../engine/params";
 import { fmtBpm } from "../engine/tempo";
 import type { MachineDef } from "../machines/types";
 import { createProjectId, parseStudioProjectJson, projectFilename, sanitizeProjectName } from "../studio/project-io";
@@ -40,6 +45,7 @@ import {
 import { machineArt } from "./machine-browser";
 import {
   getStudioSelectedDrumVoice,
+  getTrackDrumEdit, setTrackDrumEdit, setTrackDrumLiveView,
   renderStudioInstrumentHtml,
   setStudioSelectedDrumVoice,
   updateStudioInstrumentKnobDOM,
@@ -59,6 +65,29 @@ let dockCollapsed = true;
 let dockPinnedOpen = false;
 let dockHeightPx = 326;
 let instrumentFocusMode = false;
+let arpTrackKey: string | null = null;
+function studioArpTrack(): SY1TrackEngine | null {
+  if (!instrumentFocusMode || !arpTrackKey) return null;
+  const ft = studioEngine.getFocusedTrack();
+  return !ft.isDrumTrack() && arpTrackKey === `${ft.id}:${ft.machineId}` ? ft : null;
+}
+let orientalTrackId: string | null = null;
+let orientalMachineId: string | null = null;
+let orientalStatus = "";
+let orientalError = false;
+let orientalSession = 0;
+function closeStudioOriental(): void {
+  orientalTrackId = null;
+  orientalMachineId = null;
+  orientalStatus = "";
+  orientalError = false;
+  orientalSession++;
+}
+function studioOrientalTrack(): SY1TrackEngine | null {
+  if (!instrumentFocusMode || !orientalTrackId) return null;
+  const ft = studioEngine.getFocusedTrack();
+  return ft.id === orientalTrackId && ft.machineId === orientalMachineId && !ft.isDrumTrack() ? ft : null;
+}
 let preInstFocusState: {
   dockTab: StudioDockTab;
   dockCollapsed: boolean;
@@ -151,6 +180,8 @@ export function isStudioInstrumentFocusOpen(): boolean {
 function exitInstrumentFocusMode(restoreState = true): void {
   if (!instrumentFocusMode) return;
   instrumentFocusMode = false;
+  arpTrackKey = null;
+  closeStudioOriental();
   const prev = preInstFocusState;
   preInstFocusState = null;
   if (restoreState && prev) {
@@ -172,7 +203,21 @@ function preferExpandedNoteEditor(): boolean {
   return window.matchMedia("(max-width: 600px), (max-height: 500px)").matches;
 }
 
+function openInstrumentPage(): void {
+  if (!instrumentFocusMode) {
+    preInstFocusState = {dockTab:activeDockTab,dockCollapsed,dockExpanded,browserOpen,keysVisible};
+    instrumentFocusMode = true;
+    browserOpen = false;
+    keysVisible = true;
+    applyKeyboardVisibility();
+  }
+  activeDockTab = "instrument";
+  dockCollapsed = false;
+  renderStudioPanel();
+}
 export function setStudioDockTab(tab: StudioDockTab): void {
+  if (tab === "instrument") { openInstrumentPage(); return; }
+  if (instrumentFocusMode) exitInstrumentFocusMode(true);
   activeDockTab = tab;
   if (tab === "piano-roll" && preferExpandedNoteEditor()) dockExpanded = true;
   dockCollapsed = false;
@@ -648,7 +693,7 @@ function stIcon(name: keyof typeof STUDIO_ICONS): string {
   return `<svg class="st-ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${STUDIO_ICONS[name]}</svg>`;
 }
 
-function renderStudioHtml(): string {
+export function renderStudioHtml(): string {
   const tr = studioEngine.getTransportSnapshot();
   const tracks = studioEngine.getTracks();
   const focused = studioEngine.getFocusedTrack();
@@ -698,16 +743,19 @@ function renderStudioHtml(): string {
     })
     .join("");
 
+  setTrackDrumLiveView(focused,studioEngine.isLiveDrumEnabled(focused.id));
   let dockContent = "";
   if (instrumentFocusMode) {
-    dockContent = renderStudioInstrumentHtml(focused, instPageFilter, true);
+    const orient = studioOrientalTrack();
+    const arp = studioArpTrack();
+    const overlay = orient ? renderOrientalPanelHtml(orient.patch, orient.getTrackCustomTuning(), orientalStatus, orientalError, true)
+      : arp ? renderArpPanelHtml(arp.patch, studioEngine.getBpm(), c => renderInstrumentControl({kind:"track",patch:arp.patch}, c), true) : "";
+    dockContent = renderStudioInstrumentHtml(focused, instPageFilter, true, overlay);
   } else if (!dockCollapsed) {
     if (activeDockTab === "piano-roll") {
       dockContent = renderPianoRollHtml();
     } else if (activeDockTab === "mixer") {
       dockContent = renderMixerHtml(tracks, focused);
-    } else {
-      dockContent = renderStudioInstrumentHtml(focused, instPageFilter);
     }
   }
 
@@ -827,9 +875,6 @@ function renderStudioHtml(): string {
                `<option value="${escapeHtml(t.id)}"${t.id === focused.id ? " selected" : ""}>${escapeHtml(t.name)} · ${escapeHtml(getStudioMachineDef(t.machineId).name)}</option>`
            )
            .join("")}
-       </select>
-       <select class="st-select st-inst-focus-sel" id="st-inst-machine-select" data-st-select="machine" data-track-id="${escapeHtml(focused.id)}" aria-label="${escapeHtml(focused.name)} instrument">
-         ${machineOptionsHtml(focused.machineId)}
        </select>
        <button type="button" class="st-btn${browserOpen ? " is-active" : ""}" id="st-browser-toggle" data-st-action="toggle-browser" aria-pressed="${browserOpen}" title="Toggle Instrument Browser" aria-label="Instrument browser">${stIcon("browser")}</button>`
     : `<button type="button" class="st-btn st-ghost-btn" id="st-back-btn" data-st-action="close-studio" title="Return to synths" aria-label="Return to synths">${stIcon("instrument")}</button>
@@ -978,6 +1023,7 @@ function renderStudioHtml(): string {
         ${browserOpen ? `<div class="st-browser-backdrop" data-st-action="toggle-browser" aria-hidden="true"></div>` : ""}
 
         <div class="st-main">
+          ${instrumentFocusMode ? `<main class="st-instrument-page" aria-label="${escapeHtml(focusedMachine.name)} instrument">${dockContent}</main>` : `
           <section class="st-arr-wrap" aria-label="Arrangement Timeline">
             <div class="st-arr-toolbar">
               <div class="st-arr-tb-left">
@@ -1073,7 +1119,7 @@ function renderStudioHtml(): string {
             <div class="st-dock-body" id="st-dock-body"${dockCollapsed && !instrumentFocusMode ? " hidden" : ""}>
               ${dockContent}
             </div>
-          </section>
+          </section>`}
         </div>
       </div>
       ${activeDialogHtml}
@@ -1176,7 +1222,27 @@ export function renderStudioPanel(): void {
 
   const previousScroll = container.querySelector<HTMLElement>("#st-arr-scroll");
   if (previousScroll) arrScrollTop = previousScroll.scrollTop;
+  if (orientalTrackId && !studioOrientalTrack()) closeStudioOriental();
+  if (arpTrackKey && !studioArpTrack()) arpTrackKey = null;
+  const previousOrientalScroll = container.querySelector<HTMLElement>(".oriental-pop")?.scrollTop ?? 0;
+  const previousFace = container.querySelector<HTMLElement>(".st-embedded-chassis");
+  const previousFaceTrack = previousFace?.dataset.trackId;
+  const previousFaceMachine = previousFace?.dataset.machine;
+  const previousFaceScroll = container.querySelector<HTMLElement>(".st-inst-wrap")?.scrollTop ?? 0;
   container.innerHTML = renderStudioHtml();
+  const face = container.querySelector<HTMLElement>(".st-embedded-chassis");
+  const faceWrap = container.querySelector<HTMLElement>(".st-inst-wrap");
+  if (faceWrap && face?.dataset.trackId === previousFaceTrack && face?.dataset.machine === previousFaceMachine) faceWrap.scrollTop = previousFaceScroll;
+  const orientalPop = container.querySelector<HTMLElement>(".oriental-pop");
+  if (orientalPop) orientalPop.scrollTop = previousOrientalScroll;
+  document.documentElement.classList.toggle("is-studio-instrument", instrumentFocusMode);
+  const arpBtn = document.getElementById("kb-arp");
+  arpBtn?.classList.toggle("active", studioEngine.getFocusedTrack().patch.arpOn === "on");
+  arpBtn?.classList.toggle("is-open", !!studioArpTrack());
+  arpBtn?.setAttribute("aria-expanded", studioArpTrack() ? "true" : "false");
+  const orientalBtn = document.getElementById("kb-oriental");
+  orientalBtn?.classList.toggle("is-open", !!orientalPop);
+  orientalBtn?.setAttribute("aria-expanded", orientalPop ? "true" : "false");
 
   cachedPlayheadEls = Array.from(container.querySelectorAll<HTMLElement>("[data-st-playhead]"));
   cachedClockEl = document.getElementById("st-clock");
@@ -1261,6 +1327,24 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
   const container = document.getElementById("sy1-studio");
   if (!container) return;
 
+  document.getElementById("kb-arp")?.addEventListener("click", () => {
+    if (container.hidden || !instrumentFocusMode) return;
+    const ft = studioEngine.getFocusedTrack();
+    if (ft.isDrumTrack()) return;
+    closeStudioOriental();
+    arpTrackKey = studioArpTrack() ? null : `${ft.id}:${ft.machineId}`;
+    renderStudioPanel();
+  });
+  document.getElementById("kb-oriental")?.addEventListener("click", () => {
+    if (container.hidden || !instrumentFocusMode) return;
+    const ft = studioEngine.getFocusedTrack();
+    if (ft.isDrumTrack()) return;
+    arpTrackKey = null;
+    if (studioOrientalTrack()) closeStudioOriental();
+    else { closeStudioOriental(); orientalTrackId = ft.id; orientalMachineId = ft.machineId; }
+    renderStudioPanel();
+  });
+
   // Trap modal focus & intercept Escape/Enter/background shortcuts for all in-app Studio dialogs
   const hasActiveModal = () =>
     Boolean(pendingClearTrackId || pendingUnsavedAction || pendingDeleteProject || pendingProjectNameModal);
@@ -1294,6 +1378,14 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     (e) => {
       if (container.hidden) return;
       if (!hasActiveModal()) {
+        if (e.key === "Escape" && studioArpTrack() && !exportMenuOpen && !openDrawerVisible) {
+          e.preventDefault(); e.stopPropagation(); arpTrackKey = null; renderStudioPanel();
+          document.getElementById("kb-arp")?.focus(); return;
+        }
+        if (e.key === "Escape" && studioOrientalTrack() && !exportMenuOpen && !openDrawerVisible) {
+          e.preventDefault(); e.stopPropagation(); closeStudioOriental(); renderStudioPanel();
+          document.getElementById("kb-oriental")?.focus(); return;
+        }
         if (e.key === "Escape" && instrumentFocusMode && !exportMenuOpen && !openDrawerVisible) {
           e.preventDefault();
           e.stopPropagation();
@@ -1562,6 +1654,35 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     const target = e.target as HTMLElement | null;
     if (!target) return;
 
+    const oriental = target.closest<HTMLElement>(".oriental-pop");
+    if (oriental) {
+      const ft = studioOrientalTrack();
+      if (!ft) return;
+      const control = target.closest<HTMLElement>("button");
+      if (!control) return;
+      const d = control.dataset;
+      if (control.hasAttribute("data-oriental-close")) {
+        closeStudioOriental(); renderStudioPanel(); document.getElementById("kb-oriental")?.focus(); return;
+      }
+      if (d.orScale && (d.orScale === "custom" || getScale(d.orScale))) {
+        if (ft.patch.tuning !== d.orScale) { ft.setParam("scaleAlt", 0); ft.setParam("tuning", d.orScale); }
+        ft.setParam("oriental", "on");
+      } else if (d.orRoot !== undefined) {
+        ft.setParam("tuneRoot", Number(d.orRoot)); ft.setParam("oriental", "on");
+      } else if (d.orAlt !== undefined) {
+        ft.setParam("scaleAlt", (Number(ft.patch.scaleAlt) || 0) ^ (1 << Number(d.orAlt)));
+      } else if (d.orMicro === "24tet" || d.orMicro === "practice") {
+        ft.setParam("microTone", d.orMicro);
+      } else if (d.orAction === "toggle") {
+        ft.setParam("oriental", ft.patch.oriental === "on" ? "off" : "on");
+      } else if (d.orAction === "reset") {
+        ft.setTrackCustomTuning(Array(12).fill(0)); orientalStatus = "";
+      } else if (d.orAction === "import") {
+        oriental.querySelector<HTMLInputElement>("#st-scl-file-input")?.click(); return;
+      } else return;
+      renderStudioPanel(); return;
+    }
+
     const btn = target.closest<HTMLElement>("[data-st-action]");
     if (btn) {
       const action = btn.getAttribute("data-st-action");
@@ -1650,22 +1771,10 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           break;
         case "open-track-instrument":
           if (trackId) focusTrackSelection(trackId);
-          if (!instrumentFocusMode) {
-            preInstFocusState = {
-              dockTab: activeDockTab,
-              dockCollapsed,
-              dockExpanded,
-              browserOpen,
-              keysVisible
-            };
-            instrumentFocusMode = true;
-            browserOpen = false;
-            keysVisible = true;
-            applyKeyboardVisibility();
-          }
-          activeDockTab = "instrument";
-          dockCollapsed = false;
-          renderStudioPanel();
+          openInstrumentPage();
+          break;
+        case "close-arp":
+          arpTrackKey = null; renderStudioPanel(); document.getElementById("kb-arp")?.focus();
           break;
         case "close-track-instrument":
           exitInstrumentFocusMode(true);
@@ -1841,10 +1950,48 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
           if (ft.isDrumTrack()) {
             ft.noteOn(DRUM_NOTES.kick, 0.88);
           } else if (ft.patch.hold !== "on" && ft.patch.arpOn !== "on") {
-            ft.noteOn(60, 0.78);
-            setTimeout(() => ft.noteOff(60), 320);
+            ft.auditionNote(60, 0.78, 320);
           }
           break;
+        }
+        case "track-drum-live": {
+          const ft = resolveInstrumentTrack(btn);
+          try {
+            const enabled = !studioEngine.isLiveDrumEnabled(ft.id);
+            studioEngine.setLiveDrumEnabled(ft.id,enabled);
+            setStatus(enabled ? "Live pattern ready · use Play or Record" : "Live pattern off", "ok");
+          } catch(error) { setStatus(error instanceof Error ? error.message : String(error),"error"); }
+          renderStudioPanel(); break;
+        }
+        case "track-drum-pattern":
+        case "track-drum-len":
+        case "track-drum-edit":
+        case "track-drum-clear":
+        case "track-drum-step":
+        case "track-drum-insert": {
+          const ft = resolveInstrumentTrack(btn);
+          if (!ft.isDrumTrack()) break;
+          if (studioEngine.getTransportSnapshot().recording) { setStatus("Stop recording before editing the pattern.","error"); renderStudioPanel(); break; }
+          const bank = ft.getTrackDrumBank(), pat = bank.patterns[bank.selected];
+          if (action === "track-drum-edit") {
+            setTrackDrumEdit(ft, STEP_EDITS[(STEP_EDITS.indexOf(getTrackDrumEdit(ft))+1)%STEP_EDITS.length]);
+          } else if (action === "track-drum-insert") {
+            try {
+              if (studioEngine.isLiveDrumEnabled(ft.id)) throw new Error("Turn off Live before inserting MIDI.");
+              const result = drumPatternMidi(pat, ft.patch, studioEngine.getBpm());
+              studioEngine.regions.insertPattern(ft.id, studioEngine.getCurrentTick(), result.length, result.events);
+              setStatus("Pattern inserted as MIDI", "ok");
+              if (instrumentFocusMode) exitInstrumentFocusMode(true);
+            } catch (error) { setStatus(error instanceof Error ? error.message : String(error), "error"); }
+          } else {
+            if (action === "track-drum-pattern") {
+              const i = Number(btn.dataset.index); if (!Number.isInteger(i)||i<0||i>7) break; bank.selected=i;
+            } else if (action === "track-drum-len") pat.len=btn.dataset.len==="12"?12:16;
+            else if (action === "track-drum-clear") bank.patterns[bank.selected]=emptyPattern(pat.len);
+            else if (!editTrackDrumStep(pat,getStudioSelectedDrumVoice(ft.id),Number(btn.dataset.index),getTrackDrumEdit(ft))) break;
+            ft.setTrackDrumBank(bank);
+          }
+          renderStudioPanel(); break;
         }
         case "drum-select-voice": {
           const dv = btn.getAttribute("data-st-drum-voice") as DrumVoice | null;
@@ -2408,6 +2555,33 @@ export function initStudioPanel(opts: { onClose: () => void }): void {
     const el = e.target as HTMLInputElement | HTMLSelectElement | null;
     if (!el) return;
 
+    if (el.closest(".oriental-pop")) {
+      const ft = studioOrientalTrack();
+      if (!ft) return;
+      if (el.classList.contains("or-cent-input")) {
+        const degree = Number(el.dataset.deg), value = Number(el.value);
+        if (Number.isInteger(degree) && degree >= 0 && degree < 12 && Number.isFinite(value)) {
+          const offsets = ft.getTrackCustomTuning(); offsets[degree] = value; ft.setTrackCustomTuning(offsets);
+        }
+        renderStudioPanel();
+      } else if (el.id === "st-scl-file-input") {
+        const file = (el as HTMLInputElement).files?.[0];
+        if (!file) return;
+        const session = orientalSession;
+        file.text().then(text => {
+          if (session !== orientalSession || studioOrientalTrack() !== ft) return;
+          const res = parseScalaScl(text);
+          if (res.ok === true) { ft.setTrackCustomTuning(res.offsets); orientalStatus = `Loaded: ${res.description || file.name}`; orientalError = false; }
+          else { orientalStatus = res.error; orientalError = true; }
+          renderStudioPanel();
+        }).catch(() => {
+          if (session !== orientalSession || studioOrientalTrack() !== ft) return;
+          orientalStatus = "Could not read tuning file."; orientalError = true; renderStudioPanel();
+        });
+      }
+      return;
+    }
+
     if (el.id === "st-click-volume") {
       studioEngine.setRecordingSettings({clickVolume:Number(el.value)});
       return;
@@ -2928,7 +3102,13 @@ export function hideStudioPanel(): void {
   pendingDeleteProject = null;
   pendingProjectNameModal = null;
   pendingUnsavedAction = null;
-  document.documentElement.classList.remove("is-studio");
+  closeStudioOriental();
+  arpTrackKey = null;
+  document.getElementById("kb-arp")?.classList.remove("is-open");
+  document.getElementById("kb-arp")?.setAttribute("aria-expanded", "false");
+  document.documentElement.classList.remove("is-studio", "is-studio-instrument");
+  document.getElementById("kb-oriental")?.classList.remove("is-open");
+  document.getElementById("kb-oriental")?.setAttribute("aria-expanded", "false");
   const synthEl = document.getElementById("sy1-panel");
   const studioEl = document.getElementById("sy1-studio");
   if (studioEl) studioEl.hidden = true;

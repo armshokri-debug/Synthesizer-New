@@ -107,6 +107,7 @@ try {
     const midi=eng.exportMidiBytes();
     return {ids:eng.getTracks().map(t=>t.machineId),processors:[...new Set(names)],stems,mix:mixStats,otherDiff,changedDiff,midiHeader:String.fromCharCode(...midi.slice(0,4)),project:json};
   })()`);
+  await cdp.evaluate("document.getElementById('st-inst-back-btn')?.click()");
   await cdp.evaluate("(()=>{const e=window.SY1_STUDIO.engine;e.setFocusedTrack(e.getTracks()[3].id);document.getElementById('st-tab-pianoroll').click();e.clearTrackClip(e.getFocusedTrack().id);})()");
   const gridPoint=await cdp.evaluate("(()=>{const r=document.getElementById('st-pr-grid').getBoundingClientRect();return {x:r.x+24,y:r.y+12};})()");
   await cdp.send("Input.dispatchMouseEvent",{type:"mousePressed",...gridPoint,button:"left",clickCount:1});

@@ -35,7 +35,7 @@ import { initKeyboardInteractions, renderKeyboard, setKeyboardTarget, syncKeyboa
 import { initKnobInteractions } from "./ui/knob";
 import { fitPanel, initPanelInteractions, renderPanel, selectDrumVoiceForNote, setStudioOpenHandler } from "./ui/panel";
 import { startSynthScope } from "./ui/scope";
-import { initArpPanel, closeArpPanel } from "./ui/arp-panel";
+import { initArpPanel, closeArpPanel, syncArpButton } from "./ui/arp-panel";
 import { initOrientalPanel, setOrientalOpen } from "./ui/oriental-panel";
 import { initLibrary } from "./ui/library";
 import { initMachineBrowser } from "./ui/machine-browser";
@@ -154,7 +154,7 @@ function initApp(): void {
     let lastStudioKbSig = "";
     const studioKeyboardSig = () => {
       const ft = studioEngine.getFocusedTrack();
-      return `${ft.id}|${ft.machineId}|${ft.presetId}|${ft.presetName}|${ft.isDrumTrack() ? 1 : 0}|${ft.patch.hold === "on" ? 1 : 0}`;
+      return `${ft.id}|${ft.machineId}|${ft.presetId}|${ft.presetName}|${ft.isDrumTrack() ? 1 : 0}|${ft.patch.hold === "on" ? 1 : 0}|${ft.patch.oriental}|${ft.patch.tuning}|${ft.patch.tuneRoot}|${ft.patch.scaleAlt}|${ft.patch.microTone}|${ft.patch.tuning === "custom" ? ft.getTrackCustomTuning().join(",") : ""}`;
     };
 
     const enterStudioMode = () => {
@@ -183,6 +183,7 @@ function initApp(): void {
           return { machine: ft.machineId, name: m.name, role: `${ft.name} · ${ft.presetName}` };
         },
         isDrums: () => studioEngine.getFocusedTrack().isDrumTrack(),
+        getTuning: () => { const ft = studioEngine.getFocusedTrack(); return { patch: ft.patch, offsets: ft.getTrackCustomTuning() }; },
         getDrumLabel: (v) => {
           const ft = studioEngine.getFocusedTrack();
           return getDrumLabelsForTrack(ft.machineId, ft.patch, ft.presetId)[v];
@@ -219,6 +220,7 @@ function initApp(): void {
       setMidiInputInterceptor((cmd,d1,d2,ch)=>synthRecording.captureController(cmd,d1,d2,ch));
       setKeyboardTarget(null);
       hideStudioPanel();
+      syncArpButton();
       fitPanel();
     };
 

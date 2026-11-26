@@ -1,3 +1,6 @@
+import { STUDIO_DRUM_BANK_KEY, createTrackDrumBank, normalizeTrackDrumBank, type TrackDrumBank } from "./track-drum-patterns";
+import { TrackArpeggiator, type ArpPulse } from "./track-arpeggiator";
+import { STUDIO_TUNING_KEY, normalizeStudioTuning } from "./track-tuning";
 /**
  * SY-1 Studio — Isolated Per-Track SY-1 Synthesizer Engine
  *
@@ -23,7 +26,7 @@ import {
 } from "../engine/drums";
 import { createFmNode } from "../engine/fm";
 import { createHQNode, getEngine } from "../engine/hq";
-import { SYNC_DIVS, SYNTH_PARAMS, SynthPatch, synthDefaults, tuningCents } from "../engine/params";
+import { SYNC_DIVS, SYNTH_PARAMS, SynthPatch, synthDefaults, tuningCents, getCustomTuning } from "../engine/params";
 import { createStringsNode } from "../engine/strings";
 import { computeOrbitRateHzForBpm, createVectorNode } from "../engine/vector";
 import { createSynthVoice, SynthVoice, VoiceRoutingOptions } from "../engine/voice";
@@ -182,6 +185,7 @@ export class SY1TrackEngine {
   private audioState: TrackAudioState = "idle";
   private forceHQ: boolean;
 
+  readonly liveArpeggiator = new TrackArpeggiator();
   private classicVoices = new Set<SynthVoice>();
   private heldVoices = new Map<number, SynthVoice>();
   private heldVelocities = new Map<number, number>();
@@ -212,6 +216,7 @@ export class SY1TrackEngine {
     this.presetId = built.presetId;
     this.presetName = built.presetName;
     this.patch = built.patch;
+    this.ensureTrackTuning();
     this.volume = opts.volume !== undefined ? Math.max(0, Math.min(1, opts.volume)) : 1;
     this.pan = opts.pan !== undefined ? Math.max(-1, Math.min(1, opts.pan)) : 0;
     this.midiChannel = opts.midiChannel ?? 0;
@@ -398,10 +403,12 @@ export class SY1TrackEngine {
     const built = buildMachinePresetPatch(m.id, presetId);
     const prevKind = this.engineKind;
     const nextKind = engineKindForMachine(m);
+    const preserveDrumBank = this.machineId === m.id && m.kind === "drums" && presetId.startsWith("kit:") ? this.getTrackDrumBank() : null;
 
     this.allNotesOff(0);
 
     const next = built.patch;
+    if (preserveDrumBank) { next.drumSwing = this.patch.drumSwing; next.drumAccent = this.patch.drumAccent; }
     Object.keys(next).forEach((k) => {
       this.patch[k] = next[k];
       if (this.bus) applyBusParam(this.bus, k, next[k]);
@@ -409,7 +416,11 @@ export class SY1TrackEngine {
     const r = this.syncedLfoRate();
     if (r !== null) this.patch.lfoRate = r;
 
+    if (this.machineId !== built.machineId) { delete this.patch[STUDIO_TUNING_KEY]; delete this.patch[STUDIO_DRUM_BANK_KEY]; }
+    else if (m.kind === "drums" && !presetId.startsWith("kit:") && built.presetId !== this.presetId) delete this.patch[STUDIO_DRUM_BANK_KEY];
     this.machineId = built.machineId;
+    if (preserveDrumBank) this.patch[STUDIO_DRUM_BANK_KEY] = preserveDrumBank;
+    this.ensureTrackTuning();
     this.presetId = built.presetId;
     this.presetName = built.presetName;
     this.engineKind = nextKind;
@@ -459,6 +470,13 @@ export class SY1TrackEngine {
       if (this.bus) applyBusParam(this.bus, k, patch[k]);
     });
     if (machineId) this.machineId = getStudioMachineDef(machineId).id;
+    const savedTuning = normalizeStudioTuning(patch[STUDIO_TUNING_KEY]);
+    delete this.patch[STUDIO_TUNING_KEY];
+    if (savedTuning) this.patch[STUDIO_TUNING_KEY] = Object.freeze(savedTuning);
+    this.ensureTrackTuning();
+    const drumBank = normalizeTrackDrumBank(patch[STUDIO_DRUM_BANK_KEY]);
+    delete this.patch[STUDIO_DRUM_BANK_KEY];
+    if (drumBank && getStudioMachineDef(this.machineId).kind === "drums") this.patch[STUDIO_DRUM_BANK_KEY] = drumBank;
     const nextKind = engineKindForMachine(getStudioMachineDef(this.machineId));
     this.engineKind = nextKind;
     this.presetId = presetId;
@@ -502,6 +520,10 @@ export class SY1TrackEngine {
       return;
     }
     this.patch[key] = nextVal;
+    if (key === "arpOn" && nextVal !== "on") this.liveArpeggiator.stop(true);
+    if (key === "arpOn" && nextVal === "on") this.releaseSustained(0);
+    if (key === "hold" && nextVal !== "on") this.liveArpeggiator.releaseLatched();
+    if (key === "tuning") this.ensureTrackTuning();
 
     if (!fromPreset && !internal && key !== "hold" && key !== "oriental") {
       this.presetId = "custom";
@@ -605,8 +627,49 @@ export class SY1TrackEngine {
     return this.sustainPedal;
   }
 
+  private ensureTrackTuning(): void {
+    if (this.patch.tuning === "custom" && !normalizeStudioTuning(this.patch[STUDIO_TUNING_KEY])) {
+      this.patch[STUDIO_TUNING_KEY] = Object.freeze(getCustomTuning(this.machineId).slice());
+    }
+  }
+
+  getTrackDrumBank(): TrackDrumBank {
+    const m = getStudioMachineDef(this.machineId);
+    const saved = normalizeTrackDrumBank(this.patch[STUDIO_DRUM_BANK_KEY]);
+    if (saved) return saved;
+    const preset = m.presets.find(p => p.id === this.presetId);
+    return createTrackDrumBank(preset?.patterns);
+  }
+
+  setTrackDrumBank(bank: unknown): boolean {
+    if (!this.isDrumTrack()) return false;
+    const clean = normalizeTrackDrumBank(bank);
+    if (!clean) return false;
+    // Replace instead of mutating: history/export snapshots cannot alias edits.
+    this.patch[STUDIO_DRUM_BANK_KEY] = clean;
+    this.emitChange();
+    return true;
+  }
+
+  getTrackCustomTuning(): number[] {
+    return normalizeStudioTuning(this.patch[STUDIO_TUNING_KEY]) ?? getCustomTuning(this.machineId).slice();
+  }
+
+  setTrackCustomTuning(offsets: unknown): boolean {
+    const clean = normalizeStudioTuning(offsets);
+    if (!clean || this.isDrumTrack()) return false;
+    this.patch[STUDIO_TUNING_KEY] = Object.freeze(clean);
+    if (this.patch.tuning !== "custom") this.setParam("tuning", "custom");
+    else { this.retuneActiveVoices(); this.emitChange(); }
+    return true;
+  }
+
   centsFor(midi: number): number {
     if (this.patch.oriental !== "on") return 0;
+    if (this.patch.tuning === "custom") {
+      const degree = ((midi - (Number(this.patch.tuneRoot) || 0)) % 12 + 12) % 12;
+      return (this.patch[STUDIO_TUNING_KEY] ?? getCustomTuning(this.machineId))[degree] ?? 0;
+    }
     return tuningCents(
       this.patch.tuning || "shur",
       midi,
@@ -622,7 +685,7 @@ export class SY1TrackEngine {
   }
 
   private holding(): boolean {
-    return this.sustainPedal || this.patch.hold === "on";
+    return this.sustainPedal || (this.patch.hold === "on" && this.patch.arpOn !== "on");
   }
 
   private createTrackWorkletVoice(midi: number, cents: number, velocity: number, at = 0, fromHz = 0, glide = 0): SynthVoice {
@@ -698,6 +761,13 @@ export class SY1TrackEngine {
     const voice = this.startVoice(m, vel, start);
     // Schedule release on the same voice ID, not on the MIDI pitch.
     voice?.release(start + duration);
+  }
+
+  /** Generated live ARP notes use independent gated voices, just like editor audition.
+   * They never enter the transport pitch map or inherit the chord's latch/sustain. */
+  playArpPulse(pulse: ArpPulse): void {
+    if (this.isDrumTrack() || !this.ctx || !this.bus) return;
+    this.startVoice(pulse.midi, pulse.velocity, pulse.at)?.release(pulse.off);
   }
 
   noteOn(midi: number, velocity = 0.85, at = 0): void {
@@ -858,6 +928,7 @@ export class SY1TrackEngine {
 
   /** Cleanly release all active notes on this track (e.g. Stop, Panic, preset switch). */
   allNotesOff(at = 0): void {
+    this.liveArpeggiator.stop();
     const releaseAt = at > 0 ? at : this.ctx ? this.ctx.currentTime : 0;
     this.sustainPedal = false;
     this.physicallyHeld.clear();
@@ -883,6 +954,7 @@ export class SY1TrackEngine {
   }
 
   isNoteSounding(midi: number): boolean {
+    if (this.liveArpeggiator.has(midi)) return true;
     if (this.patch.polyMode === "mono") {
       if (this.holding() && (this.sustainedNotes.has(midi) || this.physicallyHeld.has(midi))) return true;
       return this.monoVoice !== null && !this.monoVoice.isReleased() && this.monoMidi === midi;

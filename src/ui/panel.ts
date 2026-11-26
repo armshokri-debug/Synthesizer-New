@@ -1,3 +1,4 @@
+import { renderDrumStepsHtml } from "./drum-steps-view";
 /**
  * SY-1 UI — Panel: rendered from the active machine's definition.
  *
@@ -73,9 +74,6 @@ import {
   editStep,
   STEP_EDITS,
   StepEdit,
-  stepFlam,
-  stepProb,
-  stepRoll,
   playDrum
 } from "../engine/drums";
 import type { ControlDef, SectionDef } from "../machines/types";
@@ -83,7 +81,7 @@ import { euclidHit, onArpStep } from "../engine/arp";
 import { getBaseMidi, renderKeyboard } from "./keyboard";
 import { renderSynthKnob, standaloneControlContext, updateMidiLearnDOM, updateSynthControlDOM } from "./knob";
 import { renderInstrumentChoice, renderInstrumentControl } from "./instrument-controls";
-import { renderInstrumentFrame } from "./instrument-frame";
+import { renderInstrumentFrame, renderInstrumentSection, renderInstrumentTabs, renderInstrumentPresetLabel } from "./instrument-frame";
 import { onPluginVisualFrame, queueVisualUpdate } from "./plugin-visuals";
 
 // ------------------------------------------------------------ controls ----
@@ -129,25 +127,7 @@ function renderDrumTransport(): string {
 }
 
 function renderDrumSteps(): string {
-  const pat = getPattern();
-  const row = pat.steps[drumVoice];
-  const voices = `<div class="drum-voices" role="group" aria-label="Drum voice">${DRUM_VOICES.map((v) =>
-    `<button type="button" class="drum-voice-btn ${v === drumVoice ? "active" : ""}" data-action="drum-voice" data-voice="${v}">${drumLabel(v)}</button>`).join("")}</div>`;
-  const steps = `<div class="drum-steps" style="--len:${pat.len}">${Array.from({ length: pat.len }, (_, i) => {
-    const s = row[i];
-    // marks: roll count, flam, chance (shown small at the bottom of the step)
-    const marks: string[] = [];
-    if (s) {
-      const r = stepRoll(pat, drumVoice, i);
-      if (r > 1) marks.push("×" + r);
-      if (stepFlam(pat, drumVoice, i)) marks.push("FL");
-      const c = stepProb(pat, drumVoice, i);
-      if (c < 100) marks.push(c + "%");
-    }
-    const mark = marks.join(" ");
-    return `<button type="button" class="drum-step${s ? " on" : ""}${s === 2 ? " accent" : ""}${s === 3 ? " ghost" : ""}${i % (pat.len === 12 ? 3 : 4) === 0 ? " beat" : ""}"${mark ? ` data-mark="${mark}"` : ""} data-action="drum-step" data-index="${i}" aria-pressed="${!!s}" aria-label="Step ${i + 1}${s === 2 ? ", accent" : s === 3 ? ", ghost" : ""}${mark ? ", " + mark : ""}"></button>`;
-  }).join("")}</div>`;
-  return voices + steps;
+  return renderDrumStepsHtml(getPattern(), drumVoice, drumLabel);
 }
 
 function renderDrumVoice(): string {
@@ -478,11 +458,10 @@ function renderCustom(id: string): string {
 }
 
 function renderSection(sec: SectionDef, index: number): string {
-  const span = (sec.span && sec.span > 1 ? ` sec-span-${sec.span}` : "") + (sec.wide ? " sec-wide" : "");
   const body = sec.custom
     ? `<div class="synth-custom" data-custom="${sec.custom}">${renderCustom(sec.custom)}</div>`
     : sec.controls.map(renderControl).join("");
-  return `<section data-page="${sec.page}" data-sec="${index}" class="synth-sec${span}${sec.custom ? " synth-sec-custom" : ""}"><h4>${escapeHtml(sec.title)}</h4>${body}</section>`;
+  return renderInstrumentSection(sec,index,body);
 }
 
 function refreshCustom(id: string): void {
@@ -528,8 +507,7 @@ function renderPresetButton(): string {
     name = cur ? cur.name : "Custom";
     sub = cur ? cur.group : "Edited sound";
   }
-  return `<span class="pd-text"><span class="pd-name">${escapeHtml(name)}</span><span class="pd-sub">${escapeHtml(sub)}</span></span>` +
-    `<svg class="pd-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg>`;
+  return renderInstrumentPresetLabel(name,sub);
 }
 
 function renderMachineOptions(): string {
@@ -698,8 +676,7 @@ export function renderSynthPanelHtml(): string {
           <button type="button" class="synth-midi-btn preset-step-btn" data-action="preset-next" aria-label="Next preset">▶</button>
         </div>
         ${tempo}
-        <nav class="synth-tabs" role="tablist" aria-label="Panel pages">${(allowAllPage() ? [{id: "all", label: "ALL"}, ...m.pages] : m.pages).map((pg) =>
-          `<button type="button" class="synth-tab" role="tab" data-action="synth-page" data-page="${pg.id}">${escapeHtml(pg.label)}</button>`).join("")}</nav>`,
+        ${renderInstrumentTabs(allowAllPage() ? [{id:"all",label:"ALL"},...m.pages] : m.pages)}`,
     sections: m.sections.map(renderSection).join(""),
     hint: "Drag a knob up/down (or scroll / arrow keys) · double-click to reset · right-click (or long-press in LEARN) unmaps CC · keys A W S E D F T G Y H U J K · Z/X = octave"
   });

@@ -27,6 +27,7 @@ export interface KeyboardTarget {
   getBadge: () => { machine: string; name: string; role: string };
   isDrums?: () => boolean;
   getDrumLabel?: (v: DrumVoice) => string;
+  getTuning?: () => { patch: Readonly<Record<string, any>>; offsets: number[] };
 }
 
 let externalTarget: KeyboardTarget | null = null;
@@ -63,12 +64,13 @@ function targetPrepareAudio(): void {
 
 /** Pitch-class map of the active oriental scale, or null when ORIENTAL is off. */
 function activeKeyMap(): KeyInfo[] | null {
-  if (externalTarget) return null;
-  const p = getSynthPatch();
-  if (p.oriental !== "on" || getMachine().kind === "drums") return null;
+  const tuning = externalTarget?.getTuning?.();
+  if (externalTarget && !tuning) return null;
+  const p = tuning?.patch ?? getSynthPatch();
+  if (p.oriental !== "on" || isTargetDrums()) return null;
   const id = String(p.tuning || "shur");
   return keyMap(id, Number(p.tuneRoot) || 0, Number(p.scaleAlt) || 0, String(p.microTone || "24tet"),
-    id === "custom" ? getCustomTuning(getMachine().id) : undefined);
+    id === "custom" ? (tuning?.offsets ?? getCustomTuning(getMachine().id)) : undefined);
 }
 
 export function getBaseMidi(): number {
@@ -138,7 +140,7 @@ export function renderKeyboard(): void {
     const labelHtml = nameLabel ? `<span class="key-lbl">${nameLabel}</span>` : "";
     if (!map) return labelHtml;
     const k = map[((m % 12) + 12) % 12];
-    const c = centsFor(m);
+    const c = externalTarget ? k.cents : centsFor(m);
     const badge = k.inScale && Math.abs(c) > 0.001 ? `<span class="key-cents">${fmtCentBadge(c)}</span>` : "";
     const mark = k.inScale ? `<span class="key-mark" aria-hidden="true"></span>` : "";
     return `${badge}${mark}${labelHtml}`;
@@ -228,14 +230,15 @@ export function syncOriental(): void {
   const btn = document.getElementById("kb-oriental");
   const notesEl = document.getElementById("kb-scale-notes");
   if (!btn) return;
-  if (externalTarget) {
+  const tuning = externalTarget?.getTuning?.();
+  if (externalTarget && (!tuning || isTargetDrums())) {
     btn.classList.remove("active");
     if (notesEl) notesEl.innerHTML = "";
     const strip = document.querySelector(".kb-strip");
     if (strip) strip.classList.remove("is-oriental");
     return;
   }
-  const p = getSynthPatch();
+  const p = tuning?.patch ?? getSynthPatch();
   const on = p.oriental === "on";
   const id = String(p.tuning || "shur");
   const tonic = ((Number(p.tuneRoot) || 0) % 12 + 12) % 12;

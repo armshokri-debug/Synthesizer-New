@@ -221,7 +221,9 @@ try {
     const waitFrame = () => new Promise((r) => setTimeout(r, 50));
     document.getElementById("st-tab-instrument")?.click();
     await waitFrame();
-    const instOnly = !!document.querySelector(".st-inst-wrap") && !document.getElementById("st-piano-roll") && !document.getElementById("st-mixer");
+    const instOnly = !!document.querySelector(".st-instrument-page .st-inst-wrap") && !document.getElementById("st-dock") && !document.querySelector(".st-arr-wrap");
+    document.getElementById("st-inst-back-btn")?.click();
+    await waitFrame();
 
     document.getElementById("st-dock-collapse")?.click();
     await waitFrame();

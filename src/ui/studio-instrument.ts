@@ -1,3 +1,4 @@
+import { renderDrumStepsHtml } from "./drum-steps-view";
 /**
  * SY-1 Studio — Embedded Original Synthesizer & Drum Machine Interface
  *
@@ -10,16 +11,21 @@
  */
 
 import { euclidHit } from "../engine/arp";
-import { DRUM_NOTES, DRUM_VOICES, DrumVoice } from "../engine/drums";
+import { DRUM_NOTES, DRUM_VOICES, DrumVoice, type StepEdit } from "../engine/drums";
 import { escapeHtml, SYNTH_PARAMS, synthNorm } from "../engine/params";
 import { evalOrbitPoint } from "../engine/vector";
 import type { ControlDef, MachineDef, SectionDef } from "../machines/types";
 import { getDrumLabelsForTrack, getStudioMachineDef, SY1TrackEngine } from "../studio/track-engine";
 import { renderInstrumentKnob, renderInstrumentChoice, renderInstrumentControl } from "./instrument-controls";
-import { renderInstrumentFrame } from "./instrument-frame";
+import { renderInstrumentFrame, renderInstrumentSection, renderInstrumentTabs, renderInstrumentPresetLabel } from "./instrument-frame";
 
 // Per-track selected drum voice in the Studio drum editor (never touches standalone drums.ts)
 const selectedDrumVoiceByTrack = new Map<string, DrumVoice>();
+const liveDrumByTrack = new WeakMap<SY1TrackEngine, boolean>();
+export const setTrackDrumLiveView = (track:SY1TrackEngine, enabled:boolean):void => { liveDrumByTrack.set(track,enabled); };
+const drumEditByTrack = new WeakMap<SY1TrackEngine, StepEdit>();
+export const getTrackDrumEdit = (track:SY1TrackEngine): StepEdit => drumEditByTrack.get(track) ?? "hit";
+export const setTrackDrumEdit = (track:SY1TrackEngine, mode:StepEdit): void => { drumEditByTrack.set(track, mode); };
 
 export function getStudioSelectedDrumVoice(trackId: string): DrumVoice {
   return selectedDrumVoiceByTrack.get(trackId) || "kick";
@@ -215,7 +221,15 @@ function renderStudioDrumPadsAndKits(track: SY1TrackEngine, m: MachineDef): stri
         </div>`
       : "";
 
-  return `${padsHtml}${kitsHtml}<div class="st-drum-midi-hint">Program beats in the Studio Piano Roll Drum Grid (GM MIDI 36–56) · Tap any pad to audition &amp; sculpt its voice.</div>`;
+  const bank = track.getTrackDrumBank(), pat = bank.patterns[bank.selected], mode = getTrackDrumEdit(track);
+  return `<div class="drum-transport st-track-pattern-toolbar">
+    <div class="drum-slots" role="group" aria-label="Pattern">${Array.from({length:8},(_,i)=>`<button type="button" class="drum-slot${i===bank.selected?" active":""}" data-st-action="track-drum-pattern" data-index="${i}" aria-pressed="${i===bank.selected}">${"ABCDEFGH"[i]}</button>`).join("")}</div>
+    <div class="synth-choice drum-len" role="group" aria-label="Pattern length">${[16,12].map(len=>`<button type="button" class="synth-choice-btn${pat.len===len?" active":""}" data-st-action="track-drum-len" data-len="${len}" aria-pressed="${pat.len===len}">${len}</button>`).join("")}</div>
+    <button type="button" class="synth-choice-btn drum-acc${mode!=="hit"?" active":""}" data-st-action="track-drum-edit" title="Cycle step edit mode">✎ ${mode.toUpperCase()}</button>
+    <button type="button" class="synth-choice-btn" data-st-action="track-drum-clear">Clear</button>
+    <button type="button" class="synth-choice-btn${liveDrumByTrack.get(track) ? " active" : ""}" data-st-action="track-drum-live" aria-pressed="${!!liveDrumByTrack.get(track)}" title="Enable live pattern; use Studio Play or Record. Requires an empty track.">Live</button>
+    <button type="button" class="synth-choice-btn" data-st-action="track-drum-insert" title="Insert pattern at snapped playhead; probability is resolved once">+ MIDI</button>
+    </div>${padsHtml}${kitsHtml}`;
 }
 
 function renderStudioDrumVoice(track: SY1TrackEngine, m: MachineDef): string {
@@ -247,12 +261,8 @@ function renderStudioControl(track: SY1TrackEngine, c: ControlDef): string {
 }
 
 function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionDef, index: number, activePageId: string): string {
-  // On drum machines in Studio, skip the standalone global step sequencer grid (beats live on Studio's Piano Roll Drum Grid)
-  if (sec.custom === "drum-steps") return "";
 
-  const span = (sec.span && sec.span > 1 ? ` sec-span-${sec.span}` : "") + (sec.wide ? " sec-wide" : "");
   const isOnPage = activePageId === "all" || sec.page === activePageId;
-  let title = sec.title;
   let body = "";
 
   if (sec.custom) {
@@ -264,22 +274,22 @@ function renderStudioSection(track: SY1TrackEngine, m: MachineDef, sec: SectionD
       body = `<div class="synth-custom" data-st-custom="vector-pad">${renderStudioVectorPad(track)}</div>`;
     } else if (sec.custom === "drum-voice") {
       body = `<div class="synth-custom" data-st-custom="drum-voice">${renderStudioDrumVoice(track, m)}</div>`;
+    } else if (sec.custom === "drum-steps") {
+      const bank = track.getTrackDrumBank(), labels = getDrumLabelsForTrack(m.id, track.patch, track.presetId);
+      body = `<div class="synth-custom" data-st-custom="drum-steps">${renderDrumStepsHtml(bank.patterns[bank.selected],getStudioSelectedDrumVoice(track.id),v=>escapeHtml(labels[v]),true)}</div>`;
     } else if (sec.custom === "drum-transport") {
-      title = "PADS & KITS";
       body = `<div class="synth-custom" data-st-custom="drum-pads">${renderStudioDrumPadsAndKits(track, m)}</div>`;
     }
   } else {
     body = sec.controls.map((c) => renderStudioControl(track, c)).join("");
   }
 
-  return `<section data-page="${escapeHtml(sec.page)}" data-sec="${index}" class="synth-sec${span}${sec.custom ? " synth-sec-custom" : ""}${isOnPage ? " is-on-page" : ""}"><h4>${escapeHtml(title)}</h4>${body}</section>`;
+  return renderInstrumentSection(sec,index,body,isOnPage);
 }
 
-export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string, focusMode = false): string {
+export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: string, focusMode = false, overlay = ""): string {
   const m: MachineDef = getStudioMachineDef(track.machineId);
-  const pages = m.kind === "drums"
-    ? m.pages.map((p) => (p.id === "steps" ? { id: p.id, label: "Pads & Kits" } : p))
-    : m.pages;
+  const pages = m.pages;
   const validPage = pageFilter === "all" || pages.some((p) => p.id === pageFilter) ? pageFilter : "all";
   const presets = m.presets;
   const curIdx = presets.findIndex((p) => p.id === track.presetId);
@@ -295,12 +305,13 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
       <span class="st-embedded-track-tag">${escapeHtml(track.name)}</span>`,
     subbar: `<div class="synth-preset-nav">
       <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-prev" aria-label="Previous preset">◀</button>
-      <button type="button" class="preset-display synth-preset-select" data-st-action="open-browser-for-track" title="Choose preset"><span class="pd-text"><span class="pd-name">${escapeHtml(presetLabel)}</span><span class="pd-sub">${escapeHtml(presetGroup)}</span></span></button>
+      <button type="button" class="preset-display synth-preset-select" data-st-action="open-browser-for-track" title="Choose preset">${renderInstrumentPresetLabel(presetLabel,presetGroup)}</button>
       <button type="button" class="synth-midi-btn preset-step-btn" data-st-action="inst-preset-next" aria-label="Next preset">▶</button>
       </div>
-      <nav class="synth-tabs st-inst-pages" role="tablist" aria-label="Panel pages">${[{ id: "all", label: "ALL" }, ...pages].map(pg => `<button type="button" class="synth-tab st-inst-page-btn${validPage === pg.id ? " active is-active" : ""}" role="tab" aria-selected="${validPage === pg.id}" data-st-action="inst-page" data-st-page="${escapeHtml(pg.id)}">${escapeHtml(pg.label)}</button>`).join("")}</nav>`,
+      ${renderInstrumentTabs([{id:"all",label:"ALL"},...pages],validPage,true)}`,
     sections: m.sections.map((sec, idx) => renderStudioSection(track, m, sec, idx, validPage)).join(""),
-    sectionClass: validPage !== "all" ? " is-filtered" : ""
+    sectionClass: validPage !== "all" ? " is-filtered" : "",
+    overlay
   });
   return `<div class="st-inst-wrap"><div class="st-embedded-chassis" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin || m.id)}">${frame}</div></div>`;
 }

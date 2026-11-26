@@ -570,11 +570,9 @@ async function main() {
       const embeddedKnobCount = embeddedSynth ? embeddedSynth.querySelectorAll(".sk").length : 0;
       const embeddedHasScales = embeddedSynth ? embeddedSynth.querySelectorAll(".sk-scale").length > 0 : false;
 
-      // Expand Instrument view to full height and back to split
-      document.getElementById("st-dock-expand").click();
-      await new Promise((r) => setTimeout(r, 40));
-      const dockExpandedActive = document.querySelector("#sy1-studio .st-daw").classList.contains("is-dock-expanded");
-      document.getElementById("st-dock-expand").click();
+      // Direct full-page instrument view, then restore the arrangement.
+      const dockExpandedActive = !!document.querySelector(".st-instrument-page .st-embedded-synth") && !document.querySelector(".st-arr-wrap") && !document.getElementById("st-dock");
+      document.getElementById("st-inst-back-btn").click();
       await new Promise((r) => setTimeout(r, 40));
 
       // Switch Bottom Dock -> Mixer tab and verify channel strips + Master strip + meters

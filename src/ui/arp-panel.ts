@@ -7,45 +7,29 @@
  */
 
 import { getMachine, getSynthPatch, onParamChange } from "../engine/synth";
-import { fmtBpm, getTempo } from "../engine/tempo";
-import { ARP_MODE_OPTS, choice, row, toggles } from "../machines/types";
+import { getTempo } from "../engine/tempo";
+import { renderArpPanelHtml } from "./arp-view";
 import { renderControl, setPanelRenderHook, updateSyncDOM } from "./panel";
 
 let open = false;
 
 function html(): string {
-  return `<div class="arp-pop" role="dialog" aria-label="Arpeggiator"><div class="arp-pop-inner">
-    <div class="arp-pop-head"><h4>ARPEGGIATOR</h4>
-      <div class="synth-tempo" role="group" aria-label="Tempo">
-        <button type="button" class="synth-midi-btn" data-action="tempo-down" aria-label="Slower">−</button>
-        <button type="button" class="synth-tempo-val" data-action="tempo-tap" title="Tempo (BPM). Tap in time to set it.">${fmtBpm(getTempo())}</button>
-        <button type="button" class="synth-midi-btn" data-action="tempo-up" aria-label="Faster">+</button>
-      </div>
-      <button type="button" class="synth-midi-btn arp-pop-close" data-arp-close aria-label="Close">✕</button>
-    </div>
-    ${renderControl(toggles([
-      { key: "arpOn", label: "ARP ON", title: "Arpeggiator on/off" },
-      { key: "hold", label: "LATCH", title: "Keep the chord playing after you let go" }
-    ]))}
-    ${renderControl(choice("arpMode", ARP_MODE_OPTS))}
-    ${renderControl(row([["arpRate", "RATE"], ["arpOct", "OCT"], ["arpGate", "GATE"], ["arpSwing", "SWING"]]))}
-  </div></div>`;
+  return renderArpPanelHtml(getSynthPatch(), getTempo(), renderControl);
 }
 
-function syncButton(): void {
+export function syncArpButton(): void {
   const btn = document.getElementById("kb-arp");
-  if (!btn) return;
+  if (!btn || document.documentElement.classList.contains("is-studio")) return;
   btn.classList.toggle("active", getSynthPatch().arpOn === "on");
   btn.classList.toggle("is-open", open);
   btn.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function render(): void {
-  document.querySelectorAll(".arp-pop").forEach((el) => el.remove());
-  const panel = document.querySelector(".synth-panel");
+  document.querySelectorAll("#sy1-panel .arp-pop").forEach((el) => el.remove());
+  const panel = document.querySelector("#sy1-panel .synth-panel");
   if (open && panel && getMachine().kind === "synth") panel.insertAdjacentHTML("beforeend", html());
-  updateSyncDOM();
-  syncButton();
+  if (!document.documentElement.classList.contains("is-studio")) { updateSyncDOM(); syncArpButton(); }
 }
 
 function setOpen(v: boolean): void {
@@ -66,12 +50,14 @@ export function initArpPanel(): void {
   if (btn) {
     const toggleArp = () => setOpen(!open);
     btn.addEventListener("pointerdown", (e) => {
+      if (document.documentElement.classList.contains("is-studio")) return;
       if (e.pointerType === "mouse" && e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       toggleArp();
     });
     btn.addEventListener("keydown", (e) => {
+      if (document.documentElement.classList.contains("is-studio")) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         toggleArp();
@@ -84,6 +70,6 @@ export function initArpPanel(): void {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && open) setOpen(false);
   });
-  onParamChange((k) => { if (k === "arpOn") syncButton(); });
-  syncButton();
+  onParamChange((k) => { if (k === "arpOn") syncArpButton(); });
+  syncArpButton();
 }

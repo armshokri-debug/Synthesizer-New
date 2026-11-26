@@ -3,7 +3,7 @@ import {
   regionId, replaceRegionNotes, snapRegionTick, type MidiRegion
 } from "./midi-regions";
 import type { SY1TrackEngine } from "./track-engine";
-import { STUDIO_TICKS_PER_BAR, type StudioNoteSpan } from "./types";
+import { STUDIO_TICKS_PER_BAR, type StudioNoteSpan, type StudioMidiEvent } from "./types";
 
 type Tracks = Map<string, MidiRegion[]>;
 type History = { before: Tracks; after: Tracks; beforeSelection: string[]; afterSelection: string[] };
@@ -230,6 +230,19 @@ export class RegionEditor {
       id: regionId(), trackId, startTick, length, sourceLength: length, offset: 0, loop: false, events: []
     };
     this.edit(new Map([[trackId, [...this.regions(trackId), region]]]), [region.id]);
+    this.host.focus(trackId);
+  }
+
+  insertPattern(trackId: string, tick: number, length: number, events: StudioMidiEvent[]): void {
+    this.assertEditable();
+    if (!Number.isInteger(length) || length < 1 || !events.length) throw new Error("Pattern contains no hits.");
+    if (!Number.isFinite(tick) || events.some(e => !Number.isInteger(e.tick) || e.tick < 0 || e.tick > length || (e.type === "noteOn" && e.tick === length))) throw new Error("Invalid pattern timing.");
+    const startTick = Math.max(0, snapRegionTick(tick, this.grid));
+    if (startTick + length > this.host.length()) throw new Error("Extend the arrangement before inserting this pattern.");
+    const existing = this.regions(trackId);
+    if (existing.some(r => r.startTick < startTick + length && startTick < r.startTick + r.length)) throw new Error("Choose an empty position on this track before inserting the pattern.");
+    const region: MidiRegion = {id:regionId(),trackId,startTick,length,sourceLength:length,offset:0,loop:false,events:events.map(e=>({...e}))};
+    this.edit(new Map([[trackId,[...existing,region]]]),[region.id]);
     this.host.focus(trackId);
   }
 

@@ -201,9 +201,6 @@ async function run() {
     const trackCount = await cdp.eval(`document.querySelectorAll('.st-track').length`);
     assert(trackCount === 4, `Expected 4 tracks, got ${trackCount}`);
 
-    // Switch bottom dock to Instrument tab
-    await cdp.eval(`document.getElementById('st-tab-instrument')?.click()`);
-    await wait(150);
 
     // Set Track 1=sy1 (Tabriz), Track 2=yazd, Track 3=baku, Track 4=kerman via track dropdowns
     const setTrackMachine = async (trackId, machineId) => {
@@ -218,6 +215,9 @@ async function run() {
 
     await setTrackMachine("track-1", "tabriz");
     await setTrackMachine("track-2", "yazd");
+    assert(await cdp.eval(`window.SY1_STUDIO.engine.getFocusedTrack().id`) === "track-2", "Machine selection must focus its track");
+    await cdp.eval(`document.getElementById('st-tab-instrument')?.click()`);
+    await wait(150);
     const afterT2 = await cdp.eval(`(() => {
       const root = document.querySelector('.st-embedded-synth');
       return { trackId: root?.dataset.trackId, machine: root?.dataset.machine };
@@ -225,14 +225,20 @@ async function run() {
     assert(afterT2.trackId === "track-2" && afterT2.machine === "yazd",
       `Changing Track 2 machine must focus Track 2 and show Yazd in Instrument editor, got ${JSON.stringify(afterT2)}`);
 
+    await cdp.eval(`document.getElementById('st-inst-back-btn')?.click()`);
     await setTrackMachine("track-3", "baku");
     await setTrackMachine("track-4", "kerman");
+    assert(await cdp.eval(`window.SY1_STUDIO.engine.getFocusedTrack().id`) === "track-4", "Machine selection must focus its track");
+    await cdp.eval(`document.getElementById('st-tab-instrument')?.click()`);
+    await wait(150);
     const afterT4 = await cdp.eval(`(() => {
       const root = document.querySelector('.st-embedded-synth');
       return { trackId: root?.dataset.trackId, machine: root?.dataset.machine };
     })()`);
     assert(afterT4.trackId === "track-4" && afterT4.machine === "kerman",
       `Changing Track 4 machine must focus Track 4 and show Kerman in Instrument editor, got ${JSON.stringify(afterT4)}`);
+
+    await cdp.eval(`document.getElementById('st-inst-back-btn')?.click()`);
 
     // Drag a knob on Track 4 (Kerman -> kickTune), then Track 1 (Tabriz -> cutoff), then Track 2 (Yazd -> cutoff), then Track 3 (Baku -> res)
     const dragKnobOnTrack = async (trackId, expectedMachine, paramKey, deltaY) => {
@@ -274,7 +280,7 @@ async function run() {
     const bakuEdit = await dragKnobOnTrack("track-3", "baku", "res", -55);
 
     // Verify clicking Track 1 header re-shows Tabriz with its exact edited cutoff (unchanged by Yazd/Baku/Kerman edits!)
-    await cdp.eval(`document.querySelector('.st-track[data-track-id="track-1"] [data-st-action="focus-track"]')?.click()`);
+    await cdp.eval(`document.querySelector('.st-track[data-track-id="track-1"] [data-st-action="open-track-instrument"]')?.click()`);
     await wait(140);
     const t1Check = await cdp.eval(`({
       trackId: document.querySelector('.st-embedded-synth')?.dataset.trackId,
@@ -284,8 +290,9 @@ async function run() {
     assert(t1Check.trackId === "track-1" && t1Check.machine === "tabriz" && t1Check.cutoff === tabrizEdit.after,
       `Track 1 Tabriz patch must stay isolated: expected "${tabrizEdit.after}", got ${JSON.stringify(t1Check)}`);
 
+    await cdp.eval(`document.getElementById('st-inst-back-btn')?.click()`);
     // Verify Track 2 Yazd cutoff is also intact
-    await cdp.eval(`document.querySelector('.st-track[data-track-id="track-2"] [data-st-action="focus-track"]')?.click()`);
+    await cdp.eval(`document.querySelector('.st-track[data-track-id="track-2"] [data-st-action="open-track-instrument"]')?.click()`);
     await wait(140);
     const t2Check = await cdp.eval(`({
       trackId: document.querySelector('.st-embedded-synth')?.dataset.trackId,
@@ -298,6 +305,7 @@ async function run() {
     // ---------------------------------------------------------
     // PART 2: MIDI Velocity Editing (Desktop Mouse + Numeric + Multi-Select + Lane)
     // ---------------------------------------------------------
+    await cdp.eval(`document.getElementById('st-inst-back-btn')?.click()`);
     // Focus Track 1 (Tabriz) and switch to Piano Roll
     await cdp.eval(`document.querySelector('.st-track[data-track-id="track-1"] [data-st-action="focus-track"]')?.click()`);
     await wait(100);
@@ -519,16 +527,19 @@ async function run() {
     const reloadT1Cutoff = await cdp.eval(`document.querySelector('.st-embedded-synth[data-track-id="track-1"] .st-inst-knob[data-st-param="cutoff"] .sk-val')?.textContent`);
     assert(reloadT1Cutoff === tabrizEdit.after, `Track 1 cutoff did not survive reload: expected ${tabrizEdit.after}, got ${reloadT1Cutoff}`);
 
+    await cdp.eval(`document.getElementById('st-inst-back-btn')?.click()`);
     await cdp.eval(`document.querySelector('.st-track[data-track-id="track-2"] [data-st-action="open-track-instrument"]')?.click()`);
     await wait(150);
     const reloadT2Cutoff = await cdp.eval(`document.querySelector('.st-embedded-synth[data-track-id="track-2"] .st-inst-knob[data-st-param="cutoff"] .sk-val')?.textContent`);
     assert(reloadT2Cutoff === yazdEdit.after, `Track 2 cutoff did not survive reload: expected ${yazdEdit.after}, got ${reloadT2Cutoff}`);
 
+    await cdp.eval(`document.getElementById('st-inst-back-btn')?.click()`);
     await cdp.eval(`document.querySelector('.st-track[data-track-id="track-3"] [data-st-action="open-track-instrument"]')?.click()`);
     await wait(150);
     const reloadT3Res = await cdp.eval(`document.querySelector('.st-embedded-synth[data-track-id="track-3"] .st-inst-knob[data-st-param="res"] .sk-val')?.textContent`);
     assert(reloadT3Res === bakuEdit.after, `Track 3 res did not survive reload: expected ${bakuEdit.after}, got ${reloadT3Res}`);
 
+    await cdp.eval(`document.getElementById('st-inst-back-btn')?.click()`);
     await cdp.eval(`document.querySelector('.st-track[data-track-id="track-4"] [data-st-action="open-track-instrument"]')?.click()`);
     await wait(150);
     const reloadT4Kick = await cdp.eval(`document.querySelector('.st-embedded-synth[data-track-id="track-4"] .st-inst-knob[data-st-param="kickTune"] .sk-val')?.textContent`);
