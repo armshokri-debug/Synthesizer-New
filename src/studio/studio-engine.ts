@@ -259,7 +259,6 @@ export class SY1StudioEngine {
     anchorTime: number;
     anchorTick: number;
     cursorTick: number;
-    timer?: ReturnType<typeof setInterval>;
     unsubscribe: () => void;
   } | null = null;
   private liveDrums = new Map<string, LiveDrumSequence>();
@@ -1005,10 +1004,10 @@ export class SY1StudioEngine {
 
   // ------------------------------------------------------- lookahead engine ----
   private startSchedulerTimer(): void {
-    if (this.schedulerTimer !== null) clearInterval(this.schedulerTimer);
-    if (this.clockNowOverride) return; // deterministic test mode drives stepScheduler manually
+    if (this.schedulerTimer !== null || this.clockNowOverride) return;
+    // Preview and arrangement are mutually exclusive modes of this one scheduler.
     this.schedulerTimer = setInterval(() => {
-      if (!this.playing) return;
+      if (!this.playing && !this.drumPreview) return;
       this.stepScheduler(this.nowAudioTime());
     }, SCHEDULER_INTERVAL_MS);
   }
@@ -1117,11 +1116,11 @@ export class SY1StudioEngine {
     const preview = {
       track, voice, sequence: new LiveDrumSequence(),
       anchorTime: now + (context ? PLAY_START_LEAD_SEC : 0), anchorTick: 0, cursorTick: 0,
-      unsubscribe: track.onChange(copySound),
-      timer: this.clockNowOverride ? undefined : setInterval(() => this.stepDrumPreview(this.nowAudioTime()), SCHEDULER_INTERVAL_MS)
+      unsubscribe: track.onChange(copySound)
     };
     this.drumPreview = preview;
-    this.stepDrumPreview(now);
+    this.stepScheduler(now);
+    this.startSchedulerTimer();
     this.notify();
   }
 
@@ -1129,7 +1128,10 @@ export class SY1StudioEngine {
     const preview = this.drumPreview;
     if (!preview) return;
     this.drumPreview = null;
-    if (preview.timer !== undefined) clearInterval(preview.timer);
+    if (!this.playing && this.schedulerTimer !== null) {
+      clearInterval(this.schedulerTimer);
+      this.schedulerTimer = null;
+    }
     preview.unsubscribe();
     preview.voice.dispose();
     this.notify();
