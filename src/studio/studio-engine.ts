@@ -227,6 +227,7 @@ export class SY1StudioEngine {
   private recording = false;
   private transportEpoch = 0;
   private preparingRecord = false;
+  private finalizingRecord = false;
   private countInStart: number | null = null;
   private countInEnd: number | null = null;
   // The capture boundary is not the moving transport anchor (which changes at loops).
@@ -913,7 +914,7 @@ export class SY1StudioEngine {
   }
 
   async play(countInSeconds = 0): Promise<void> {
-    if (this.playing) return;
+    if (this.playing || this.finalizingRecord) return;
     this.stopDrumPreview();
     const epoch = this.transportEpoch;
     if (!this.clockNowOverride) {
@@ -944,7 +945,7 @@ export class SY1StudioEngine {
   }
 
   async record(options: { midiOnly?: boolean; patternTrackId?: string; onStart?: (at: number) => void } = {}): Promise<void> {
-    if (this.recording || this.preparingRecord) return;
+    if (this.recording || this.preparingRecord || this.finalizingRecord) return;
     this.recordedDrumHits.clear();
     // Keep already scheduled live hits so punch-in captures those that sound
     // after the recording boundary, not just hits scheduled after Record.
@@ -958,6 +959,8 @@ export class SY1StudioEngine {
       }
       if (epoch !== this.transportEpoch) return;
       // Ensure at least one track is armed; if none armed, arm the focused track
+      const instrumentTarget = patternTrackId ? this.getTrack(patternTrackId) : undefined;
+      if (instrumentTarget?.isDrumTrack() && !options.onStart) instrumentTarget.armed = true;
       if (!this.tracks.some((t) => t.armed)) {
         this.getFocusedTrack().armed = true;
       }
@@ -996,11 +999,16 @@ export class SY1StudioEngine {
     } finally { this.preparingRecord = false; }
   }
 
-  async stop(): Promise<void> {
+  /** Pause retains the current musical position; explicit Stop keeps its rewind behavior. */
+  async pause(): Promise<void> { await this.stop(true); }
+
+  async stop(preservePosition = false): Promise<void> {
     this.stopDrumPreview();
     this.flushDrumCapture(this.nowAudioTime(), true);
     this.cancelTransportDrums();
-    this.liveDrums.clear(); this.pendingDrumCapture = []; this.recordedDrumHits.clear();
+    if (!preservePosition || this.recording) this.liveDrums.clear();
+    else for (const sequence of this.liveDrums.values()) sequence.reset();
+    this.pendingDrumCapture = []; this.recordedDrumHits.clear();
     this.stopLiveArpTimer();
     for (const track of this.tracks) track.liveArpeggiator.stop();
     this.transportEpoch++;
@@ -1030,20 +1038,24 @@ export class SY1StudioEngine {
       }
       this.regions.registerTake(previous);
       this.recording = false;
-      await this.stopLiveMixRecorder();
+      this.finalizingRecord = true;
     }
 
     this.playing = false;
     this.pendingLoopWrap = null;
-    this.playheadTick = 0;
-    this.anchorTick = 0;
-    this.cursorTick = 0;
+    this.playheadTick = preservePosition ? stopTick : 0;
+    this.anchorTick = this.playheadTick;
+    this.cursorTick = this.playheadTick;
     this.releasePlaybackNotes(0);
     this.allNotesOff();
 
     if (wasPlaying || wasRecording) {
       this.notify();
       this.notifyKeys();
+    }
+    if (wasRecording) {
+      try { await this.stopLiveMixRecorder(); }
+      finally { this.finalizingRecord = false; this.notify(); }
     }
   }
 
