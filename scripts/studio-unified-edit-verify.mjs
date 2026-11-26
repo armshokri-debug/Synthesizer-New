@@ -111,8 +111,25 @@ try {
   assert.deepEqual(states.b, baseline.bPatch, "Track B must not inherit Track A edits");
   await back();
   assert.deepEqual((await inspect()).regions, baseline.regions);
+  // GarageBand-style navigation must not stop or reset the project while playing.
+  await cdp.evaluate("SY1_STUDIO.engine.play()");
+  await sleep(220);
+  const runningBefore=await inspect();
+  await edit(baseline.a);
+  await sleep(180);
+  const runningEdit=await inspect();
+  assert(runningEdit.active && runningEdit.visible && runningEdit.sameHost);
+  assert(runningEdit.tick>runningBefore.tick,"Opening Edit must not reset the playhead");
+  assert(await cdp.evaluate("SY1_STUDIO.engine.getTransportSnapshot().playing"));
+  await back();
+  await sleep(180);
+  const runningBack=await inspect();
+  assert(runningBack.tick>runningEdit.tick,"Returning to arrangement must not reset playback");
+  assert(await cdp.evaluate("SY1_STUDIO.engine.getTransportSnapshot().playing"));
+  assert.deepEqual(runningBack.regions,baseline.regions);
+  await cdp.evaluate("SY1_STUDIO.engine.stop()");
   assert.deepEqual(errors, []);
-  console.log("PASS: original instrument Edit, track isolation and lossless return to arrangement");
+  console.log("PASS: original instrument Edit, track isolation, lossless return and uninterrupted transport");
 } finally {
   cdp?.close();
   chrome.kill();
