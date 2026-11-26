@@ -65,6 +65,47 @@ let dockCollapsed = true;
 let dockPinnedOpen = false;
 let dockHeightPx = 326;
 let instrumentFocusMode = false;
+// The original instrument host is reused in Studio rather than creating a second
+// independent page. Its standalone contents remain detached and are restored
+// when returning to the arrangement. All track events still bubble to Studio.
+let instrumentHostHome: Comment | null = null;
+let standaloneInstrumentContents: DocumentFragment | null = null;
+
+function detachTrackInstrumentHost(container: HTMLElement): void {
+  const host = document.getElementById("sy1-panel");
+  if (host && container.contains(host) && instrumentHostHome?.parentNode) {
+    instrumentHostHome.parentNode.insertBefore(host, instrumentHostHome);
+    host.hidden = true;
+  }
+}
+
+function mountTrackInstrumentHost(container: HTMLElement): void {
+  const slot = container.querySelector<HTMLElement>(".st-instrument-page");
+  const host = document.getElementById("sy1-panel");
+  if (!slot || !host || !host.parentNode) return;
+  if (!instrumentHostHome) {
+    instrumentHostHome = document.createComment("Original SY-1 instrument host");
+    host.parentNode.insertBefore(instrumentHostHome, host);
+    standaloneInstrumentContents = document.createDocumentFragment();
+    while (host.firstChild) standaloneInstrumentContents.appendChild(host.firstChild);
+  }
+  host.dataset.studioInstrument = "true";
+  host.replaceChildren(...Array.from(slot.childNodes));
+  host.hidden = false;
+  slot.appendChild(host);
+}
+
+function restoreStandaloneInstrumentHost(): void {
+  const host = document.getElementById("sy1-panel");
+  if (!host || !instrumentHostHome) return;
+  instrumentHostHome.replaceWith(host);
+  instrumentHostHome = null;
+  host.replaceChildren();
+  if (standaloneInstrumentContents) host.appendChild(standaloneInstrumentContents);
+  standaloneInstrumentContents = null;
+  delete host.dataset.studioInstrument;
+  host.hidden = true;
+}
 let arpTrackKey: string | null = null;
 function studioArpTrack(): SY1TrackEngine | null {
   if (!instrumentFocusMode || !arpTrackKey) return null;
@@ -1232,7 +1273,11 @@ export function renderStudioPanel(): void {
   const previousFaceTrack = previousFace?.dataset.trackId;
   const previousFaceMachine = previousFace?.dataset.machine;
   const previousFaceScroll = container.querySelector<HTMLElement>(".st-inst-wrap")?.scrollTop ?? 0;
+  // Detach the stable original host before replacing the arrangement DOM.
+  detachTrackInstrumentHost(container);
+  if (!instrumentFocusMode) restoreStandaloneInstrumentHost();
   container.innerHTML = renderStudioHtml();
+  if (instrumentFocusMode) mountTrackInstrumentHost(container);
   const face = container.querySelector<HTMLElement>(".st-embedded-chassis");
   const faceWrap = container.querySelector<HTMLElement>(".st-inst-wrap");
   if (faceWrap && face?.dataset.trackId === previousFaceTrack && face?.dataset.machine === previousFaceMachine) faceWrap.scrollTop = previousFaceScroll;
@@ -3102,6 +3147,7 @@ export function showStudioPanel(): void {
 }
 
 export function hideStudioPanel(): void {
+  restoreStandaloneInstrumentHost();
   stopPlayheadLoop();
   cachedPlayheadEls = [];
   cachedClockEl = null;
