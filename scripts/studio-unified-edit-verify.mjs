@@ -27,6 +27,7 @@ try {
   }
   const baseline = await cdp.evaluate(`(async () => {
     await SY1_STUDIO.ready;
+    window.__originalInstrumentHost = document.getElementById("sy1-panel");
     const panel = document.querySelector("#sy1-panel .synth-panel");
     const keys = [...panel.querySelectorAll(".sk")].map(el => el.getAttribute("data-param") || el.getAttribute("data-st-param"));
     const machine = panel.dataset.machine;
@@ -50,7 +51,7 @@ try {
     const root = document.getElementById("sy1-panel");
     const panel = root.querySelector(".synth-panel");
     const visible = !!panel && !root.hidden && panel.getClientRects().length > 0;
-    return { visible, active: e.isActive(), focused: e.getFocusedTrack().id,
+    return { visible, sameHost: root === window.__originalInstrumentHost, active: e.isActive(), focused: e.getFocusedTrack().id,
       machine: panel?.dataset.machine,
       keys: panel ? [...panel.querySelectorAll(".sk")].map(el => el.getAttribute("data-param") || el.getAttribute("data-st-param")) : [],
       bpm: e.getBpm(), tick: e.getCurrentTick(),
@@ -59,7 +60,7 @@ try {
   const edit = id => cdp.evaluate(`document.querySelector('[data-st-action="open-track-instrument"][data-track-id=' + CSS.escape(${JSON.stringify(id)}) + ']').click()`);
   await edit(baseline.a);
   let view = await inspect();
-  assert(view.visible, "Edit must show the original #sy1-panel, not a duplicate Studio face");
+  assert(view.visible && view.sameHost, "Edit must reuse the original instrument host element");
   assert(view.active, "Edit must keep the Studio project active");
   assert.equal(view.focused, baseline.a);
   assert.equal(view.machine, baseline.machine);
@@ -92,7 +93,7 @@ try {
   })()`);
   await back();
   view = await inspect();
-  assert(!view.visible && view.active, "Studio button must return to the active arrangement");
+  assert(!view.visible && view.sameHost && view.active, "Studio button must restore the same host and active arrangement");
   assert.equal(view.tick, baseline.tick);
   assert.equal(view.bpm, baseline.bpm);
   assert.deepEqual(view.regions, baseline.regions);
