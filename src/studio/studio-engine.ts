@@ -17,6 +17,7 @@ import {
   unlockAudio
 } from "../engine/bus";
 import { encodeWav, ensureRecorderWorklet, RECORDER_MAX_SECONDS } from "../engine/daw";
+import { trimCaptureWindow } from "./recording-window";
 import { getTempo, onTempoChange, setTempo } from "../engine/tempo";
 import { encodeStudioMidi } from "./midi-io";
 import {
@@ -170,6 +171,8 @@ interface LiveRecorderSession {
   chunks: Float32Array[][];
   frames: number;
   bpm: number;
+  firstFrame: number | null;
+  startAt: number | null;
 }
 
 export interface ScheduledDispatchRecord {
@@ -843,6 +846,7 @@ export class SY1StudioEngine {
       for (const track of this.tracks) track.liveArpeggiator.realignUnstarted(this.anchorAudioTime);
       if (this.recording && this.recordingStartAt !== null && now < this.recordingStartAt) {
         this.recordingStartAt = this.countInEnd;
+        if(this.recorder)this.recorder.startAt=this.recordingStartAt;
       }
       this.cursorAudioTime = this.countInEnd;
       this.anchorBpm = nextBpm;
@@ -929,7 +933,10 @@ export class SY1StudioEngine {
     const startLead = countInSeconds > 0 ? countInSeconds : (!this.clockNowOverride ? PLAY_START_LEAD_SEC : 0);
     this.playing = true;
     this.anchorAudioTime = now + startLead;
-    if (this.recording) this.recordingStartAt = this.anchorAudioTime;
+    if (this.recording) {
+      this.recordingStartAt = this.anchorAudioTime;
+      if (this.recorder) this.recorder.startAt = this.recordingStartAt;
+    }
     this.anchorTick = this.playheadTick;
     this.anchorBpm = this.bpm;
     this.cursorAudioTime = now + startLead;
@@ -958,6 +965,11 @@ export class SY1StudioEngine {
         await this.ensureAudio();
       }
       if (epoch !== this.transportEpoch) return;
+      // Prepare the PCM recorder before establishing the MIDI capture boundary.
+      if (!this.clockNowOverride && !options.midiOnly) {
+        await this.startLiveMixRecorder();
+        if(epoch!==this.transportEpoch){await this.stopLiveMixRecorder();return;}
+      }
       // Ensure at least one track is armed; if none armed, arm the focused track
       const instrumentTarget = patternTrackId ? this.getTrack(patternTrackId) : undefined;
       if (instrumentTarget?.isDrumTrack() && !options.onStart) instrumentTarget.armed = true;
@@ -980,15 +992,10 @@ export class SY1StudioEngine {
       this.recording = true;
       this.recordingStartAt = this.playing
         ? Math.max(this.nowAudioTime(), this.pendingLoopWrap ? -Infinity : this.anchorAudioTime) : null;
+      if(this.recorder)this.recorder.startAt=this.recordingStartAt;
       this.performanceCaptureTimes = new WeakMap();
       this.pendingRecordingStart = options.onStart ?? null;
       this.liveRecordedOpenNotes.clear();
-
-      // Start live 24-bit WAV recorder on StudioMasterBus.tap if audio context is live
-      if (!this.clockNowOverride && !options.midiOnly) {
-        await this.startLiveMixRecorder();
-      }
-      if (epoch !== this.transportEpoch) { await this.stopLiveMixRecorder(); return; }
 
       if (!this.playing) {
         await this.play(this.countInEnabled ? 4 * 60 / this.bpm : 0);
@@ -1003,6 +1010,7 @@ export class SY1StudioEngine {
   async pause(): Promise<void> { await this.stop(true); }
 
   async stop(preservePosition = false): Promise<void> {
+    const stopAt=this.nowAudioTime();
     this.stopDrumPreview();
     this.flushDrumCapture(this.nowAudioTime(), true);
     this.cancelTransportDrums();
@@ -1054,7 +1062,7 @@ export class SY1StudioEngine {
       this.notifyKeys();
     }
     if (wasRecording) {
-      try { await this.stopLiveMixRecorder(); }
+      try { await this.stopLiveMixRecorder(stopAt); }
       finally { this.finalizingRecord = false; this.notify(); }
     }
   }
@@ -1628,12 +1636,15 @@ export class SY1StudioEngine {
       sink,
       chunks: [[], []],
       frames: 0,
-      bpm: this.bpm
+      bpm: this.bpm,
+      firstFrame:null,
+      startAt:null
     };
 
     this.liveRecWarning = "";
     node.port.onmessage = (e) => {
       const d = e.data;
+      if(d && Number.isFinite(d.start))rec.firstFrame=Math.round(d.start*ctx.sampleRate);
       if (d && d.l) {
         rec.chunks[0].push(d.l);
         rec.chunks[1].push(d.r);
@@ -1668,7 +1679,7 @@ export class SY1StudioEngine {
     return true;
   }
 
-  private stopLiveMixRecorder(): Promise<void> {
+  private stopLiveMixRecorder(endAt = this.nowAudioTime()): Promise<void> {
     const rec = this.recorder;
     if (!rec) return Promise.resolve();
     this.recorder = null;
@@ -1681,13 +1692,18 @@ export class SY1StudioEngine {
         try { rec.node.port.onmessage = null; } catch (e) {}
         try { this.masterBus?.tap.disconnect(rec.node); } catch (e) {}
         try { rec.node.disconnect(); rec.sink.disconnect(); } catch (e) {}
-        if (rec.frames > 0) {
-          const wav = encodeWav(rec.chunks, rec.frames, rec.ctx.sampleRate);
+        const rate=rec.ctx.sampleRate;
+        const trimmed=rec.firstFrame!==null&&rec.startAt!==null&&endAt>rec.startAt
+          ? trimCaptureWindow(rec.chunks,rec.firstFrame,Math.round(rec.startAt*rate),Math.round(endAt*rate))
+          : {chunks:[[],[]],frames:0,missingFrames:0};
+        if(trimmed.missingFrames>0)this.liveRecWarning='Recording audio was incomplete; missing '+trimmed.missingFrames+' frames';
+        if (trimmed.frames > 0) {
+          const wav = encodeWav(trimmed.chunks, trimmed.frames, rate);
           this.lastLiveTake = {
             wav,
             sampleRate: rec.ctx.sampleRate,
-            durationSec: rec.frames / rec.ctx.sampleRate,
-            frames: rec.frames,
+            durationSec: trimmed.frames / rate,
+            frames: trimmed.frames,
             bpm: rec.bpm,
             kind: "live",
             createdAt: Date.now()
