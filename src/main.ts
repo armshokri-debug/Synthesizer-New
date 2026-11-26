@@ -8,7 +8,7 @@ import "./ui/skins.css";
 import "./ui/keyboard.css";
 import "./ui/studio.css";
 import { installAudioUnlock } from "./engine/bus";
-import { DRUM_NOTES, DRUM_VOICES } from "./engine/drums";
+import { DRUM_NOTES, DRUM_VOICES, stopDrums } from "./engine/drums";
 import { applySkin } from "./ui/skins";
 import { getEngine, getHQState } from "./engine/hq";
 import { requestMidi, setMidiInputInterceptor } from "./engine/midi";
@@ -158,6 +158,8 @@ function initApp(): void {
     };
 
     const enterStudioMode = () => {
+      // Standalone drum playback must not continue alongside the project.
+      stopDrums();
       allNotesOff();
       closeArpPanel();
       setOrientalOpen(false);
@@ -220,6 +222,7 @@ function initApp(): void {
       setMidiInputInterceptor((cmd,d1,d2,ch)=>synthRecording.captureController(cmd,d1,d2,ch));
       setKeyboardTarget(null);
       hideStudioPanel();
+      renderPanel();
       syncArpButton();
       fitPanel();
     };

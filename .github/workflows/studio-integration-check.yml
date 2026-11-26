@@ -1,0 +1,42 @@
+name: Studio integration checks
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  studio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci
+      - run: npm run lint
+      - run: bun test --preload ./tests/vite-worklet-preload.js tests
+      - run: npm run build
+      - name: Verify original instrument Edit and existing drum integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SY1_CHROME_BIN="$(command -v google-chrome || command -v chromium)"
+          npm run preview -- --host 127.0.0.1 --port 4178 > /tmp/sy1-preview.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4178/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4178/ >/dev/null
+          node scripts/studio-unified-edit-verify.mjs
+          node scripts/studio-phase7-8c-verify.mjs
+          node scripts/studio-mix-recovery-verify.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sy1-studio-preview
+          path: dist
+          if-no-files-found: error
+          retention-days: 7

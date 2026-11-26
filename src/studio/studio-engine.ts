@@ -259,7 +259,6 @@ export class SY1StudioEngine {
     anchorTime: number;
     anchorTick: number;
     cursorTick: number;
-    timer?: ReturnType<typeof setInterval>;
     unsubscribe: () => void;
   } | null = null;
   private liveDrums = new Map<string, LiveDrumSequence>();
@@ -448,6 +447,8 @@ export class SY1StudioEngine {
   handleAudioContextStateChange(state: string, nowAudioTime = this.nowAudioTime()): void {
     if (state === "interrupted" || state === "suspended") {
       this.stopDrumPreview();
+      this.flushDrumCapture(nowAudioTime, true);
+      this.pendingDrumCapture = [];
       this.metronome.cancel();
       if (this.playing || this.active) {
         this.releasePlaybackNotes(0);
@@ -846,6 +847,7 @@ export class SY1StudioEngine {
 
   seekToTick(tick: number): void {
     if (this.recording) return;
+    this.pendingDrumCapture = [];
     this.pendingLoopWrap = null;
     this.metronome.cancel();
     this.countInStart = this.countInEnd = null;
@@ -905,7 +907,8 @@ export class SY1StudioEngine {
   async record(options: { midiOnly?: boolean; onStart?: (at: number) => void } = {}): Promise<void> {
     if (this.recording || this.preparingRecord) return;
     this.recordedDrumHits.clear();
-    this.pendingDrumCapture = [];
+    // Keep already scheduled live hits so punch-in captures those that sound
+    // after the recording boundary, not just hits scheduled after Record.
     this.preparingRecord = true;
     this.stopDrumPreview();
     const epoch = this.transportEpoch;
@@ -1005,10 +1008,10 @@ export class SY1StudioEngine {
 
   // ------------------------------------------------------- lookahead engine ----
   private startSchedulerTimer(): void {
-    if (this.schedulerTimer !== null) clearInterval(this.schedulerTimer);
-    if (this.clockNowOverride) return; // deterministic test mode drives stepScheduler manually
+    if (this.schedulerTimer !== null || this.clockNowOverride) return;
+    // Preview and arrangement are mutually exclusive modes of this one scheduler.
     this.schedulerTimer = setInterval(() => {
-      if (!this.playing) return;
+      if (!this.playing && !this.drumPreview) return;
       this.stepScheduler(this.nowAudioTime());
     }, SCHEDULER_INTERVAL_MS);
   }
@@ -1117,11 +1120,11 @@ export class SY1StudioEngine {
     const preview = {
       track, voice, sequence: new LiveDrumSequence(),
       anchorTime: now + (context ? PLAY_START_LEAD_SEC : 0), anchorTick: 0, cursorTick: 0,
-      unsubscribe: track.onChange(copySound),
-      timer: this.clockNowOverride ? undefined : setInterval(() => this.stepDrumPreview(this.nowAudioTime()), SCHEDULER_INTERVAL_MS)
+      unsubscribe: track.onChange(copySound)
     };
     this.drumPreview = preview;
-    this.stepDrumPreview(now);
+    this.stepScheduler(now);
+    this.startSchedulerTimer();
     this.notify();
   }
 
@@ -1129,7 +1132,10 @@ export class SY1StudioEngine {
     const preview = this.drumPreview;
     if (!preview) return;
     this.drumPreview = null;
-    if (preview.timer !== undefined) clearInterval(preview.timer);
+    if (!this.playing && this.schedulerTimer !== null) {
+      clearInterval(this.schedulerTimer);
+      this.schedulerTimer = null;
+    }
     preview.unsubscribe();
     preview.voice.dispose();
     this.notify();
@@ -1191,7 +1197,7 @@ export class SY1StudioEngine {
     const remaining: typeof this.pendingDrumCapture = [];
     for (const h of this.pendingDrumCapture) {
       if (h.at > now + 1e-7) { if (!stopping) remaining.push(h); continue; }
-      if (!this.recording || this.getTrack(h.track.id) !== h.track) continue;
+      if (!this.canCapturePerformanceAt(h.at) || !h.track.armed || this.getTrack(h.track.id) !== h.track) continue;
       const key = `${h.track.id}:${h.tick}:${h.midi}`;
       if (this.recordedDrumHits.has(key)) continue;
       this.recordedDrumHits.add(key);
@@ -1219,7 +1225,9 @@ export class SY1StudioEngine {
             const at = segStartAudio + (hit.tick - startTick) * secPerTick;
             if (track.audible) track.noteOn(hit.midi, hit.velocity, at);
             observer?.({trackId:track.id,event:{type:"noteOn",tick:hit.tick,midi:hit.midi,velocity:hit.velocity},audioTime:at});
-            if (track.armed && this.canCapturePerformanceAt(at)) this.pendingDrumCapture.push({track,...hit,at});
+            // Queue each scheduled hit until its actual audio time. The capture
+            // gate at that time determines whether it belongs to the take.
+            this.pendingDrumCapture.push({track,...hit,at});
           });
           continue;
         }

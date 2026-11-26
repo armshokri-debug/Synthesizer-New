@@ -37,6 +37,32 @@ describe("Live pattern with the Studio transport",()=>{
     const {e,track,advance,hits}=setup();e.setBars(1);e.setLoopEnabled(true);e.setLiveDrumEnabled(track.id,true);await e.record({midiOnly:true});advance(14.3);await e.stop();
     expect(hits.filter(x=>x.event.type==="noteOn").length).toBeGreaterThan(4);expect(track.events.filter(x=>x.type==="noteOn").map(x=>x.tick)).toEqual([0,480]);e.dispose();
   });
+  test("punch-in records a previously scheduled drum hit on the same beat as two synth tracks",async()=>{
+    const {e,track,hits,advance}=setup();
+    const a=e.getTracks().find(t=>t.id!==track.id)!;
+    const b=e.addTrack()!;
+    a.addNote(60,480,120); b.addNote(67,480,120);
+    const originalA=JSON.stringify(a.getRegions(e.getTotalTicks()));
+    const originalB=JSON.stringify(b.getRegions(e.getTotalTicks()));
+    e.setLiveDrumEnabled(track.id,true);
+    await e.play();advance(10.43);
+    const scheduled=hits.filter(x=>x.event.type==="noteOn"&&x.event.tick===480);
+    expect(scheduled.length).toBe(3);
+    expect(new Set(scheduled.map(x=>x.trackId)).size).toBe(3);
+    for(const hit of scheduled) expect(hit.audioTime).toBeCloseTo(10.5,6);
+    await e.record({midiOnly:true});
+    expect(track.events.length).toBe(0);
+    advance(10.65);await e.stop();
+    expect(track.events.filter(x=>x.type==="noteOn").map(x=>x.tick)).toEqual([480]);
+    expect(JSON.stringify(a.getRegions(e.getTotalTicks()))).toBe(originalA);
+    expect(JSON.stringify(b.getRegions(e.getTotalTicks()))).toBe(originalB);
+    expect(e.isLiveDrumEnabled(track.id)).toBe(false);
+    hits.length=0;await e.play();advance(11.35);
+    const replay=hits.filter(x=>x.event.type==="noteOn"&&x.event.tick===480);
+    expect(replay.length).toBe(3);
+    for(const hit of replay) expect(hit.audioTime).toBeCloseTo(replay[0].audioTime,6);
+    await e.stop();e.dispose();
+  });
   test("changing tempo preserves the next musical hit",async()=>{
     const {e,track,hits,advance}=setup();e.setLiveDrumEnabled(track.id,true);await e.play();advance(10.2);e.setBpm(60);advance(11.2);
     expect(hits.map(x=>x.event.tick)).toEqual([0,480]);expect(hits[1].audioTime).toBeCloseTo(10.8,5);await e.stop();e.dispose();
