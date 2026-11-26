@@ -9,7 +9,7 @@ import { CdpClient, sleep, waitForCdp } from "./studio-cdp.mjs";
 const port = 9281;
 const profile = mkdtempSync(join(tmpdir(), "sy1-ci-chrome-"));
 const chrome = spawn(process.env.SY1_CHROME_BIN || "/usr/bin/chromium",
-  ["--user-data-dir="+profile, "--headless", "--no-sandbox", "--disable-gpu", "--autoplay-policy=no-user-gesture-required",
+  ["--user-data-dir="+profile, "--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--enable-logging", "--autoplay-policy=no-user-gesture-required",
    "--remote-debugging-port=" + port, "about:blank"], { stdio: "ignore" });
 let cdp;
 const errors = [];
