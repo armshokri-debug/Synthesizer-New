@@ -204,7 +204,7 @@ export function renderStudioInstrumentHtml(track: SY1TrackEngine, pageFilter: st
     <button type="button" class="synth-midi-btn tempo-step-btn" data-st-action="bpm-up" aria-label="Faster">+</button>
     <button type="button" class="synth-midi-btn tempo-tap-btn" data-st-action="bpm-tap">TAP</button></div>`:"";
   return renderOriginalFaceplate({
-    attributes:`class="synth-panel" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" data-skin="${escapeHtml(m.skin||m.id)}" data-page="${escapeHtml(validPage)}"`,
+    attributes:`class="synth-panel" dir="ltr" data-track-id="${escapeHtml(track.id)}" data-machine="${escapeHtml(m.id)}" aria-label="${escapeHtml(track.name)}" data-skin="${escapeHtml(m.skin||m.id)}" data-page="${escapeHtml(validPage)}"`,
     machineName:m.name,studioButton:'<button type="button" class="synth-midi-btn synth-studio-btn" id="st-inst-back-btn" data-st-action="close-track-instrument" title="Return to Studio">Studio</button>',
     output,connections,
     previous:'data-st-action="inst-preset-prev"',presetLabel:renderInstrumentPresetLabel(presetLabel,presetGroup),next:'data-st-action="inst-preset-next"',
