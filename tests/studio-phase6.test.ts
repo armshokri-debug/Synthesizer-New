@@ -119,12 +119,13 @@ describe("Phase 6 MIDI regions", () => {
     editor.pasteInPlace(target.id);
     expect(editor.current(target.id)?.events).toEqual(phrase);
     expect(editor.current(target.id)?.id).not.toBe(legacy.id);
-    expect(editor.current(target.id)?.startTick).toBe(legacy.startTick);
+    // Cut replaces the clipboard with the copied region at bar 3.
+    expect(editor.current(target.id)?.startTick).toBe(bar * 2);
     expect(target.machineId).toBe("kerman");
     expect(JSON.stringify(target.patch)).toBe(targetPatch);
     expect(track.events).toEqual(phrase);
     editor.undo();expect(target.events.length).toBe(0);
-    editor.redo();expect(target.events).toEqual(phrase);
+    editor.redo();expect(editor.current(target.id)?.events).toEqual(phrase);
     editor.select(legacy.id);
     editor.remove();
     expect(track.events.length).toBe(0);

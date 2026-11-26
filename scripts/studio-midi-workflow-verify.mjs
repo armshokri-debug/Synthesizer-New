@@ -32,7 +32,8 @@ try {
   await cdp.evaluate(`(async()=>{await SY1_STUDIO.ready;SY1_STUDIO.open();const e=SY1_STUDIO.engine;
     const a=e.getFocusedTrack(),b=e.getTracks()[1];e.setTrackMachine(a.id,"sy1");e.setTrackMachine(b.id,"yazd");
     a.setEvents([{type:"noteOn",tick:120,midi:60,velocity:.8},{type:"noteOff",tick:360,midi:60},{type:"noteOn",tick:480,midi:64,velocity:.6},{type:"noteOff",tick:720,midi:64}]);
-    window.__source=a.id;window.__destination=b.id;document.querySelector('[data-region-id]').click();})()`);
+    window.__source=a.id;window.__destination=b.id;})()`);
+  await cdp.evaluate('document.querySelector("[data-region-id]").click()');
   await cdp.evaluate('document.querySelector("[data-st-action=copy-region]").click()');
   await cdp.evaluate(`document.querySelector('[data-st-action=focus-track][data-track-id="'+window.__destination+'"]').click()`);
   await cdp.evaluate('document.querySelector("[data-st-action=paste-region-in-place]").click()');
