@@ -52,7 +52,7 @@ export function editTrackDrumStep(pattern: DrumPattern, voice: DrumVoice, index:
 /** Bake the original 16th-note groove into a bounded MIDI clip. Probability is
  * resolved once on insertion, so playback, editing and export share the same events.
  * Rolled hits that cross the pattern seam wrap into the clip's first step. */
-export function drumPatternMidi(pattern: DrumPattern, patch: SynthPatch, bpm: number, random:()=>number=Math.random): {length:number;events:StudioMidiEvent[]} {
+export function drumPatternMidi(pattern: DrumPattern, patch: SynthPatch, bpm: number, random:(voice:DrumVoice,step:number)=>number=Math.random): {length:number;events:StudioMidiEvent[]} {
   const stepTicks=STUDIO_PPQ/4, length=pattern.len*stepTicks;
   const swing=Math.max(0,Math.min(.6,Number(patch.drumSwing)||0));
   const accent=Number.isFinite(Number(patch.drumAccent))?Math.max(0,Math.min(1,Number(patch.drumAccent))):.5;
@@ -63,7 +63,7 @@ export function drumPatternMidi(pattern: DrumPattern, patch: SynthPatch, bpm: nu
     const add=(tick:number,vel:number)=>{const t=((Math.round(tick)%length)+length)%length;row.set(t,Math.max(row.get(t)??0,vel));};
     for(let i=0;i<pattern.len;i++){
       const state=pattern.steps[v][i];if(!state)continue;
-      const probability=stepProb(pattern,v,i);if(probability<100&&random()*100>=probability)continue;
+      const probability=stepProb(pattern,v,i);if(probability<100&&random(v,i)*100>=probability)continue;
       const at=i*stepTicks+(i%2?swing*stepTicks:0),vel=state===2?1:state===3?.3:1-.5*accent;
       if(stepFlam(pattern,v,i))add(Math.max(0,at-grace),vel*.45);
       const n=stepRoll(pattern,v,i);for(let k=0;k<n;k++)add(at+k*stepTicks/n,k?vel*.82:vel);
