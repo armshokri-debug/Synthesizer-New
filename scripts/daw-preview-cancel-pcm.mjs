@@ -21,7 +21,7 @@ try {
     await SY1_STUDIO.ready;SY1_STUDIO.open();
     const e=SY1_STUDIO.engine,t=e.getFocusedTrack(),mode=${JSON.stringify(mode)};
     e.setBpm(120);e.setTrackMachine(t.id,"kerman");
-    e.setLoopEnabled(false);e.setTrackArmed(t.id,true);e.setRecordingSettings({countIn:false,metronome:false});
+    e.setLoopEnabled(false);e.setTrackArmed(t.id,true);e.setRecordingSettings({countIn:mode==="record",metronome:false});
     t.setParam("drumSwing",0);t.setParam("revMix",0);t.setParam("delayMix",0);t.setParam("kickSend",0);
     const bank=t.getTrackDrumBank(),p=bank.patterns[bank.selected];
     for(const row of Object.values(p.steps))row.fill(0);
@@ -63,18 +63,30 @@ try {
       const silentPeak=peak(oldAt-.01,newAt-.012),soundedPeak=peak(newAt,newAt+.15);
       const first=blocks.find(x=>x.frame/rate>=oldAt-.02&&x.peak>.002);
       const recorded=t.events.filter(h=>h.type==="noteOn").map(h=>h.tick);
+      let wav=null;
       if(mode==="record"){
+        const start=e.recordingStartAt,stop=ctx.currentTime;
         document.getElementById("st-rec-btn").click();
         await until(()=>!e.getTransportSnapshot().recording&&!e.getTransportSnapshot().playing);
+        await until(()=>!!e.getLastLiveTake());
+        const take=e.getLastLiveTake();
+        const header=new DataView(await take.wav.arrayBuffer());
+        wav={frames:take.frames,expected:Math.round((stop-start)*ctx.sampleRate),rate:ctx.sampleRate,dataBytes:header.getUint32(40,true),warning:e.getTransportSnapshot().liveRecWarning};
         if(e.getCurrentTick()<=480)throw Error("Record completion reset the playhead");
       }
-      return {mode,oldAt,newAt,changedAt,silentPeak,soundedPeak,onset:first?first.frame/rate:null,rate,recorded};
+      return {mode,oldAt,newAt,changedAt,silentPeak,soundedPeak,onset:first?first.frame/rate:null,rate,recorded,wav};
     } finally {await e.stop();e.setDispatchObserver(null);probe.port.onmessage=null;e.getMasterBus().tap.disconnect(probe);probe.disconnect();sink.disconnect();}
   })()`);
   assert(report.newAt-report.oldAt>=.04,JSON.stringify(report));
   assert(report.soundedPeak>.005,JSON.stringify(report));
   assert(report.silentPeak<.001, "Stale hit audible: "+JSON.stringify(report));
   assert(report.onset>=report.newAt-.005 && report.onset-report.newAt<.04,JSON.stringify(report));
-  if(mode==="record")assert.deepEqual(report.recorded,[480]);
+  if(mode==="record"){
+    assert.deepEqual(report.recorded,[480]);
+    assert(report.wav&&report.wav.frames>0,JSON.stringify(report));
+    assert(Math.abs(report.wav.frames-report.wav.expected)<=256,JSON.stringify(report));
+    assert.equal(report.wav.dataBytes,report.wav.frames*6);
+    assert(report.wav.frames/report.wav.rate<1.5,"Count-in leaked into WAV");
+  }
   console.log("PASS: real audio PCM cancellation/reschedule",JSON.stringify(report));
 } finally {cdp?.close();chrome.kill();chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}});}
