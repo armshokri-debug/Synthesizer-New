@@ -22,7 +22,7 @@ try {
  await snap("Bushehr-desktop");
  const edit=await cdp.evaluate(`(()=>{const t=SY1_STUDIO.engine.getFocusedTrack();const before=t.getTrackDrumBank();document.querySelector("[data-grid-voice=tom][data-index='2']").click();const after=t.getTrackDrumBank();return {before:before.patterns[before.selected].steps,after:after.patterns[after.selected].steps};})()`);
  assert.notEqual(edit.before.tom[2],edit.after.tom[2]);assert.deepEqual(edit.before.kick,edit.after.kick);
- await cdp.evaluate('document.querySelector("[data-st-action=track-seq-options]").click();document.querySelector("[data-st-action=track-drum-len][data-len=12]").click()');
+ await cdp.evaluate(`document.querySelector("[data-st-action=track-seq-options]").click();document.querySelector("[data-st-action=track-drum-len][data-len='12']").click()`);
  assert.equal((await inspect()).cells,96);
  await cdp.evaluate('document.querySelector("[data-st-action=track-seq-options]").click()');
  await cdp.send("Emulation.setDeviceMetricsOverride",{width:1024,height:768,deviceScaleFactor:1,mobile:false});await sleep(100);
