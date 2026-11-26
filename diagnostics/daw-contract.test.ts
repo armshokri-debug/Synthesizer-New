@@ -27,7 +27,7 @@ describe("DAW acceptance contract — current baseline",()=>{
   test("A01: Record on a selected drum machine records its selected pattern without a separate Live toggle",async()=>{
     const {engine,track,advance}=fixture();
     try {
-      await engine.record({midiOnly:true});
+      await engine.record({midiOnly:true,patternTrackId:track.id});
       advance(10.65);await engine.stop();
       expect(track.events.filter(e=>e.type==="noteOn").map(e=>e.tick)).toEqual([0,STUDIO_PPQ]);
     } finally {engine.dispose();}
