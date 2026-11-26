@@ -26,6 +26,8 @@ export function syncArpButton(): void {
 }
 
 function render(): void {
+  // Never mutate the track-owned instrument overlay from standalone listeners.
+  if (document.getElementById("sy1-panel")?.dataset.studioInstrument) return;
   document.querySelectorAll("#sy1-panel .arp-pop").forEach((el) => el.remove());
   const panel = document.querySelector("#sy1-panel .synth-panel");
   if (open && panel && getMachine().kind === "synth") panel.insertAdjacentHTML("beforeend", html());
