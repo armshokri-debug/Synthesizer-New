@@ -423,6 +423,10 @@ export class SY1StudioEngine {
     this.finiteScoreExperiment=!!enabled;
   }
   getFiniteScoreTrackIds():string[]{return [...this.finiteScoreTracks];}
+  private fallbackRecordingScores():void {
+    const affected=[...this.finiteScoreTracks,...this.finiteDrumCursors.keys()].filter(id=>this.getTrack(id)?.armed);
+    if(affected.length)this.refreshRegionPlayback(affected);
+  }
   private fallbackFiniteScores():void {
     if(this.finiteScoreTracks.size||this.finiteDrumCursors.size)this.refreshRegionPlayback([...this.finiteScoreTracks,...this.finiteDrumCursors.keys()]);
   }
@@ -772,6 +776,7 @@ export class SY1StudioEngine {
     const t = this.getTrack(id);
     if (!t) return;
     t.armed = !!armed;
+    if(this.recording&&t.armed)this.fallbackRecordingScores();
     this.notify();
   }
 
@@ -1055,28 +1060,28 @@ export class SY1StudioEngine {
     this.finiteDrumCursors.clear();
     this.finiteDrumStats={queued:0,missed:0,maxQueued:0};
     const ctx=this.masterBus?.ctx;
-    if(this.finiteScoreExperiment&&!this.clockNowOverride&&(!this.loopEnabled||this.getLoopStartTick()===0)&&!this.recording&&
-      !this.preparingRecord&&!this.dispatchObserver&&countInSeconds===0&&this.playheadTick===0&&ctx){
+    if(this.finiteScoreExperiment&&!this.clockNowOverride&&(!this.loopEnabled||this.getLoopStartTick()===0)&&
+      (!this.preparingRecord||this.recording)&&!this.dispatchObserver&&countInSeconds===0&&this.playheadTick===0&&ctx){
       this.preparingFiniteScores=true;
-      const bpm=this.bpm,total=this.getTotalTicks(),repeat=this.loopEnabled;
+      const bpm=this.bpm,total=this.getTotalTicks(),repeat=this.loopEnabled,recording=this.recording;
       const scoreTicks=repeat?this.getLoopEndTick():total;
       const startFrame=Math.ceil((now+.35)*ctx.sampleRate);
-      const candidates=this.tracks.filter(t=>t.canUseFiniteScore());
+      const candidates=this.tracks.filter(t=>t.canUseFiniteScore()&&(!recording||!t.armed));
       const snapshots=candidates.map(t=>({t,events:t.events,patch:JSON.stringify(t.patch)}));
       try{
         const ready=await Promise.all(candidates.map(t=>t.prepareFiniteScore(startFrame,this.secondsPerTick(bpm)*ctx.sampleRate,scoreTicks,repeat)));
         now=this.nowAudioTime();
         if(epoch!==this.transportEpoch||this.playing){candidates.forEach(t=>t.cancelFiniteScore());return;}
-        const valid=this.loopEnabled===repeat&&(!repeat||(this.getLoopStartTick()===0&&this.getLoopEndTick()===scoreTicks))&&!this.recording&&!this.preparingRecord&&!this.dispatchObserver&&
+        const valid=this.loopEnabled===repeat&&(!repeat||(this.getLoopStartTick()===0&&this.getLoopEndTick()===scoreTicks))&&this.recording===recording&&(!this.preparingRecord||recording)&&!this.dispatchObserver&&
           this.bpm===bpm&&this.playheadTick===0&&this.getTotalTicks()===total&&startFrame/ctx.sampleRate-now>.06;
         for(let i=0;i<candidates.length;i++){
           const t=candidates[i],snap=snapshots[i];
-          if(valid&&ready[i]&&this.tracks.includes(t)&&snap.events===t.events&&snap.patch===JSON.stringify(t.patch)&&t.armFiniteScore())this.finiteScoreTracks.add(t.id);
+          if(valid&&ready[i]&&this.tracks.includes(t)&&(!recording||!t.armed)&&snap.events===t.events&&snap.patch===JSON.stringify(t.patch)&&t.armFiniteScore())this.finiteScoreTracks.add(t.id);
           else t.cancelFiniteScore();
         }
         if(valid){
           for(const t of this.tracks){
-            if(this.canBufferFiniteDrum(t,repeat?scoreTicks:0))this.finiteDrumCursors.set(t.id,{tick:0,revision:t.getChangeRevision(),origin:startFrame/ctx.sampleRate,period:repeat?scoreTicks:0});
+            if((!recording||!t.armed)&&this.canBufferFiniteDrum(t,repeat?scoreTicks:0))this.finiteDrumCursors.set(t.id,{tick:0,revision:t.getChangeRevision(),origin:startFrame/ctx.sampleRate,period:repeat?scoreTicks:0});
           }
         }
         if(this.finiteScoreTracks.size||this.finiteDrumCursors.size)startLead=startFrame/ctx.sampleRate-now;
@@ -1104,7 +1109,6 @@ export class SY1StudioEngine {
 
   async record(options: { midiOnly?: boolean; patternTrackId?: string; onStart?: (at: number) => void } = {}): Promise<void> {
     if (this.recording || this.preparingRecord || this.finalizingRecord || this.preparingFiniteScores) return;
-    this.fallbackFiniteScores();
     this.recordedDrumHits.clear();
     this.patternOverdub.clear();
     this.patternCapturedEvents = new WeakSet();
@@ -1155,6 +1159,9 @@ export class SY1StudioEngine {
       this.performanceCaptureTimes = new WeakMap();
       this.pendingRecordingStart = options.onStart ?? null;
       this.liveRecordedOpenNotes.clear();
+      // Only recording targets return to the existing capture/overdub path.
+      // Backing tracks retain their audio-clock scores during punch-in.
+      if(this.playing)this.fallbackRecordingScores();
 
       if (!this.playing) {
         await this.play(this.countInEnabled ? 4 * 60 / this.bpm : 0);
@@ -1258,10 +1265,10 @@ export class SY1StudioEngine {
   stepScheduler(nowAudioTime: number): void {
     if (!this.playing) { this.stepDrumPreview(nowAudioTime); return; }
     // A direct patch change, panic or engine swap may invalidate the opt-in path.
-    const invalid=[...this.finiteScoreTracks].filter(id=>{const t=this.getTrack(id);return !t?.isFiniteScoreArmed()||!t.canUseFiniteScore();});
+    const invalid=[...this.finiteScoreTracks].filter(id=>{const t=this.getTrack(id);return !t?.isFiniteScoreArmed()||!t.canUseFiniteScore()||(this.recording&&t.armed);});
     for(const [id,state] of this.finiteDrumCursors){
       const t=this.getTrack(id);
-      if(!t||!t.isDrumTrack()||t.getChangeRevision()!==state.revision)invalid.push(id);
+      if(!t||!t.isDrumTrack()||t.getChangeRevision()!==state.revision||(this.recording&&t.armed))invalid.push(id);
     }
     if(invalid.length){this.refreshRegionPlayback(invalid);return;}
     this.scheduledTransportDrums=this.scheduledTransportDrums.filter(h=>h.at>nowAudioTime);

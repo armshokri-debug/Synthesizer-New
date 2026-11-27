@@ -41,12 +41,37 @@ try{
     e.regions.select(b.getRegions(e.getTotalTicks())[0].id);
     e.replaceTrackNotes(b.id,[{midi:67,startTick:1440,endTick:1560,velocity:.7}]);
     const afterEdit=e.getFiniteScoreTrackIds();
-    await e.stop();return {initial,afterEdit,afterStop:e.getFiniteScoreTrackIds(),windows,playing:e.isPlaying(),a:a.id,b:b.id};
+    await e.stop();const afterStop=e.getFiniteScoreTrackIds(),playing=e.isPlaying();
+    // Fresh recording from Stop, with an independent backing track.
+    e.setTrackArmed(a.id,false);e.setTrackArmed(b.id,true);
+    e.setFocusedTrack(b.id);e.setRecordingSettings({mode:"replace",countIn:false,metronome:false});
+    records.length=0;
+    await e.record({midiOnly:true});
+    const recordingScores=e.getFiniteScoreTrackIds();
+    const recAnchor=e.anchorAudioTime;
+    await delay(Math.max(0,(recAnchor+.05-ctx.currentTime)*1000));
+    e.liveNoteOn(76,.8);await delay(80);e.liveNoteOff(76);
+    const recWall=performance.now();while(performance.now()-recWall<700){}
+    await delay(100);
+    const backingWindows=[3,4,5].map(i=>peak(recAnchor+i*.125+.005,recAnchor+i*.125+.04));
+    await e.stop();
+    const captured=b.events.filter(x=>x.midi===76).map(x=>x.type);
+    const cleanReplace=b.events.every(x=>x.midi===76);
+    // Punch-in while playback is already running: preserve only the backing score.
+    b.setEvents([{type:"noteOn",tick:0,midi:65,velocity:.7},{type:"noteOff",tick:960,midi:65}]);
+    await e.play();const beforePunch=e.getFiniteScoreTrackIds();
+    await delay(420);await e.record({midiOnly:true});const afterPunch=e.getFiniteScoreTrackIds();
+    await e.stop();
+    return {initial,afterEdit,afterStop,windows,playing,a:a.id,b:b.id,recordingScores,backingWindows,captured,cleanReplace,beforePunch,afterPunch};
   }finally{await e.stop();bus.tap.disconnect(probe);probe.disconnect();sink.disconnect();}
  })()`);
  assert.deepEqual(report.initial,[report.a,report.b],JSON.stringify(report));
  assert(report.windows.every(p=>p>.002),JSON.stringify(report));
  assert.deepEqual(report.afterEdit,[report.a]);
  assert.deepEqual(report.afterStop,[]);assert.equal(report.playing,false);
+ assert.deepEqual(report.recordingScores,[report.a],JSON.stringify(report));
+ assert(report.backingWindows.every(p=>p>.002),JSON.stringify(report));
+ assert.deepEqual(report.captured,["noteOn","noteOff"]);assert.equal(report.cleanReplace,true);
+ assert.deepEqual(report.beforePunch,[report.a,report.b]);assert.deepEqual(report.afterPunch,[report.a]);
  console.log("PASS FINITE_STUDIO_SCORE_STALL_AND_TRACK_ISOLATION",JSON.stringify(report));
 }finally{cdp?.close();chrome.kill();chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}});}
