@@ -98,6 +98,7 @@ function createCountingMockAudioContext(sampleRate = 48000) {
     createDelay: () => makeNode("delay"),
     createOscillator: () => makeNode("osc"),
     createChannelMerger: () => makeNode("merger"),
+    createChannelSplitter: () => makeNode("splitter"),
     createDynamicsCompressor: () => makeNode("comp"),
     createAnalyser: () => makeNode("analyser"),
     createStereoPanner: () => makeNode("panner"),
@@ -382,7 +383,8 @@ describe("Phase 3 — Memory Leak, AudioNode & Resource Disposal", () => {
     const master = createStudioMasterBus(mock.ctx, { connectToDestination: true });
     disposeStudioMasterBus(master);
     const st = mock.stats();
-    expect(st.createdNodes).toBe(6);
+    // Original six nodes + pre-clip trim + stereo splitter + two peak analysers.
+    expect(st.createdNodes).toBe(10);
     expect(st.leakedNodes).toBe(0);
   });
 
