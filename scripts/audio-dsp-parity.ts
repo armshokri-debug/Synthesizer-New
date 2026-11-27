@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 const reference = "23a22f1c8e1c8ede28f54268c2f7e74f7baada7a";
 const transpiler = new Bun.Transpiler({loader:"ts"});
 function instantiate(source:string, rate:number) {
-  const js=transpiler.transformSync(source);
+  const js=transpiler.transformSync(source).replace(/^\s*export\s*\{\s*\}\s*;?\s*$/gm,"");
   const Base=class {port={onmessage:null,postMessage:()=>{}}};
   let ctor:any;
   new Function("sampleRate","AudioWorkletProcessor","registerProcessor","currentTime",js)(rate,Base,(_name:string,c:any)=>ctor=c,0);
