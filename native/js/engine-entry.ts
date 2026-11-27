@@ -1,9 +1,0 @@
-// Engine bundle for the plugin: the web app's whole sound engine, unchanged
-// (notes, mono/legato, HOLD, sustain, arpeggiator, presets, drum machines, FX bus).
-import * as synth from "../../src/engine/synth";
-import * as drums from "../../src/engine/drums";
-import { getSync, getTempo, isHostSynced, setTempo } from "../../src/engine/tempo";
-import { getEngine, getHQState } from "../../src/engine/hq";
-import * as bus from "../../src/engine/bus";
-import { applyEngineCall } from "../../src/engine/calls";
-(globalThis as any).SY1E = { ...synth, drums, bus, getTempo, setTempo, getSync, isHostSynced, getEngine, getHQState, call: applyEngineCall };
