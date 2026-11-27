@@ -3,6 +3,7 @@ import {
   regionId, replaceRegionNotes, snapRegionTick, type MidiRegion
 } from "./midi-regions";
 import type { SY1TrackEngine } from "./track-engine";
+import {trackEditorNotes,editTrackRegions} from "./track-midi-editor";
 import { STUDIO_TICKS_PER_BAR, type StudioNoteSpan, type StudioMidiEvent } from "./types";
 
 type Tracks = Map<string, MidiRegion[]>;
@@ -347,6 +348,18 @@ export class RegionEditor {
       if (region) return region;
     }
     return undefined;
+  }
+
+  wholeTrackNotes(trackId:string):StudioNoteSpan[]{
+    return trackEditorNotes(this.regions(trackId),this.host.length());
+  }
+
+  editWholeTrackNotes(trackId:string,spans:StudioNoteSpan[]):void{
+    this.assertEditable();
+    const before=this.regions(trackId);
+    const after=editTrackRegions(before,spans,this.host.length(),trackId,this.current(trackId)?.id);
+    if(before.length===after.length&&before.every((r,i)=>r===after[i]))return;
+    this.edit(new Map([[trackId,after]]));
   }
 
   editorLength(trackId: string): number {

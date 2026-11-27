@@ -34,7 +34,10 @@ const BLACK_KEY_PC = new Set([1, 3, 6, 8, 10]);
 /** Top-to-bottom drum voice ordering in the Drum Grid (high percussion top, kick bottom). */
 const DRUM_GRID_ORDER: readonly DrumVoice[] = ["bell", "oh", "tom", "ch", "clap", "snare", "rim", "kick"];
 
-const editorNotes = (trackId: string) => studioEngine.regions.editorNotes(trackId);
+let editWholeTrack=true;
+const trackWide=(trackId:string)=>editWholeTrack||!studioEngine.regions.current(trackId);
+const editorNotes = (trackId: string) => trackWide(trackId)?studioEngine.regions.wholeTrackNotes(trackId):studioEngine.regions.editorNotes(trackId);
+const editorLength=(trackId:string)=>trackWide(trackId)?studioEngine.getTotalTicks():studioEngine.regions.editorLength(trackId);
 
 export const PR_ROW_HEIGHT = 20;
 const PR_DRUM_ROW_HEIGHT = 26;
@@ -445,16 +448,19 @@ export function renderPianoRollHtml(): string {
   const track = studioEngine.getFocusedTrack();
   const mDef = getStudioMachineDef(track.machineId);
   const isDrum = track.isDrumTrack();
-  const region = studioEngine.regions.current(track.id);
-  const editorId = region?.id ?? track.id;
+  const selectedRegion=studioEngine.regions.current(track.id);
+  const whole=trackWide(track.id);
+  const region = whole?undefined:selectedRegion;
+  const editorId = region?.id ?? track.id+':'+track.machineId;
   if (editorId !== lastTrackId || isDrum !== lastWasDrum) {
     lastTrackId = editorId;
     lastWasDrum = isDrum;
     state.selectedIndices.clear();
     state.hasInitialScroll = false;
+    state.scrollLeft=0;
   }
 
-  const totalTicks = studioEngine.regions.editorLength(track.id);
+  const totalTicks = editorLength(track.id);
   const spans = editorNotes(track.id);
   state.selectedIndices.forEach((idx) => {
     if (idx < 0 || idx >= spans.length) state.selectedIndices.delete(idx);
@@ -481,7 +487,7 @@ export function renderPianoRollHtml(): string {
   const subStepTicks = state.snapTicks > 0 ? Math.max(120, state.snapTicks) : STUDIO_PPQ;
   for (let bar = 0; bar * STUDIO_TICKS_PER_BAR < totalTicks; bar++) {
     const x = bar * bpx;
-    rulerMarks += `<span class="st-pr-bar-lbl" style="left:${x}px">${bar + 1}</span>`;
+    if(bar%Math.max(1,Math.ceil(36/bpx))===0)rulerMarks += `<span class="st-pr-bar-lbl" style="left:${x}px">${bar + 1}</span>`;
     vLines += `<span class="st-pr-vline is-bar" style="left:${x}px"></span>`;
     const beatsPerBar = STUDIO_TICKS_PER_BAR / STUDIO_PPQ;
     for (let beat = 1; beat < beatsPerBar; beat++) {
@@ -519,7 +525,7 @@ export function renderPianoRollHtml(): string {
     const rowIdx = midiToRowIndex.get(s.midi);
     if (rowIdx === undefined) continue;
     const leftPx = (s.startTick / totalTicks) * gridWidth;
-    const widthPx = Math.max(10, ((s.endTick - s.startTick) / totalTicks) * gridWidth);
+    const widthPx = Math.max(2, ((s.endTick - s.startTick) / totalTicks) * gridWidth);
     const topPx = rowIdx * rowHeight + 2;
     const sel = state.selectedIndices.has(i);
     const velMidi = velocityToMidi(s.velocity);
@@ -553,15 +559,19 @@ export function renderPianoRollHtml(): string {
     (opt) => `<option value="${opt.ticks}"${state.quantizeTicks === opt.ticks ? " selected" : ""}>${escapeHtml(opt.label)}</option>`
   ).join("");
   const rowMidiAttr = rows.map((r) => r.midi).join(",");
+  const markers=whole?studioEngine.regions.regions(track.id).filter(r=>r.startTick<totalTicks):[];
+  const bands=markers.map(r=>`<span class="${r.id===selectedRegion?.id?'is-active':''}" style="left:${100*r.startTick/totalTicks}%;width:${100*Math.min(r.length,totalTicks-r.startTick)/totalTicks}%"></span>`).join('');
+  const markerButtons=markers.map(r=>`<button type="button" class="st-pr-region-marker${r.id===selectedRegion?.id?' is-active':''}" data-pr-action="choose-region" data-pr-region-id="${escapeHtml(r.id)}" aria-pressed="${r.id===selectedRegion?.id}" title="Bars ${Math.floor(r.startTick/STUDIO_TICKS_PER_BAR)+1}–${Math.ceil((r.startTick+r.length)/STUDIO_TICKS_PER_BAR)}" style="left:${100*r.startTick/totalTicks}%;width:${100*Math.min(r.length,totalTicks-r.startTick)/totalTicks}%">${escapeHtml(track.presetName||'MIDI')}</button>`).join('');
 
   return `
     <div class="st-pr${isDrum ? " is-drum-mode" : ""}${state.velMode ? " is-vel-mode" : ""}${state.multiSelectMode ? " is-select-mode" : ""}" id="st-piano-roll" data-pr-mode="${isDrum ? "drums" : "synth"}" data-pr-vel-mode="${state.velMode ? "1" : "0"}" data-pr-select-mode="${state.multiSelectMode ? "1" : "0"}" data-pr-rows="${rowMidiAttr}" data-pr-row-h="${rowHeight}" data-pr-width="${gridWidth}" data-pr-total-ticks="${totalTicks}"${region ? ` data-pr-origin="${region.startTick}"` : ""}>
       <div class="st-pr-toolbar">
         <div class="st-pr-tb-group">
-          <span class="st-pr-track-badge">${escapeHtml(mDef.name)}${region ? (region.loop ? " · Loop source" : " · Region") : ""}</span>
+          <span class="st-pr-track-badge">${escapeHtml(mDef.name)}${region ? (region.loop ? " · Loop source" : " · Region source") : " · Track MIDI"}</span>
+          <button type="button" class="st-btn st-pr-btn" data-pr-action="toggle-editor-scope"${!selectedRegion?" disabled":""} title="Switch between continuous arrangement and original region source editing">${whole?"Region source":"Whole track"}</button>
           <span class="st-pr-meta">${spans.length} ${isDrum ? (spans.length === 1 ? "hit" : "hits") : spans.length === 1 ? "note" : "notes"}${state.selectedIndices.size > 0 ? ` · ${state.selectedIndices.size} sel` : ""}</span>
           <div class="st-pr-sel-grp" role="group" aria-label="Note selection">
-            <button type="button" class="st-btn st-pr-btn" id="st-pr-select-all" data-pr-action="select-all"${spans.length === 0 ? " disabled" : ""} title="Select all notes in region (Cmd/Ctrl+A)">Select All</button>
+            <button type="button" class="st-btn st-pr-btn" id="st-pr-select-all" data-pr-action="select-all"${spans.length === 0 ? " disabled" : ""} title="Select all notes in the current editor (Cmd/Ctrl+A)">Select All</button>
           </div>
         </div>
         <div class="st-pr-tb-group">
@@ -595,7 +605,7 @@ export function renderPianoRollHtml(): string {
               ${snapOptionsHtml}
             </select>
           </label>
-          <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize-all" data-pr-action="quantize-all"${spans.length === 0 ? " disabled" : ""} title="Explicitly quantize all notes in the current region">Q All</button>
+          <button type="button" class="st-btn st-pr-btn" id="st-pr-quantize-all" data-pr-action="quantize-all"${spans.length === 0 ? " disabled" : ""} title="Explicitly quantize all notes in the current editor">Q All</button>
           <button type="button" class="st-btn st-pr-btn" data-pr-action="zoom-out" aria-label="Zoom out piano roll">−</button>
           <span class="st-pr-zoom-lbl">${Math.round(state.zoom * 100)}%</span>
           <button type="button" class="st-btn st-pr-btn" data-pr-action="zoom-in" aria-label="Zoom in piano roll">+</button>
@@ -614,10 +624,12 @@ export function renderPianoRollHtml(): string {
                 <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
               </div>
             </div>
+            ${whole?`<div class="st-pr-region-row"><div class="st-pr-region-key" style="width:${keyColWidth}px">MIDI</div><div class="st-pr-region-strip" style="width:${gridWidth}px">${markerButtons}</div></div>`:''}
             <div class="st-pr-grid-row">
               <div class="st-pr-keys" style="height:${gridHeight}px">${keysHtml}</div>
               <div class="st-pr-grid" id="st-pr-grid" tabindex="0" aria-label="MIDI note grid" style="width:${gridWidth}px;height:${gridHeight}px">
                 <div class="st-pr-rows">${rowsHtml}</div>
+                ${whole?`<div class="st-pr-region-bands" aria-hidden="true">${bands}</div>`:''}
                 <div class="st-pr-vlines">${vLines}</div>
                 <div class="st-pr-notes" id="st-pr-notes">${notesHtml}</div>
                 <div class="st-playhead" data-st-playhead="1" style="left:${playheadPct.toFixed(3)}%"></div>
@@ -792,7 +804,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     const track = studioEngine.getFocusedTrack();
     try {
       const selected = new Set(state.selectedIndices);
-      studioEngine.replaceTrackNotes(track.id, spans);
+      studioEngine.replaceTrackNotes(track.id, spans,trackWide(track.id));
       if (remap) {
         state.selectedIndices = remapEditedSelection(spans, selected, editorNotes(track.id));
         requestRender();
@@ -808,7 +820,7 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     const track = studioEngine.getFocusedTrack();
     const prevSpans = editorNotes(track.id);
     if (prevSpans.length === 0) return;
-    const limit = studioEngine.regions.editorLength(track.id);
+    const limit = editorLength(track.id);
     const targetSelection = !allNotes && state.selectedIndices.size > 0
       ? new Set(state.selectedIndices)
       : undefined;
@@ -816,7 +828,8 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
       const changed = studioEngine.quantizeTrackNotes(
         track.id,
         grid,
-        targetSelection ? Array.from(targetSelection) : undefined
+        targetSelection ? Array.from(targetSelection) : undefined,
+        trackWide(track.id)
       );
       if (changed > 0 && state.selectedIndices.size > 0) {
         const nextSpans = editorNotes(track.id);
@@ -1138,6 +1151,15 @@ export function bindPianoRollEvents(container: HTMLElement, requestRender: () =>
     if (btn) {
       const action = btn.getAttribute("data-pr-action");
       switch (action) {
+        case "toggle-editor-scope":
+          editWholeTrack=!trackWide(studioEngine.getFocusedTrack().id);
+          state.selectedIndices.clear();state.scrollLeft=0;state.hasInitialScroll=false;
+          requestRender();break;
+        case "choose-region": {
+          const id=btn.dataset.prRegionId;
+          if(id){studioEngine.regions.select(id);state.selectedIndices.clear();requestRender();}
+          break;
+        }
         case "toggle-select-mode":
           state.multiSelectMode = !state.multiSelectMode;
           requestRender();

@@ -827,18 +827,19 @@ export class SY1StudioEngine {
     t.setParam(key, value);
   }
 
-  replaceTrackNotes(id: string, spans: StudioNoteSpan[]): void {
+  replaceTrackNotes(id: string, spans: StudioNoteSpan[], wholeTrack=false): void {
     const t = this.getTrack(id);
     if (!t) return;
-    this.regions.editNotes(id, spans);
+    if(wholeTrack)this.regions.editWholeTrackNotes(id,spans);
+    else this.regions.editNotes(id, spans);
   }
 
-  quantizeTrackNotes(id: string, gridTicks: number, selectedIndices?: Iterable<number>): number {
+  quantizeTrackNotes(id: string, gridTicks: number, selectedIndices?: Iterable<number>, wholeTrack=false): number {
     const t = this.getTrack(id);
     if (!t) return 0;
     const selected = selectedIndices ? new Set(selectedIndices) : null;
-    const limit = Math.max(1, this.regions.editorLength(id));
-    const spans = this.regions.editorNotes(id);
+    const limit = Math.max(1, wholeTrack?this.getTotalTicks():this.regions.editorLength(id));
+    const spans = wholeTrack?this.regions.wholeTrackNotes(id):this.regions.editorNotes(id);
     const grid = Math.max(1, Math.round(gridTicks));
     const maxStart = Math.max(0, Math.floor((limit - 1) / grid) * grid);
     let changed = 0;
@@ -850,7 +851,7 @@ export class SY1StudioEngine {
       if (startTick !== span.startTick || endTick !== span.endTick) changed++;
       return { ...span, startTick, endTick };
     });
-    if (changed) this.regions.editNotes(id, next);
+    if(changed)this.replaceTrackNotes(id,next,wholeTrack);
     return changed;
   }
 

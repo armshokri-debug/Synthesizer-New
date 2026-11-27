@@ -3161,3 +3161,15 @@ html.is-studio-instrument .sy1-shell .kb-area.is-drums .kb.is-pads {grid-templat
 #sy1-panel[data-studio-instrument] .st-inst-knob {cursor:ns-resize;}
 @media(max-width:650px){#sy1-panel[data-studio-instrument] .st-seq-toolbar .drum-slots{order:2;flex:1 0 100%;grid-template-columns:repeat(8,minmax(0,1fr));}#sy1-panel[data-studio-instrument] .st-seq-grid .drum-steps{grid-template-columns:repeat(calc(var(--len)/2),minmax(0,1fr));}html.is-studio-instrument .sy1-shell .kb-area.is-drums .kb.is-pads{grid-template-columns:repeat(4,minmax(0,1fr));}}
 @media(pointer:coarse){#sy1-panel[data-studio-instrument] .st-seq-toolbar button,#sy1-panel[data-studio-instrument] .st-seq-settings .synth-choice-btn,#sy1-panel[data-studio-instrument] .st-seq-grid .drum-step,#sy1-panel[data-studio-instrument] .st-seq-grid .drum-voice-btn{min-height:38px;}}
+
+/* Continuous track MIDI editor: aligned absolute region strip and note bands. */
+.st-pr-region-row{display:flex;flex:none;height:25px;position:sticky;top:22px;z-index:11;background:#151d25;border-bottom:1px solid #384757;box-sizing:border-box}
+.st-pr-region-key{flex:none;position:sticky;left:0;z-index:12;background:#202b34;color:#9aa9b4;font-size:10px;display:grid;place-items:center}
+.st-pr-region-strip{position:relative;flex:none;min-width:0;height:24px;overflow:hidden}
+.st-pr-region-marker{position:absolute;top:2px;height:20px;box-sizing:border-box;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;padding:0 5px;border:1px solid #4b6978;border-radius:3px;background:#28404b;color:#d3e6ee;font-size:11px;cursor:pointer;min-width:0}
+.st-pr-region-marker.is-active{background:#624921;border-color:#e6b564;color:#ffe1ab}
+.st-pr-region-bands{position:absolute;inset:0;pointer-events:none}
+.st-pr-region-bands span{position:absolute;top:0;bottom:0;box-sizing:border-box;border-left:1px solid #7895a966;border-right:1px solid #7895a966;background:#5172850d}
+.st-pr-region-bands span.is-active{background:#d9ad4820;border-color:#d9ad4899}
+.st-pr-note{min-width:2px;padding-left:min(4px,1%);padding-right:min(9px,1%)}
+.st-pr-note-resize{max-width:45%}
