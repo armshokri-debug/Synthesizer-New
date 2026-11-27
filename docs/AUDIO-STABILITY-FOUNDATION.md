@@ -32,3 +32,5 @@ Separate project-local pre-clip trim (0 to -24 dB) from monitor output volume. L
 
 ## Checkpoint 10 — repeating audio-clock score
 Opt-in note-only HQ scores can repeat on the render clock for loops starting at bar 1, with fractional-period rounding from the original anchor and independent voice IDs each cycle. Native drum buffering uses an independent absolute cursor across loop seams. Added 1000-cycle drift/identity regression and four-track PCM stall across a loop seam. Loops starting later, recording, controller/mono semantics and non-HQ scores remain on the legacy path. No production activation.
+
+The drum density guard now measures the exact sliding-window count, including circular seam clusters, rather than rejecting long sparse arrangements based on total hit count. Added 32-bar loop eligibility regression; no change to synthesis or default scheduler.

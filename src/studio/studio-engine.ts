@@ -1,4 +1,5 @@
 import { drumPatternMidi } from "./track-drum-patterns";
+import {maxDrumWindowHits} from "./drum-window-density";
 import { LiveDrumSequence } from "./live-drum-sequence";
 import { arpStepBeats } from "./track-arpeggiator";
 /**
@@ -1478,18 +1479,13 @@ export class SY1StudioEngine {
     track.ensureEventsSorted();
     const span=DRUM_AHEAD_SEC*this.ticksPerSecond();
     const hits:number[]=[];
-    let first=0;
     for(const ev of track.events){
       if(ev.type!=="noteOn"&&ev.type!=="noteOff")return false;
       if(ev.type!=="noteOn")continue;
       if(period&&ev.tick>=period)continue;
       hits.push(ev.tick);
-      while(first<hits.length&&ev.tick-hits[first]>=span)first++;
-      if(hits.length-first>DRUM_MAX_WINDOW_HITS)return false;
     }
-    // Conservative density bound across repeated loop seams.
-    if(period&&hits.length*(Math.ceil(span/period)+1)>DRUM_MAX_WINDOW_HITS)return false;
-    return hits.length>0;
+    return hits.length>0&&maxDrumWindowHits(hits,span,period)<=DRUM_MAX_WINDOW_HITS;
   }
   private refillFiniteDrums(now:number):void {
     if(!this.finiteDrumCursors.size)return;

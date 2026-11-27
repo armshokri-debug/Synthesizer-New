@@ -62,7 +62,14 @@ try{
     const loopWindows=records.map(r=>[.75,1,1.25,1.5].map(t=>peak(r,loopAnchor+t+.008,loopAnchor+t+.035)));
     const loopStats=e.getFiniteDrumDiagnostics();
     await e.stop();
-    return {initial,initialDrums,afterEdit,afterDrumEdit,afterStop,afterDrumStop,windows,drumStats,ids:[a.id,b.id,c.id],drum:drum.id,loopTracks,loopDrums,loopWindows,loopStats};
+    e.setLoopRange(1,32);
+    for(const t of [drum,a,b,c]){
+      const events=[];for(let i=0;i<256;i++){const midi=t===drum?36:60+i%3;events.push({type:"noteOn",tick:i*240,midi,velocity:.7},{type:"noteOff",tick:i*240+72,midi});}t.setEvents(events);
+    }
+    await e.play();
+    const longLoopTracks=e.getFiniteScoreTrackIds(),longLoopDrums=e.getFiniteDrumTrackIds();
+    await e.stop();
+    return {initial,initialDrums,afterEdit,afterDrumEdit,afterStop,afterDrumStop,windows,drumStats,ids:[a.id,b.id,c.id],drum:drum.id,loopTracks,loopDrums,loopWindows,loopStats,longLoopTracks,longLoopDrums};
   }finally{await e.stop();probes.forEach((p,i)=>{taps[i].disconnect(p);p.disconnect();});sink.disconnect();}
  })()`);
  assert.deepEqual(report.initial,report.ids,JSON.stringify(report));
@@ -75,5 +82,7 @@ try{
  assert.deepEqual(report.loopDrums,[report.drum],JSON.stringify(report));
  assert(report.loopWindows.every(w=>w.every(p=>p>.001)),JSON.stringify(report));
  assert.equal(report.loopStats.missed,0,JSON.stringify(report));
+ assert.deepEqual(report.longLoopTracks,report.ids,JSON.stringify(report));
+ assert.deepEqual(report.longLoopDrums,[report.drum],JSON.stringify(report));
  console.log("PASS FOUR_TRACK_BUFFERED_STALL_PCM",JSON.stringify(report));
 }finally{cdp?.close();chrome.kill();chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}});}
