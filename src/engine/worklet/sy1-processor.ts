@@ -9,9 +9,11 @@
  * Rule: no allocations inside process().
  */
 import { HQEngine } from "../../dsp/hq-engine";
+import { AudioScore } from "./audio-score";
 
 declare const sampleRate: number;
 declare const currentTime: number;
+declare const currentFrame: number;
 declare function registerProcessor(name: string, ctor: unknown): void;
 declare class AudioWorkletProcessor {
   readonly port: MessagePort;
@@ -36,6 +38,11 @@ class SY1Processor extends AudioWorkletProcessor {
   eng = new HQEngine(sampleRate);
   queue: Ev[] = [];
   qLen = 0;
+  private score = new AudioScore();
+  private dispatchScore = (type:number,id:number,midi:number,cents:number,vel:number,offset:number):void => {
+    if(type===1) this.eng.noteOn(id,midi,cents,vel,offset,0,0);
+    else this.eng.noteOff(id,offset,false);
+  };
 
   constructor() {
     super();
@@ -68,7 +75,17 @@ class SY1Processor extends AudioWorkletProcessor {
       case "off": this.enqueue(2, m); break;
       case "kill": this.enqueue(3, m); break;
       case "glide": this.enqueue(4, m); break;
-      case "alloff": this.qLen = 0; this.eng.allOff(); break;
+      case "score-load": {
+        const accepted = this.score.load(m.generation,m.data,currentFrame);
+        this.port.postMessage({t:"score-ready",generation:m.generation,accepted});
+        break;
+      }
+      case "score-cancel":
+        if(this.score.cancel(m.generation)){
+          for(const v of this.eng.voices) if(v.active && v.id<0) this.eng.noteOff(v.id,0,true);
+        }
+        break;
+      case "alloff": this.qLen = 0; this.score.clear(); this.eng.allOff(); break;
       case "bend": this.eng.setBend(Number(m.v) || 0); break;
       case "mod": this.eng.setMod(Number(m.v) || 0); break;
       default: break;
@@ -102,6 +119,7 @@ class SY1Processor extends AudioWorkletProcessor {
     L.fill(0);
     if (R) R.fill(0);
     this.handleEvents(L.length);
+    this.score.drain(currentFrame,L.length,this.dispatchScore);
     this.eng.render(L, R, L.length);
     return true;
   }
