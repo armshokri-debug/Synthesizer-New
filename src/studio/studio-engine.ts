@@ -211,6 +211,8 @@ export interface StudioEngineOptions {
   isolatedTempo?: boolean;
   /** Initial BPM when isolatedTempo is true. */
   initialBpm?: number;
+  /** Enable the experimental audio-clock scheduler in an isolated candidate build. */
+  finiteScoreExperiment?: boolean;
 }
 
 const DEFAULT_TRACK_PRESETS = ["softKeys", "moogBass", "warmPad", "lead"];
@@ -367,6 +369,7 @@ export class SY1StudioEngine {
   private dispatchObserver: ((rec: ScheduledDispatchRecord) => void) | null = null;
 
   constructor(opts: StudioEngineOptions = {}) {
+    this.finiteScoreExperiment=!!opts.finiteScoreExperiment;
     this.clockNowOverride = opts.clockNow || null;
     this.isolatedTempo = !!opts.isolatedTempo;
     this.bpm = opts.initialBpm ?? getTempo();
@@ -421,7 +424,9 @@ export class SY1StudioEngine {
   setFiniteScoreExperiment(enabled:boolean):void {
     if(this.playing||this.preparingFiniteScores)throw Error("Stop playback before changing scheduler mode.");
     this.finiteScoreExperiment=!!enabled;
+    this.notify();
   }
+  isFiniteScoreExperimentEnabled():boolean{return this.finiteScoreExperiment;}
   getFiniteScoreTrackIds():string[]{return [...this.finiteScoreTracks];}
   private fallbackRecordingScores():void {
     const affected=[...this.finiteScoreTracks,...this.finiteDrumCursors.keys()].filter(id=>this.getTrack(id)?.armed);
@@ -1789,6 +1794,10 @@ export class SY1StudioEngine {
     const vel = Math.max(1 / 127, Math.min(1, Number(velocity) || 0.85));
     const targets = this.resolveLiveTargets(midiChannel);
     if (targets.length === 0) return;
+    // Direct performance on a score track requires the original pitch/hold
+    // ownership semantics. Fall back before dispatching the live note.
+    const liveScoreIds=targets.filter(t=>this.finiteScoreTracks.has(t.id)).map(t=>t.id);
+    if(liveScoreIds.length)this.refreshRegionPlayback(liveScoreIds);
 
     let heldSet = this.liveHeldTracksByMidi.get(m);
     if (!heldSet) {
@@ -2615,4 +2624,4 @@ export function createStudioEngine(opts?: StudioEngineOptions): SY1StudioEngine 
 }
 
 /** Shared singleton for the web Studio UI (isolated from standalone SY-1 tempo/localStorage; never instantiated in AU/VST3 plugin mode). */
-export const studioEngine = new SY1StudioEngine({ isolatedTempo: true });
+export const studioEngine = new SY1StudioEngine({ isolatedTempo: true, finiteScoreExperiment: import.meta.env?.VITE_STUDIO_STABILITY_CANDIDATE === '1' });

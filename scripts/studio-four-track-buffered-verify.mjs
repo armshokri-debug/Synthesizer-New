@@ -35,7 +35,9 @@ try{
   for(let i=0;i<4;i++){const p=new AudioWorkletNode(ctx,"buffered-pcm-probe",{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1]});p.port.onmessage=ev=>records[i].push(ev.data);taps[i].connect(p);p.connect(sink);probes.push(p);}
   const delay=ms=>new Promise(r=>setTimeout(r,ms));
   try{
-    e.setFiniteScoreExperiment(true);await e.play();
+    const defaultMode=e.isFiniteScoreExperimentEnabled();
+    if(!defaultMode)e.setFiniteScoreExperiment(true);
+    await e.play();
     const initial=e.getFiniteScoreTrackIds(),initialDrums=e.getFiniteDrumTrackIds();
     const anchor=e.anchorAudioTime,rate=ctx.sampleRate;
     const wall=performance.now();while(performance.now()-wall<1000){}
@@ -69,9 +71,10 @@ try{
     await e.play();
     const longLoopTracks=e.getFiniteScoreTrackIds(),longLoopDrums=e.getFiniteDrumTrackIds();
     await e.stop();
-    return {initial,initialDrums,afterEdit,afterDrumEdit,afterStop,afterDrumStop,windows,drumStats,ids:[a.id,b.id,c.id],drum:drum.id,loopTracks,loopDrums,loopWindows,loopStats,longLoopTracks,longLoopDrums};
+    return {defaultMode,initial,initialDrums,afterEdit,afterDrumEdit,afterStop,afterDrumStop,windows,drumStats,ids:[a.id,b.id,c.id],drum:drum.id,loopTracks,loopDrums,loopWindows,loopStats,longLoopTracks,longLoopDrums};
   }finally{await e.stop();probes.forEach((p,i)=>{taps[i].disconnect(p);p.disconnect();});sink.disconnect();}
  })()`);
+ if(process.env.SY1_EXPECT_STABLE_DEFAULT==='1')assert.equal(report.defaultMode,true,JSON.stringify(report));
  assert.deepEqual(report.initial,report.ids,JSON.stringify(report));
  assert.deepEqual(report.initialDrums,[report.drum],JSON.stringify(report));
  assert(report.windows.every(w=>w.every(p=>p>.001)),JSON.stringify(report));

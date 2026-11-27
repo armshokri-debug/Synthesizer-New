@@ -953,6 +953,7 @@ export function renderStudioHtml(): string {
               <div class="st-menu-title">${studioMenuKind === "settings" ? "Studio settings" : "Project actions"}</div>
               <div class="st-menu-view"${studioMenuKind !== "settings" ? " hidden" : ""}>
                 <label class="st-setting-field">Tempo <input id="st-bpm-input" type="number" min="40" max="240" step="1" value="${tr.bpm}" aria-label="Tempo BPM" /><span>BPM</span></label>
+                <button type="button" class="st-menu-item${studioEngine.isFiniteScoreExperimentEnabled()?" is-checked":""}" role="menuitemcheckbox" aria-checked="${studioEngine.isFiniteScoreExperimentEnabled()}" id="st-stable-audio-toggle" data-st-action="toggle-stable-audio"${tr.playing||tr.recording?" disabled":""} title="Experimental audio-clock scheduling for supported tracks; other tracks retain the original scheduler">${studioEngine.isFiniteScoreExperimentEnabled()?"✓ ":""}Audio stability preview</button>
                 <button type="button" class="st-menu-item${recSettings.countIn ? " is-checked" : ""}" id="st-countin-btn" role="menuitemcheckbox" aria-checked="${recSettings.countIn}" data-st-action="count-in">${recSettings.countIn ? "✓ " : ""}1-Bar Count-in</button>
                 ${!instrumentFocusMode ? `<button type="button" class="st-menu-item${keysVisible ? " is-checked" : ""}" role="menuitemcheckbox" aria-checked="${keysVisible}" id="st-keys-toggle" data-st-action="toggle-keys">${keysVisible ? "✓ " : ""}On-Screen Keys</button>` : ""}
               <div class="st-menu-label">Arrangement Length (Bars)</div>
@@ -1835,6 +1836,10 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
             if(action==="paste-region-in-place")studioEngine.regions.pasteInPlace(id);
             else studioEngine.regions.paste(id,studioEngine.getCurrentTick());
           } catch(error){setStatus(error instanceof Error?error.message:String(error),"error");}
+          renderStudioPanel();break;
+        case "toggle-stable-audio":
+          try{studioEngine.setFiniteScoreExperiment(!studioEngine.isFiniteScoreExperimentEnabled());}
+          catch(error){setStatus(error instanceof Error?error.message:String(error),"error");}
           renderStudioPanel();break;
         case "play":
           if (studioEngine.getTransportSnapshot().playing) void studioEngine.pause();

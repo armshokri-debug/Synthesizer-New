@@ -391,7 +391,7 @@ export class SY1TrackEngine {
   /** Experimental fixed-tempo, finite, polyphonic HQ arrangement path. */
   canUseFiniteScore(): boolean {
     return !!this.workletNode && this.engineKind==="hq" && this.useWorklet() &&
-      this.patch.polyMode!=="mono" && this.patch.hold!=="on" && !this.sustainPedal;
+      this.audible && this.patch.polyMode!=="mono" && this.patch.hold!=="on" && !this.sustainPedal && this.physicallyHeld.size===0;
   }
 
   isFiniteScoreArmed(): boolean { return this.scoreArmed; }
@@ -641,7 +641,7 @@ export class SY1TrackEngine {
   }
 
   setAudible(audible: boolean): void {
-    if(this.audible!==audible)this.changeRevision++;
+    if(this.audible!==audible){this.changeRevision++;this.cancelFiniteScore();}
     this.audible = audible;
     if (this.muteGate && this.ctx) {
       const g = audible ? 1 : 0;
@@ -788,6 +788,7 @@ export class SY1TrackEngine {
   }
 
   private retuneActiveVoices(): void {
+    this.cancelFiniteScore();
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
     this.heldVoices.forEach((v, m) => {
@@ -1107,6 +1108,7 @@ export class SY1TrackEngine {
   }
 
   addEvent(ev: StudioMidiEvent): void {
+    this.cancelFiniteScore();
     const n = this.events.length;
     if (n > 0 && compareStudioEvents(this.events[n - 1], ev) > 0) {
       this.eventsDirty = true;
@@ -1131,6 +1133,7 @@ export class SY1TrackEngine {
   }
 
   setEvents(events: StudioMidiEvent[], quiet = false): void {
+    this.cancelFiniteScore();
     this.changeRevision++;
     this.regions = null;
     this.events = events.map((e) => ({ ...e }));
@@ -1140,6 +1143,7 @@ export class SY1TrackEngine {
   }
 
   clearEvents(): void {
+    this.cancelFiniteScore();
     this.regions = null;
     this.events = [];
     this.eventsDirty = false;
