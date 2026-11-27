@@ -502,6 +502,13 @@ export class HQEngine {
         v.tb2[k] = tableFor((fb * ratio2 * this.uRatio[k]) / sr);
       }
 
+      // Preserve the exact pitch calculation on modulated/gliding voices.
+      // For stable pitch the exponential and key tracking are block constants.
+      const fixedPitch = v.lf === v.lfTarget && (lt !== 0 || depth === 0) &&
+        vibDepthC === 0 && (!oriental || (v.scoopC === 0 && !v.tahrirOn));
+      const fixedCents = lt === 0 ? bendCents + 0 * depth * 60 : bendCents;
+      const fixedF0 = fixedPitch ? Math.pow(2, v.lf + fixedCents / 1200) : 0;
+      const fixedKeyTrack = fixedPitch && kt !== 0 ? Math.pow(2, kt * (v.lf + fixedCents / 1200 - C4)) : 1;
       for (let i = 0; i < n; i++) {
         if (v.delay > 0) { v.delay--; continue; }
         if (v.relDelay === 0) { this.release(v, v.relFast); v.relDelay = -1; }
@@ -539,7 +546,7 @@ export class HQEngine {
             cents += tahrirAmt * s * s * (x < 1 ? 1 : 0.6);
           } else if (x >= 2) v.tahrirOn = false;
         }
-        const f0 = Math.pow(2, v.lf + cents / 1200);
+        const f0 = fixedPitch ? fixedF0 : Math.pow(2, v.lf + cents / 1200);
 
         const mixV = this.mix.prev + (this.mix.cur - this.mix.prev) * fr;
         const l1 = 1 - mixV;
@@ -586,7 +593,7 @@ export class HQEngine {
         if ((i & 3) === 0) {
           let fc = base + (top - base) * v.fenv;
           if (lt === 1) fc *= Math.pow(2, lfo * depth * 2);
-          if (kt !== 0) fc *= Math.pow(2, kt * (v.lf + cents / 1200 - C4));
+          if (kt !== 0) fc *= fixedPitch ? fixedKeyTrack : Math.pow(2, kt * (v.lf + cents / 1200 - C4));
           if (fc < 20) fc = 20; else if (fc > maxFc) fc = maxFc;
           if (ft === 4) {
             v.ladL.setCutoff(fc, fsOs, rL);

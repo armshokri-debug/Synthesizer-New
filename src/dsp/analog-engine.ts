@@ -296,6 +296,9 @@ export class AnalogEngine {
       const dr2 = Math.pow(2, (driftC * (6 * v.drift[1] + 2 * v.driftFix[1])) / 1200);
       const dr3 = Math.pow(2, (driftC * (6 * v.drift[2] + 2 * v.driftFix[2])) / 1200);
 
+      const fixedPitch = v.lf === v.lfTarget && (lt !== 0 || depth === 0);
+      const fixedCents = lt === 0 ? bendC + 0 * depth * 60 : bendC;
+      const fixedF0 = fixedPitch ? Math.pow(2, v.lf + fixedCents / 1200) : 0;
       for (let i = 0; i < n; i++) {
         if (v.delay > 0) { v.delay--; continue; }
         if (v.relDelay === 0) { this.release(v, v.relFast); v.relDelay = -1; }
@@ -313,7 +316,7 @@ export class AnalogEngine {
         let cents = bendC;
         if (lt === 0) cents += lfo * depth * 60;
         const lp = v.lf + cents / 1200;
-        const f0 = Math.pow(2, lp);
+        const f0 = fixedPitch ? fixedF0 : Math.pow(2, lp);
 
         // oscillators
         const mixV = this.mix.prev + (this.mix.cur - this.mix.prev) * fr;
