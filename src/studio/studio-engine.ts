@@ -74,6 +74,10 @@ export function getLiveRecordingRamBudgetBytes(): number {
 
 const SCHEDULER_INTERVAL_MS = 25;
 const LOOKAHEAD_SEC = 0.1;
+// Experimental bounded native drum queue, separate from the normal transport cursor.
+const DRUM_AHEAD_SEC = 1.5;
+const DRUM_REFILL_SEC = 1.1;
+const DRUM_MAX_WINDOW_HITS = 160;
 /** Small live-AudioContext start headroom so beat 1 (tick 0) schedules cleanly ahead of ctx.currentTime without late clamping or inter-voice flam. */
 const PLAY_START_LEAD_SEC = 0.05;
 const SEEK_PLAY_LEAD_SEC = 0.025;
@@ -203,7 +207,7 @@ export class SY1StudioEngine {
   });
 
   private refreshRegionPlayback(trackIds: readonly string[]): void {
-    for(const id of trackIds){this.getTrack(id)?.cancelFiniteScore();this.finiteScoreTracks.delete(id);}
+    for(const id of trackIds){this.getTrack(id)?.cancelFiniteScore();this.finiteScoreTracks.delete(id);this.finiteDrumCursors.delete(id);}
     if (!this.playing) { this.notify(); return; }
     const changed = new Set(trackIds);
     if (!changed.size) return;
@@ -211,11 +215,12 @@ export class SY1StudioEngine {
     const secPerTick = this.secondsPerTick(this.anchorBpm);
     // Retain the shared cursor and every unedited track's already queued events.
     // Cancel only the affected tracks and refill their existing lookahead window.
-    this.scheduledTransportDrums = this.scheduledTransportDrums.filter(hit => {
-      if (!changed.has(hit.track.id)) return true;
-      if (hit.at > now) hit.handle?.cancel();
-      return false;
-    });
+    // Choke automation must be unwound newest-first.
+    for(let i=this.scheduledTransportDrums.length-1;i>=0;i--){
+      const hit=this.scheduledTransportDrums[i];
+      if(changed.has(hit.track.id)&&hit.at>now)hit.handle?.cancel();
+    }
+    this.scheduledTransportDrums=this.scheduledTransportDrums.filter(hit=>!changed.has(hit.track.id));
     this.pendingDrumCapture = this.pendingDrumCapture.filter(hit => !changed.has(hit.track.id));
     for (const track of this.tracks) {
       if (!changed.has(track.id)) continue;
@@ -260,6 +265,10 @@ export class SY1StudioEngine {
   private finiteScoreExperiment = false;
   private preparingFiniteScores = false;
   private finiteScoreTracks = new Set<string>();
+  private finiteDrumCursors = new Map<string,{tick:number,revision:number}>();
+  private finiteDrumStats = {queued:0,missed:0,maxQueued:0};
+  getFiniteDrumDiagnostics(){return {...this.finiteDrumStats};}
+  getFiniteDrumTrackIds():string[]{return [...this.finiteDrumCursors.keys()];}
   private playing = false;
   private recording = false;
   private transportEpoch = 0;
@@ -395,7 +404,7 @@ export class SY1StudioEngine {
   }
   getFiniteScoreTrackIds():string[]{return [...this.finiteScoreTracks];}
   private fallbackFiniteScores():void {
-    if(this.finiteScoreTracks.size)this.refreshRegionPlayback([...this.finiteScoreTracks]);
+    if(this.finiteScoreTracks.size||this.finiteDrumCursors.size)this.refreshRegionPlayback([...this.finiteScoreTracks,...this.finiteDrumCursors.keys()]);
   }
 
   private notify(): void {
@@ -509,6 +518,7 @@ export class SY1StudioEngine {
   handleAudioContextStateChange(state: string, nowAudioTime = this.nowAudioTime()): void {
     if (state === "interrupted" || state === "suspended") {
       this.finiteScoreTracks.clear();
+      this.finiteDrumCursors.clear();
       this.stopDrumPreview();
       this.flushDrumCapture(nowAudioTime, true);
       this.cancelTransportDrums();
@@ -740,7 +750,7 @@ export class SY1StudioEngine {
   }
 
   setTrackPreset(id: string, presetId: string): void {
-    if(this.finiteScoreTracks.has(id))this.refreshRegionPlayback([id]);
+    if(this.finiteScoreTracks.has(id)||this.finiteDrumCursors.has(id))this.refreshRegionPlayback([id]);
     const t = this.getTrack(id);
     if (!t) return;
     this.playbackOpenNotes.get(id)?.clear();
@@ -749,7 +759,7 @@ export class SY1StudioEngine {
   }
 
   setTrackMachinePreset(id: string, machineId: string, presetId: string): void {
-    if(this.finiteScoreTracks.has(id))this.refreshRegionPlayback([id]);
+    if(this.finiteScoreTracks.has(id)||this.finiteDrumCursors.has(id))this.refreshRegionPlayback([id]);
     const t = this.getTrack(id);
     if (!t) return;
     if (this.liveDrums.has(id) && t.machineId !== machineId) this.liveDrums.delete(id);
@@ -953,6 +963,7 @@ export class SY1StudioEngine {
     if (this.recording) return;
     for(const id of this.finiteScoreTracks)this.getTrack(id)?.cancelFiniteScore();
     this.finiteScoreTracks.clear();
+    this.finiteDrumCursors.clear();
     this.cancelTransportDrums();
     this.pendingDrumCapture = [];
     this.pendingLoopWrap = null;
@@ -995,6 +1006,8 @@ export class SY1StudioEngine {
     let now = this.nowAudioTime();
     let startLead = countInSeconds > 0 ? countInSeconds : (!this.clockNowOverride ? PLAY_START_LEAD_SEC : 0);
     this.finiteScoreTracks.clear();
+    this.finiteDrumCursors.clear();
+    this.finiteDrumStats={queued:0,missed:0,maxQueued:0};
     const ctx=this.masterBus?.ctx;
     if(this.finiteScoreExperiment&&!this.clockNowOverride&&!this.loopEnabled&&!this.recording&&
       !this.preparingRecord&&!this.dispatchObserver&&countInSeconds===0&&this.playheadTick===0&&ctx){
@@ -1014,7 +1027,12 @@ export class SY1StudioEngine {
           if(valid&&ready[i]&&this.tracks.includes(t)&&snap.events===t.events&&snap.patch===JSON.stringify(t.patch)&&t.armFiniteScore())this.finiteScoreTracks.add(t.id);
           else t.cancelFiniteScore();
         }
-        if(this.finiteScoreTracks.size)startLead=startFrame/ctx.sampleRate-now;
+        if(valid){
+          for(const t of this.tracks){
+            if(this.canBufferFiniteDrum(t))this.finiteDrumCursors.set(t.id,{tick:0,revision:t.getChangeRevision()});
+          }
+        }
+        if(this.finiteScoreTracks.size||this.finiteDrumCursors.size)startLead=startFrame/ctx.sampleRate-now;
       }finally{this.preparingFiniteScores=false;}
     }
     this.playing = true;
@@ -1165,6 +1183,7 @@ export class SY1StudioEngine {
 
   allNotesOff(): void {
     this.finiteScoreTracks.clear();
+    this.finiteDrumCursors.clear();
     this.playbackOpenNotes.clear();
     this.playbackSustainDown.clear();
     this.liveHeldTracksByMidi.clear();
@@ -1193,6 +1212,10 @@ export class SY1StudioEngine {
     if (!this.playing) { this.stepDrumPreview(nowAudioTime); return; }
     // A direct patch change, panic or engine swap may invalidate the opt-in path.
     const invalid=[...this.finiteScoreTracks].filter(id=>{const t=this.getTrack(id);return !t?.isFiniteScoreArmed()||!t.canUseFiniteScore();});
+    for(const [id,state] of this.finiteDrumCursors){
+      const t=this.getTrack(id);
+      if(!t||!t.isDrumTrack()||t.getChangeRevision()!==state.revision)invalid.push(id);
+    }
     if(invalid.length){this.refreshRegionPlayback(invalid);return;}
     this.scheduledTransportDrums=this.scheduledTransportDrums.filter(h=>h.at>nowAudioTime);
     this.flushDrumCapture(nowAudioTime);
@@ -1200,6 +1223,7 @@ export class SY1StudioEngine {
     this.metronome.schedule(this.masterBus?.ctx || null, nowAudioTime, this.anchorAudioTime, this.anchorTick / STUDIO_PPQ,
       this.bpm, this.clickEnabled, this.countInStart, this.countInEnd !== null && nowAudioTime < this.countInEnd ? this.countInEnd : null);
     this.dispatchRecordingStart(nowAudioTime);
+    this.refillFiniteDrums(nowAudioTime);
     const windowEnd = nowAudioTime + LOOKAHEAD_SEC;
     if (this.cursorAudioTime > windowEnd) return;
 
@@ -1220,7 +1244,7 @@ export class SY1StudioEngine {
         // Events already scheduled on the audio clock remain intact. Only
         // reconcile missed releases/controllers; never replay stale attacks.
         for (const track of this.tracks) {
-          if(this.finiteScoreTracks.has(track.id))continue;
+          if(this.finiteScoreTracks.has(track.id)||this.finiteDrumCursors.has(track.id))continue;
           let open = this.playbackOpenNotes.get(track.id);
           if (!open) this.playbackOpenNotes.set(track.id, open = new Set<number>());
           const held = open;
@@ -1400,6 +1424,51 @@ export class SY1StudioEngine {
     this.notify();
   }
 
+  /** Eligible finite drum arrangements retain the exact existing synthesis,
+   * randomization, effects and native start times. No rendered samples/cache.
+   * The bounded native queue survives short UI stalls, but is not an
+   * unbounded audio-thread drum synthesizer. Dense scores fall back safely. */
+  private canBufferFiniteDrum(track:SY1TrackEngine):boolean {
+    if(!track.isDrumTrack()||!track.isAudioAttached()||!track.events.length||this.liveDrums.has(track.id))return false;
+    track.ensureEventsSorted();
+    const span=DRUM_AHEAD_SEC*this.ticksPerSecond();
+    const hits:number[]=[];
+    let first=0;
+    for(const ev of track.events){
+      if(ev.type!=="noteOn"&&ev.type!=="noteOff")return false;
+      if(ev.type!=="noteOn")continue;
+      hits.push(ev.tick);
+      while(first<hits.length&&ev.tick-hits[first]>=span)first++;
+      if(hits.length-first>DRUM_MAX_WINDOW_HITS)return false;
+    }
+    return hits.length>0;
+  }
+  private refillFiniteDrums(now:number):void {
+    if(!this.finiteDrumCursors.size)return;
+    const tps=this.ticksPerSecond(this.anchorBpm);
+    const secPerTick=1/tps;
+    const total=this.getTotalTicks();
+    const current=Math.min(total,Math.max(this.anchorTick,this.anchorTick+(now-this.anchorAudioTime)*tps));
+    const end=Math.min(total,Math.max(this.anchorTick,this.anchorTick+(now+DRUM_AHEAD_SEC-this.anchorAudioTime)*tps));
+    for(const [id,state] of this.finiteDrumCursors){
+      const track=this.getTrack(id);
+      if(!track)continue;
+      if(state.tick<current){
+        track.forEachEventInRange(state.tick,current,ev=>{if(ev.type==="noteOn")this.finiteDrumStats.missed++;});
+        state.tick=current;
+      }
+      if(state.tick>=total||(state.tick-current)/tps>=DRUM_REFILL_SEC||end<=state.tick)continue;
+      track.forEachEventInRange(state.tick,end,ev=>{
+        if(ev.type!=="noteOn")return;
+        const at=this.anchorAudioTime+(ev.tick-this.anchorTick)*secPerTick;
+        this.dispatchTransportDrum(track,ev,at);
+        this.finiteDrumStats.queued++;
+      });
+      state.tick=end;
+    }
+    this.finiteDrumStats.maxQueued=Math.max(this.finiteDrumStats.maxQueued,this.scheduledTransportDrums.length);
+  }
+
   private dispatchTransportDrum(track:SY1TrackEngine,hit:{tick:number;midi:number;velocity:number},at:number,capture?:SY1StudioEngine['pendingDrumCapture'][number]):void {
     const handle=track.audible?track.scheduleDrumNote(hit.midi,hit.velocity,at):undefined;
     const actualAt=handle?.at??at;
@@ -1448,7 +1517,7 @@ export class SY1StudioEngine {
     for (let ti = 0; ti < this.tracks.length; ti++) {
       const track = this.tracks[ti];
       if (onlyTracks && !onlyTracks.has(track.id)) continue;
-      if(this.finiteScoreTracks.has(track.id))continue;
+      if(this.finiteScoreTracks.has(track.id)||this.finiteDrumCursors.has(track.id))continue;
       const sequence = this.liveDrums.get(track.id);
       const overdub = this.recording ? this.patternOverdub.get(track.id) : undefined;
       if (sequence && track.isDrumTrack()) {

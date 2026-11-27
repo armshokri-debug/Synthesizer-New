@@ -212,6 +212,8 @@ export class SY1TrackEngine {
   private meterBuf: Float32Array | null = null;
 
   private listeners = new Set<() => void>();
+  private changeRevision = 0;
+  getChangeRevision():number {return this.changeRevision;}
 
   constructor(opts: SY1TrackOptions) {
     this.id = opts.id;
@@ -235,6 +237,7 @@ export class SY1TrackEngine {
   }
 
   private emitChange(): void {
+    this.changeRevision++;
     this.listeners.forEach((cb) => cb());
   }
 
@@ -638,6 +641,7 @@ export class SY1TrackEngine {
   }
 
   setAudible(audible: boolean): void {
+    if(this.audible!==audible)this.changeRevision++;
     this.audible = audible;
     if (this.muteGate && this.ctx) {
       const g = audible ? 1 : 0;
@@ -1127,6 +1131,7 @@ export class SY1TrackEngine {
   }
 
   setEvents(events: StudioMidiEvent[], quiet = false): void {
+    this.changeRevision++;
     this.regions = null;
     this.events = events.map((e) => ({ ...e }));
     this.eventsDirty = this.events.length > 1;
