@@ -38,6 +38,7 @@ import { extractNoteSpans } from "./midi-io";
 import { StudioMidiEvent, StudioNoteSpan, StudioRecordingMode, StudioTrackSnapshot, TrackAudioState } from "./types";
 
 import { flattenRegions, regionFromEvents, regionId, type MidiRegion } from "./midi-regions";
+import {compileFiniteScore} from "./finite-audio-score";
 
 export type TrackEngineKind = "hq" | "analog" | "strings" | "fm" | "vector" | "drums";
 
@@ -200,6 +201,10 @@ export class SY1TrackEngine {
   private pitchBend = 0;
   private modWheel = 0;
   private nextVoiceId = 1;
+  private scoreGeneration = 0;
+  private scorePrepared = 0;
+  private scoreArmed = false;
+  private nextScoreVoiceId = -1;
   private currentBpm = 110;
   private eventsDirty = false;
   private cachedNoteCount: number | null = 0;
@@ -234,6 +239,7 @@ export class SY1TrackEngine {
   }
 
   private teardownEngineNodes(): void {
+    this.cancelFiniteScore();
     this.engineSwapToken++;
     this.drumTimers.forEach((tid) => clearTimeout(tid));
     this.drumTimers.clear();
@@ -377,6 +383,51 @@ export class SY1TrackEngine {
   private useWorklet(): boolean {
     if (!this.workletNode) return false;
     return this.forceHQ || getEngine() === "hq" || this.engineKind !== "hq";
+  }
+
+  /** Experimental fixed-tempo, finite, polyphonic HQ arrangement path. */
+  canUseFiniteScore(): boolean {
+    return !!this.workletNode && this.engineKind==="hq" && this.useWorklet() &&
+      this.patch.polyMode!=="mono" && this.patch.hold!=="on" && !this.sustainPedal;
+  }
+
+  isFiniteScoreArmed(): boolean { return this.scoreArmed; }
+
+  async prepareFiniteScore(startFrame:number,framesPerTick:number,totalTicks:number):Promise<boolean> {
+    if(!this.canUseFiniteScore()||this.scorePrepared)return false;
+    const node=this.workletNode!;
+    this.ensureEventsSorted();
+    const compiled=compileFiniteScore(this.events,startFrame,framesPerTick,totalTicks,m=>this.centsFor(m),this.nextScoreVoiceId);
+    if(!compiled)return false;
+    const gen=++this.scoreGeneration;
+    this.nextScoreVoiceId=compiled.nextId;
+    this.scorePrepared=gen;
+    const accepted=await new Promise<boolean>(resolve=>{
+      let timer:ReturnType<typeof setTimeout>;
+      const done=(ok:boolean)=>{clearTimeout(timer);node.port.removeEventListener("message",listener);resolve(ok);};
+      const listener=(ev:MessageEvent)=>{if(ev.data?.t==="score-ready"&&ev.data.generation===gen)done(!!ev.data.accepted);};
+      timer=setTimeout(()=>done(false),120);
+      node.port.addEventListener("message",listener);node.port.start();
+      try{node.port.postMessage({t:"score-prepare",generation:gen,data:compiled.data},[compiled.data.buffer]);}
+      catch{done(false);}
+    });
+    if(!accepted||this.workletNode!==node||this.scorePrepared!==gen||!this.canUseFiniteScore()){
+      node.port.postMessage({t:"score-cancel",generation:gen});
+      if(this.scorePrepared===gen)this.scorePrepared=0;
+      return false;
+    }
+    return true;
+  }
+
+  armFiniteScore():boolean {
+    if(!this.scorePrepared||!this.canUseFiniteScore())return false;
+    this.workletPost({t:"score-arm",generation:this.scorePrepared});
+    this.scoreArmed=true;return true;
+  }
+
+  cancelFiniteScore():void {
+    if(this.scorePrepared)this.workletPost({t:"score-cancel",generation:this.scorePrepared});
+    this.scorePrepared=0;this.scoreArmed=false;
   }
 
   private workletPost(msg: Record<string, unknown>): void {
@@ -932,6 +983,7 @@ export class SY1TrackEngine {
 
   /** Cleanly release all active notes on this track (e.g. Stop, Panic, preset switch). */
   allNotesOff(at = 0): void {
+    if(at===0)this.cancelFiniteScore();
     this.liveArpeggiator.stop();
     const releaseAt = at > 0 ? at : this.ctx ? this.ctx.currentTime : 0;
     this.sustainPedal = false;

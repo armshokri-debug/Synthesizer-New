@@ -13,7 +13,8 @@ export class AudioScore {
   private cursor = 0;
   private generation = 0;
   private missed = 0;
-  load(generation:number, data:Float64Array, nowFrame:number): boolean {
+  private armed = false;
+  load(generation:number, data:Float64Array, nowFrame:number, armed=true): boolean {
     if(this.data || !Number.isSafeInteger(generation) || generation<=this.generation ||
       !(data instanceof Float64Array) || !data.length || data.length%SCORE_STRIDE ||
       data.length/SCORE_STRIDE>MAX_SCORE_EVENTS) return false;
@@ -29,8 +30,12 @@ export class AudioScore {
       prev=frame;
     }
     if(held.size)return false;
-    this.data=data;this.cursor=0;this.generation=generation;this.missed=0;
+    this.data=data;this.cursor=0;this.generation=generation;this.missed=0;this.armed=armed;
     return true;
+  }
+  arm(generation:number):boolean {
+    if(!this.data||generation!==this.generation)return false;
+    this.armed=true;return true;
   }
   cancel(generation:number):boolean {
     if(generation!==this.generation)return false;
@@ -39,7 +44,7 @@ export class AudioScore {
   clear():void {this.data=null;this.cursor=0;}
   drain(frame:number,n:number,dispatch:ScoreDispatch):void {
     const data=this.data;
-    if(!data)return;
+    if(!data||!this.armed)return;
     const end=frame+n;
     let i=this.cursor;
     while(i<data.length&&data[i]<end){

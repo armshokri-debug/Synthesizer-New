@@ -75,11 +75,13 @@ class SY1Processor extends AudioWorkletProcessor {
       case "off": this.enqueue(2, m); break;
       case "kill": this.enqueue(3, m); break;
       case "glide": this.enqueue(4, m); break;
+      case "score-prepare":
       case "score-load": {
-        const accepted = this.score.load(m.generation,m.data,currentFrame);
+        const accepted = this.score.load(m.generation,m.data,currentFrame,m.t==="score-load");
         this.port.postMessage({t:"score-ready",generation:m.generation,accepted});
         break;
       }
+      case "score-arm": this.score.arm(m.generation); break;
       case "score-cancel":
         if(this.score.cancel(m.generation)){
           for(const v of this.eng.voices) if(v.active && v.id<0) this.eng.noteOff(v.id,0,true);
