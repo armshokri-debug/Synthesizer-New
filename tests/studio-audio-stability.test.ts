@@ -36,3 +36,29 @@ describe("transport underrun recovery", () => {
     engine.dispose();
   });
 });
+
+describe("live MIDI edit isolation", () => {
+  test("editing one track preserves the unrelated sustained note and does not redispatch its queued attacks", async () => {
+    let now = 0;
+    const engine = createStudioEngine({isolatedTempo:true, initialBpm:120, clockNow:()=>now});
+    const [a,b] = engine.getTracks();
+    a.setEvents([{type:"noteOn",tick:0,midi:60,velocity:.8},{type:"noteOff",tick:1920,midi:60}]);
+    b.setEvents([{type:"noteOn",tick:48,midi:64,velocity:.8},{type:"noteOff",tick:360,midi:64}]);
+    let cancels=0, releases=0;
+    const cancel=a.cancelRegionPlayback.bind(a), off=a.noteOff.bind(a);
+    a.cancelRegionPlayback=(dest)=>{cancels++;cancel(dest);};
+    a.noteOff=(midi,at)=>{releases++;off(midi,at);};
+    const attacks:number[]=[];
+    engine.setDispatchObserver(r=>{if(r.trackId===a.id&&r.event.type==="noteOn")attacks.push(r.event.tick);});
+    await engine.play();
+    now=.02;
+    engine.regions.select(b.getRegions(engine.getTotalTicks())[0].id);
+    engine.replaceTrackNotes(b.id,[{midi:65,startTick:96,endTick:480,velocity:.7}]);
+    expect(cancels).toBe(0);
+    expect(releases).toBe(0);
+    expect(attacks).toEqual([0]);
+    expect(engine.isPlaying()).toBe(true);
+    expect(engine.getCurrentTick()).toBeCloseTo(19.2,4);
+    engine.dispose();
+  });
+});

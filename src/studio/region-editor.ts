@@ -12,7 +12,7 @@ interface TimelineHost {
   tracks(): SY1TrackEngine[];
   length(): number;
   focus(trackId: string): void;
-  commit(): void;
+  commit(trackIds: readonly string[]): void;
   recording(): boolean;
 }
 
@@ -138,7 +138,7 @@ export class RegionEditor {
     });
     for (const {track, regions, events} of playback) track.setRegions(regions, events);
     this.selected = new Set(selection);
-    this.host.commit();
+    this.host.commit(playback.map(({track}) => track.id));
   }
 
   private edit(after: Tracks, afterSelection = this.selection()): void {

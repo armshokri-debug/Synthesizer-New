@@ -199,20 +199,50 @@ export class SY1StudioEngine {
     length: () => this.getTotalTicks(),
     focus: id => this.setFocusedTrack(id),
     recording: () => this.recording || this.preparingRecord,
-    commit: () => this.refreshRegionPlayback()
+    commit: ids => this.refreshRegionPlayback(ids)
   });
 
-  private refreshRegionPlayback(): void {
-    if (this.playing) {
-      const tick = this.getCurrentTick();
-      this.playbackOpenNotes.clear();
-      this.playbackSustainDown.clear();
-      this.liveHeldTracksByMidi.clear();
-      for (const track of this.tracks) track.cancelRegionPlayback(this.masterBus?.sum);
-      this.seekToTick(tick);
-      this.stepScheduler(this.nowAudioTime());
-      this.notifyKeys();
-    } else this.notify();
+  private refreshRegionPlayback(trackIds: readonly string[]): void {
+    if (!this.playing) { this.notify(); return; }
+    const changed = new Set(trackIds);
+    if (!changed.size) return;
+    const now = this.nowAudioTime();
+    const secPerTick = this.secondsPerTick(this.anchorBpm);
+    // Retain the shared cursor and every unedited track's already queued events.
+    // Cancel only the affected tracks and refill their existing lookahead window.
+    this.scheduledTransportDrums = this.scheduledTransportDrums.filter(hit => {
+      if (!changed.has(hit.track.id)) return true;
+      if (hit.at > now) hit.handle?.cancel();
+      return false;
+    });
+    this.pendingDrumCapture = this.pendingDrumCapture.filter(hit => !changed.has(hit.track.id));
+    for (const track of this.tracks) {
+      if (!changed.has(track.id)) continue;
+      track.cancelRegionPlayback(this.masterBus?.sum);
+      this.playbackOpenNotes.delete(track.id);
+      this.playbackSustainDown.delete(track.id);
+      this.liveDrums.get(track.id)?.reset();
+    }
+    for (const [midi, tracks] of this.liveHeldTracksByMidi) {
+      for (const id of changed) tracks.delete(id);
+      if (!tracks.size) this.liveHeldTracksByMidi.delete(midi);
+    }
+    const wrap = this.pendingLoopWrap;
+    const startAt = Math.max(now, wrap && now < wrap.at ? now : this.anchorAudioTime);
+    const tick = this.getCurrentTick(now);
+    if (startAt < this.cursorAudioTime) {
+      if (wrap && now < wrap.at) {
+        this.scheduleSegment(tick, wrap.end, startAt, secPerTick, changed);
+        this.releasePlaybackNotes(wrap.at, changed);
+        for (const id of changed) this.liveDrums.get(id)?.reset();
+        this.scheduleSegment(wrap.start, this.cursorTick, wrap.at, secPerTick, changed);
+      } else {
+        this.scheduleSegment(tick, this.cursorTick, startAt, secPerTick, changed);
+      }
+    }
+    this.stepScheduler(now);
+    this.notifyKeys();
+    this.notify();
   }
 
   private tracks: SY1TrackEngine[] = [];
@@ -1359,12 +1389,13 @@ export class SY1StudioEngine {
     this.pendingDrumCapture = remaining;
   }
 
-  private scheduleSegment(startTick: number, endTick: number, segStartAudio: number, secPerTick: number): void {
+  private scheduleSegment(startTick: number, endTick: number, segStartAudio: number, secPerTick: number, onlyTracks?: ReadonlySet<string>): void {
     if (endTick <= startTick) return;
     const observer = this.dispatchObserver;
     const replacingArmed = this.recording && this.recordingMode === "replace";
     for (let ti = 0; ti < this.tracks.length; ti++) {
       const track = this.tracks[ti];
+      if (onlyTracks && !onlyTracks.has(track.id)) continue;
       const sequence = this.liveDrums.get(track.id);
       const overdub = this.recording ? this.patternOverdub.get(track.id) : undefined;
       if (sequence && track.isDrumTrack()) {
@@ -1442,8 +1473,9 @@ export class SY1StudioEngine {
     }
   }
 
-  private releasePlaybackNotes(at: number): void {
+  private releasePlaybackNotes(at: number, onlyTracks?: ReadonlySet<string>): void {
     for (const track of this.tracks) {
+      if (onlyTracks && !onlyTracks.has(track.id)) continue;
       if (this.playbackSustainDown.has(track.id)) {
         track.setSustainPedal(false, at);
         this.playbackSustainDown.delete(track.id);
