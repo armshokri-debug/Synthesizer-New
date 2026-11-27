@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -19,6 +21,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: bun test --preload ./tests/vite-worklet-preload.js tests
+      - name: Verify DSP PCM against pre-optimization source
+        run: bun scripts/audio-dsp-parity.ts
       - run: npm run build
       - name: Verify original instrument Edit and existing drum integration
         shell: bash

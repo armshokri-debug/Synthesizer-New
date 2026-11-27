@@ -655,6 +655,9 @@ class SY1VectorProcessor extends AudioWorkletProcessor {
       const velPeak = 0.25 * (1 - this.velSens + this.velSens * v.vel);
       const keyScale = Math.pow(2, -Math.max(0, v.midi - 60) / 32);
       const fmIndex = fmIdxBase * keyScale * (0.4 + 0.6 * v.vel);
+      const releaseCoef = v.relFast > 0 ? 1 - Math.exp(-1 / (v.relFast * sr)) : aRC;
+      const fixedPitch = v.lf === v.lfTarget;
+      const fixedF0 = fixedPitch ? Math.min(sr * 0.45, Math.pow(2, v.lf + bendCents / 1200)) : 0;
 
       let svfA1 = 0;
       let svfA2 = 0;
@@ -684,8 +687,7 @@ class SY1VectorProcessor extends AudioWorkletProcessor {
           ae += (this.aS - ae) * aDC;
           if (Math.abs(ae - this.aS) < 1e-4) v.ampStage = 2;
         } else if (v.ampStage === 3) {
-          const rc = v.relFast > 0 ? 1 - Math.exp(-1 / (v.relFast * sr)) : aRC;
-          ae -= ae * rc;
+          ae -= ae * releaseCoef;
         }
         v.ampEnv = ae;
 
@@ -705,7 +707,7 @@ class SY1VectorProcessor extends AudioWorkletProcessor {
         }
         v.fltEnv = fe;
 
-        const f0 = Math.min(sr * 0.45, Math.pow(2, v.lf + bendCents / 1200));
+        const f0 = fixedPitch ? fixedF0 : Math.min(sr * 0.45, Math.pow(2, v.lf + bendCents / 1200));
         const dt = f0 / sr;
 
         // --- Corner A: Saw / Variable-Pulse blend ---

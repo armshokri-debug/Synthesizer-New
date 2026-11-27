@@ -8,3 +8,6 @@ Next architecture milestone: move transport timing and event dispatch to an audi
 
 ## Checkpoint 2
 Region transactions now report changed track IDs. Their queued drum events are cancelled and their existing scheduling window is refilled without resetting unrelated tracks or the shared transport cursor. Edited tracks can still release their own held voices; this is not the final generation-based audio-thread event architecture. Loop seam and recording regression tests remain required.
+
+## Checkpoint 3
+FM and Vector reuse block-constant release coefficients and fixed oscillator pitch, retaining the original per-sample path for glide and FM vibrato. A regression script compares PCM with the exact pre-optimization commit at 44.1/48/96 kHz across notes, voice stealing, glide, pitch bend, modulation and releases. This is a narrow DSP optimization, not a measured CPU reduction on the user's Mac or an independent scheduler.

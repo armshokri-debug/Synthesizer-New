@@ -331,6 +331,11 @@ class SY1FmProcessor extends AudioWorkletProcessor {
       const velIdx = 1 - this.velMod * (1 - v.vel);
       const keyScale = Math.pow(2, -Math.max(0, v.midi - 60) / 30);
       const idxScale = 4 * brightMul * velIdx * keyScale;
+      // relFast is constant throughout this render quantum; release() receives
+      // that same value at a sample-accurate boundary.
+      const fastRelease = v.relFast > 0 ? 1 - Math.exp(-1 / (v.relFast * sr)) : 0;
+      const fixedPitch = v.lf === v.lfTarget && vibDepth <= 0.01;
+      const fixedF0 = fixedPitch ? Math.pow(2, v.lf + (bendCents + 0) / 1200) : 0;
       let peak = 0;
       for (let i = 0; i < n; i++) {
         if (i < v.delay) continue;
@@ -343,7 +348,7 @@ class SY1FmProcessor extends AudioWorkletProcessor {
           if (Math.abs(v.lfTarget - v.lf) < 1e-6) v.lf = v.lfTarget;
         }
         const vib = vibDepth > 0.01 ? SINE[(this.vibPhase | 0) & TAB_MASK] * vibDepth : 0;
-        const f0 = Math.pow(2, v.lf + (bendCents + vib) / 1200);
+        const f0 = fixedPitch ? fixedF0 : Math.pow(2, v.lf + (bendCents + vib) / 1200);
 
         // envelopes
         for (let k = 0; k < 4; k++) {
@@ -351,7 +356,7 @@ class SY1FmProcessor extends AudioWorkletProcessor {
           let e = v.env[k];
           if (st === 0) { e += aInc[k]; if (e >= 1) { e = 1; v.stage[k] = 1; } }
           else if (st === 1) { e += (this.s[k] - e) * dC[k]; if (Math.abs(e - this.s[k]) < 1e-4) v.stage[k] = 2; }
-          else if (st === 3) { e -= e * (v.relFast > 0 ? 1 - Math.exp(-1 / (v.relFast * sr)) : rC[k]); }
+          else if (st === 3) { e -= e * (v.relFast > 0 ? fastRelease : rC[k]); }
           v.env[k] = e;
         }
 
