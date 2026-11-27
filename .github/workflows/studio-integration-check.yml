@@ -49,6 +49,7 @@ jobs:
           node scripts/daw-preview-cancel-pcm.mjs
           node scripts/daw-preview-cancel-pcm.mjs arrangement
           node scripts/daw-preview-cancel-pcm.mjs record
+          node scripts/studio-realtime-stress.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: sy1-studio-preview

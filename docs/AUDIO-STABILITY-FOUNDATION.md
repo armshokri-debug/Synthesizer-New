@@ -11,3 +11,6 @@ Region transactions now report changed track IDs. Their queued drum events are c
 
 ## Checkpoint 3
 FM and Vector reuse block-constant release coefficients and fixed oscillator pitch, retaining the original per-sample path for glide and FM vibrato. A regression script compares PCM with the exact pre-optimization commit at 44.1/48/96 kHz across notes, voice stealing, glide, pitch bend, modulation and releases. This is a narrow DSP optimization, not a measured CPU reduction on the user's Mac or an independent scheduler.
+
+## Checkpoint 4
+Prevent redundant queued full renders when an immediate render already satisfied the same UI request; recording-stat DOM updates are coalesced to animation frames rather than synchronous per-event updates. A real Chromium Web Audio diagnostic uses Bushehr, Tehran, Baku and Yazd with 32 bars and a controlled UI stall. It reports pre-clip/output PCM peaks, silence, non-finite samples and scheduler underruns. Headless PCM is not physical-device audio output; this does not prove the scheduler is independent or that the V10 bundle is fixed. V10 archive is available as a generated distribution without TypeScript source maps; preserve it and recover its source changes before replacing it.

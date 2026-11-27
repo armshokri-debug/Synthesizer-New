@@ -1255,11 +1255,14 @@ function applyKeyboardVisibility(): void {
   }
 }
 
+// Each successful direct render satisfies earlier queued render requests.
+let studioRenderRevision = 0;
 export function renderStudioPanel(): void {
   const container = document.getElementById("sy1-studio");
   if(!container||!studioEngine.isActive())return;
-  if(instrumentFocusMode){renderProjectInstrumentHost(container);return;}
+  if(instrumentFocusMode){studioRenderRevision++;renderProjectInstrumentHost(container);return;}
   if(container.hidden)return;
+  studioRenderRevision++;
 
   // Preserve active search input focus & caret across browser search updates
   const activeEl = document.activeElement as HTMLInputElement | null;
@@ -1509,6 +1512,8 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
 
   // Coalesce rapid state updates into a single microtask render
   let renderQueued = false;
+  let requestedRenderRevision = -1;
+  let recordingStatsFrame = 0;
   let draggingKnobParam: string | null = null;
   let draggingKnobTrackId: string | null = null;
   let draggingRange: { trackId: string; type: string } | null = null;
@@ -1587,11 +1592,12 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
 
   const requestRender = () => {
     if (!studioEngine.isActive()) return;
+    requestedRenderRevision = studioRenderRevision;
     if (renderQueued) return;
     renderQueued = true;
     const render = () => {
       renderQueued = false;
-      if (studioEngine.isActive()) renderStudioPanel();
+      if (studioEngine.isActive() && requestedRenderRevision === studioRenderRevision) renderStudioPanel();
     };
     if (studioEngine.isPlaying()) requestAnimationFrame(render);
     else queueMicrotask(render);
@@ -1635,7 +1641,14 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
     if (isRec && wasRecordingUi) {
       markProjectDirty();
       pendingAutosaveAfterRecord = true;
-      if (!container.hidden) updateRecordingStatsDOM();
+      // MIDI input/recording is a hot path. Never synchronously query/update
+      // the complete track UI for every individual recorded event.
+      if (!container.hidden && !recordingStatsFrame) {
+        recordingStatsFrame = requestAnimationFrame(() => {
+          recordingStatsFrame = 0;
+          if (!container.hidden && studioEngine.getTransportSnapshot().recording) updateRecordingStatsDOM();
+        });
+      }
       return;
     }
 
