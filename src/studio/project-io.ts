@@ -1,3 +1,4 @@
+import {normalizeMasterTrimDb} from "./types";
 import { STUDIO_DRUM_BANK_KEY, normalizeTrackDrumBank } from "./track-drum-patterns";
 import { STUDIO_TUNING_KEY, normalizeStudioTuning } from "./track-tuning";
 /**
@@ -394,6 +395,7 @@ export function validateStudioProject(raw: unknown): ProjectValidationResult {
       id,
       name: sanitizeProjectName(raw.name),
       savedAt,
+      ...(normalizeMasterTrimDb(raw.masterTrimDb)!==0?{masterTrimDb:normalizeMasterTrimDb(raw.masterTrimDb)}:{}),
       bpm: Math.round(bpm),
       bars,
       loopEnabled,

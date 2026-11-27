@@ -118,7 +118,13 @@ export interface StudioProjectTrackData {
 
 export type StudioRecordingMode = "overdub" | "takes" | "replace";
 
+/** Old sessions retain unity gain; only explicit mix trim is persisted. */
+export function normalizeMasterTrimDb(value:unknown):number {
+  return typeof value==='number'&&Number.isFinite(value)?Math.max(-24,Math.min(0,value)):0;
+}
+
 export interface StudioProjectData {
+  masterTrimDb?: number;
   format: typeof STUDIO_PROJECT_FORMAT;
   version: typeof STUDIO_PROJECT_VERSION;
   id: string;

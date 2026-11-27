@@ -33,6 +33,7 @@ import { RegionEditor } from "./region-editor";
 import { cloneRegion, flattenRegions, type MidiRegion } from "./midi-regions";
 import { StudioMetronome } from "./metronome";
 import {
+  normalizeMasterTrimDb,
   STUDIO_BEATS_PER_BAR,
   STUDIO_MAX_BARS,
   STUDIO_MAX_TRACKS,
@@ -113,20 +114,25 @@ export function makeStudioMasterClipCurve(): Float32Array {
 export interface StudioMasterBus {
   ctx: BaseAudioContext;
   sum: GainNode;
+  trim: GainNode;
   clipIn: GainNode;
   clip: WaveShaperNode;
   tap: GainNode;
   out: GainNode;
   analyser: AnalyserNode;
+  preClipSplit: ChannelSplitterNode | null;
+  preClipAnalysers: AnalyserNode[];
 }
 
 export function createStudioMasterBus(
   ctx: BaseAudioContext,
-  options: { connectToDestination?: boolean; unityOut?: boolean } = {}
+  options: { connectToDestination?: boolean; unityOut?: boolean; trimDb?: number } = {}
 ): StudioMasterBus {
   const connectToDest = options.connectToDestination !== false;
   const sum = ctx.createGain();
   sum.gain.value = 1;
+  const trim = ctx.createGain();
+  trim.gain.value = Math.pow(10, normalizeMasterTrimDb(options.trimDb) / 20);
 
   const clipIn = ctx.createGain();
   clipIn.gain.value = 1 / CLIP_RANGE;
@@ -144,8 +150,16 @@ export function createStudioMasterBus(
   const analyser = ctx.createAnalyser();
   analyser.fftSize = connectToDest ? 2048 : 256;
 
-  sum.connect(clipIn);
+  sum.connect(trim);
+  trim.connect(clipIn);
   clipIn.connect(clip);
+  // Monitor channels independently: a mono analyser can hide opposite-phase peaks.
+  const preClipSplit = connectToDest && !options.unityOut ? ctx.createChannelSplitter(2) : null;
+  const preClipAnalysers: AnalyserNode[] = [];
+  if(preClipSplit){
+    trim.connect(preClipSplit);
+    for(let c=0;c<2;c++){const a=ctx.createAnalyser();a.fftSize=4096;preClipSplit.connect(a,c);preClipAnalysers.push(a);}
+  }
   clip.connect(tap);
 
   if (connectToDest) {
@@ -154,13 +168,16 @@ export function createStudioMasterBus(
     analyser.connect(ctx.destination);
   }
 
-  return { ctx, sum, clipIn, clip, tap, out, analyser };
+  return { ctx, sum, trim, clipIn, clip, tap, out, analyser, preClipSplit, preClipAnalysers };
 }
 
 /** Disconnect all nodes of a StudioMasterBus cleanly. */
 export function disposeStudioMasterBus(bus: StudioMasterBus | null): void {
   if (!bus) return;
   try { bus.sum.disconnect(); } catch (e) {}
+  try { bus.trim.disconnect(); } catch (e) {}
+  try { bus.preClipSplit?.disconnect(); } catch (e) {}
+  for(const a of bus.preClipAnalysers)try{a.disconnect();}catch(e){}
   try { bus.clipIn.disconnect(); } catch (e) {}
   try { bus.clip.disconnect(); } catch (e) {}
   try { bus.tap.disconnect(); } catch (e) {}
@@ -255,6 +272,8 @@ export class SY1StudioEngine {
   private focusedTrackId: string;
   private projectId = createProjectId();
   private projectName = "Untitled Project";
+  private masterTrimDb = 0;
+  private preClipMeterBuf = new Float32Array(4096);
   private hasRestoredBpmPending = false;
   private masterBus: StudioMasterBus | null = null;
   private unsubMasterVol: (() => void) | null = null;
@@ -555,7 +574,7 @@ export class SY1StudioEngine {
 
     if (!this.masterBus || this.masterBus.ctx !== ctx) {
       disposeStudioMasterBus(this.masterBus);
-      this.masterBus = createStudioMasterBus(ctx, { connectToDestination: true });
+      this.masterBus = createStudioMasterBus(ctx, { connectToDestination: true, trimDb: this.masterTrimDb });
       if (this.unsubMasterVol) this.unsubMasterVol();
       this.unsubMasterVol = onMasterVolumeChange((v) => {
         if (this.masterBus && this.masterBus.ctx === ctx) {
@@ -576,7 +595,7 @@ export class SY1StudioEngine {
     if (!ctx) return null;
     if (!this.masterBus || this.masterBus.ctx !== ctx) {
       disposeStudioMasterBus(this.masterBus);
-      this.masterBus = createStudioMasterBus(ctx, { connectToDestination: true });
+      this.masterBus = createStudioMasterBus(ctx, { connectToDestination: true, trimDb: this.masterTrimDb });
       if (this.unsubMasterVol) this.unsubMasterVol();
       this.unsubMasterVol = onMasterVolumeChange((v) => {
         if (this.masterBus && this.masterBus.ctx === ctx) {
@@ -597,6 +616,31 @@ export class SY1StudioEngine {
   }
 
   /** Zero-allocation instantaneous master output level (0..1) for the Mixer master meter. */
+  getMasterTrimDb():number{return this.masterTrimDb;}
+  setMasterTrimDb(db:number):void {
+    const next=normalizeMasterTrimDb(db);
+    if(next===this.masterTrimDb)return;
+    this.applyMasterTrim(next);
+    this.notify();
+  }
+  private applyMasterTrim(db:number):void{
+    this.masterTrimDb=db;
+    const bus=this.masterBus;
+    if(bus){
+      const now=bus.ctx.currentTime;
+      bus.trim.gain.cancelScheduledValues(now);
+      bus.trim.gain.setTargetAtTime(Math.pow(10,db/20),now,.012);
+    }
+  }
+  /** Recent stereo sample-peak snapshot before the safety clipper, not true peak. */
+  readMasterPreClipPeak():number{
+    let peak=0;
+    for(const a of this.masterBus?.preClipAnalysers??[]){
+      a.getFloatTimeDomainData(this.preClipMeterBuf as any);
+      for(let i=0;i<this.preClipMeterBuf.length;i++)peak=Math.max(peak,Math.abs(this.preClipMeterBuf[i]));
+    }
+    return peak;
+  }
   readMasterMeterLevel(): number {
     if (!this.masterBus) return 0;
     const an = this.masterBus.analyser;
@@ -1965,6 +2009,7 @@ export class SY1StudioEngine {
       id: this.projectId,
       name: this.projectName,
       savedAt: Date.now(),
+      ...(this.masterTrimDb!==0?{masterTrimDb:this.masterTrimDb}:{}),
       bpm: this.bpm,
       bars: this.bars,
       loopEnabled: this.loopEnabled,
@@ -2032,6 +2077,7 @@ export class SY1StudioEngine {
     while (nextId === this.projectId) nextId = createProjectId();
     this.projectId = nextId;
     this.projectName = sanitizeProjectName(opts.name ?? "Untitled Project");
+    this.applyMasterTrim(0);
     const nextBpm = Math.max(40, Math.min(240, Math.round(opts.bpm ?? 110)));
     const nextBars = Math.max(STUDIO_MIN_BARS, Math.min(STUDIO_MAX_BARS, Math.round(opts.bars ?? 8)));
     this.bpm = nextBpm;
@@ -2117,6 +2163,7 @@ export class SY1StudioEngine {
 
     this.projectId = proj.id;
     this.projectName = proj.name;
+    this.applyMasterTrim(normalizeMasterTrimDb(proj.masterTrimDb));
     this.bars = proj.bars;
     this.loopEnabled = proj.loopEnabled;
     this.loopStartBar = proj.loopStartBar;
@@ -2235,7 +2282,7 @@ export class SY1StudioEngine {
     const preRollSec = preRollFrames / sampleRate;
     const offline = new OfflineAudioContext(2, totalFrames + preRollFrames, sampleRate);
     const offlineMaster = useMasterBus
-      ? createStudioMasterBus(offline, { connectToDestination: true, unityOut: true })
+      ? createStudioMasterBus(offline, { connectToDestination: true, unityOut: true, trimDb: this.masterTrimDb })
       : null;
     const destination: AudioNode = offlineMaster ? offlineMaster.sum : offline.destination;
 

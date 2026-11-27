@@ -78,6 +78,13 @@ try {
       return {frames:t.frames,peak,first,bpm:t.bpm};
     }
     const mix=await wav(await e.bounceArrangementWav(opts));
+    e.setMasterTrimDb(-6);
+    const trimmed=await wav(await e.bounceArrangementWav(opts));
+    const context=await e.ensureAudio();await context.resume();
+    await new Promise(r=>setTimeout(r,180));
+    const trimGain=e.getMasterBus().trim.gain.value;
+    const restoredTrim=e.exportProject().masterTrimDb;
+    e.setMasterTrimDb(0);
     const raw=await e.bounceTrackStemsWav(opts);
     const stems=await Promise.all(raw.map(async t=>({id:t.trackId,...await wav(t)})));
     const midi=e.exportMidiBytes();
@@ -88,11 +95,14 @@ try {
     e.setTrackSolo(d.id,true);
     const solo=(await e.bounceTrackStemsWav(opts)).map(t=>t.trackId);
     e.setTrackSolo(d.id,false);e.setTrackMute(d.id,false);
-    return {saved:true,restored:true,bpm:e.getBpm(),mix,stems,midiHeader,midiTracks,muted,solo,drumId:d.id};
+    return {saved:true,restored:true,bpm:e.getBpm(),mix,trimmed,trimGain,restoredTrim,stems,midiHeader,midiTracks,muted,solo,drumId:d.id};
   })()`);
   assert.equal(report.bpm,96);
   assert.equal(report.mix.frames,120000);
   assert(report.mix.peak>.0001);
+  assert(report.trimmed.peak/report.mix.peak>.47&&report.trimmed.peak/report.mix.peak<.54,JSON.stringify(report));
+  assert(Math.abs(report.trimGain-Math.pow(10,-6/20))<.01,JSON.stringify(report));
+  assert.equal(report.restoredTrim,-6);
   assert.equal(report.stems.length,3);
   for(const stem of report.stems){assert.equal(stem.frames,report.mix.frames);assert.equal(stem.bpm,96);assert(stem.peak>.0001);assert(stem.first>=0);}
   assert.equal(report.midiHeader,"MThd");assert.equal(report.midiTracks,4);

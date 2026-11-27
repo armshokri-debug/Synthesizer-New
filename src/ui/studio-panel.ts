@@ -705,7 +705,7 @@ function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEng
       <div class="st-mix-strip is-master">
         <div class="st-mix-top">
           <span class="st-mix-name">Master</span>
-          <span class="st-mix-sub">Out</span>
+          <span class="st-mix-sub" id="st-master-preclip" title="Recent pre-clip stereo sample peak">Out</span>
         </div>
         <div class="st-mix-fader-row">
           <div class="st-mix-meter is-master" aria-hidden="true">
@@ -716,6 +716,7 @@ function renderMixerHtml(tracks: readonly SY1TrackEngine[], focused: SY1TrackEng
           </div>
         </div>
         <div class="st-mix-db" id="st-master-db">${fmtDb(masterVol * masterVol)}</div>
+        <select class="st-select st-mix-ch-sel" id="st-master-trim" aria-label="Master pre-clip trim" title="Master pre-clip trim (dB)">${[...new Set([0,-3,-6,-9,-12,-18,-24,studioEngine.getMasterTrimDb()])].sort((a,b)=>b-a).map(db=>`<option value="${db}"${db===studioEngine.getMasterTrimDb()?" selected":""}>Trim ${db} dB</option>`).join("")}</select>
       </div>
     </div>`;
 }
@@ -1170,6 +1171,14 @@ export function renderStudioHtml(): string {
 
 function updateMetersDOM(zeroOut = false): void {
   if (cachedMeterEls.length === 0) return;
+  const clipLabel=document.getElementById('st-master-preclip');
+  if(clipLabel){
+    const peak=zeroOut?0:studioEngine.readMasterPreClipPeak();
+    const over=peak>=.98;
+    clipLabel.textContent=over?'OVER':'Out';
+    clipLabel.style.color=over?'#ef6a62':'';
+    clipLabel.title=peak>0?`Pre-clip: ${(20*Math.log10(peak)).toFixed(1)} dBFS (recent sample peak)`:'Recent pre-clip stereo sample peak';
+  }
   for (let i = 0; i < cachedMeterEls.length; i++) {
     const m = cachedMeterEls[i];
     let level = 0;
@@ -1531,6 +1540,7 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
       tr.projectName,
       String(tr.bpm),
       String(tr.bars),
+      String(studioEngine.getMasterTrimDb()),
       tr.loopEnabled ? "1" : "0",
       String(tr.loopStartBar),
       String(tr.loopEndBar),
@@ -2697,6 +2707,10 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
       return;
     }
 
+    if (el.id === "st-master-trim") {
+      studioEngine.setMasterTrimDb(Number(el.value));
+      return;
+    }
     if (el.id === "st-click-volume") {
       studioEngine.setRecordingSettings({clickVolume:Number(el.value)});
       return;
