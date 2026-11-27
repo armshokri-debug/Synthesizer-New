@@ -284,7 +284,7 @@ export class SY1StudioEngine {
   private finiteScoreExperiment = false;
   private preparingFiniteScores = false;
   private finiteScoreTracks = new Set<string>();
-  private finiteDrumCursors = new Map<string,{tick:number,revision:number}>();
+  private finiteDrumCursors = new Map<string,{tick:number,revision:number,origin:number,period:number}>();
   private finiteDrumStats = {queued:0,missed:0,maxQueued:0};
   getFiniteDrumDiagnostics(){return {...this.finiteDrumStats};}
   getFiniteDrumTrackIds():string[]{return [...this.finiteDrumCursors.keys()];}
@@ -1053,18 +1053,19 @@ export class SY1StudioEngine {
     this.finiteDrumCursors.clear();
     this.finiteDrumStats={queued:0,missed:0,maxQueued:0};
     const ctx=this.masterBus?.ctx;
-    if(this.finiteScoreExperiment&&!this.clockNowOverride&&!this.loopEnabled&&!this.recording&&
+    if(this.finiteScoreExperiment&&!this.clockNowOverride&&(!this.loopEnabled||this.getLoopStartTick()===0)&&!this.recording&&
       !this.preparingRecord&&!this.dispatchObserver&&countInSeconds===0&&this.playheadTick===0&&ctx){
       this.preparingFiniteScores=true;
-      const bpm=this.bpm,total=this.getTotalTicks();
+      const bpm=this.bpm,total=this.getTotalTicks(),repeat=this.loopEnabled;
+      const scoreTicks=repeat?this.getLoopEndTick():total;
       const startFrame=Math.ceil((now+.35)*ctx.sampleRate);
       const candidates=this.tracks.filter(t=>t.canUseFiniteScore());
       const snapshots=candidates.map(t=>({t,events:t.events,patch:JSON.stringify(t.patch)}));
       try{
-        const ready=await Promise.all(candidates.map(t=>t.prepareFiniteScore(startFrame,this.secondsPerTick(bpm)*ctx.sampleRate,total)));
+        const ready=await Promise.all(candidates.map(t=>t.prepareFiniteScore(startFrame,this.secondsPerTick(bpm)*ctx.sampleRate,scoreTicks,repeat)));
         now=this.nowAudioTime();
         if(epoch!==this.transportEpoch||this.playing){candidates.forEach(t=>t.cancelFiniteScore());return;}
-        const valid=!this.loopEnabled&&!this.recording&&!this.preparingRecord&&!this.dispatchObserver&&
+        const valid=this.loopEnabled===repeat&&(!repeat||(this.getLoopStartTick()===0&&this.getLoopEndTick()===scoreTicks))&&!this.recording&&!this.preparingRecord&&!this.dispatchObserver&&
           this.bpm===bpm&&this.playheadTick===0&&this.getTotalTicks()===total&&startFrame/ctx.sampleRate-now>.06;
         for(let i=0;i<candidates.length;i++){
           const t=candidates[i],snap=snapshots[i];
@@ -1073,7 +1074,7 @@ export class SY1StudioEngine {
         }
         if(valid){
           for(const t of this.tracks){
-            if(this.canBufferFiniteDrum(t))this.finiteDrumCursors.set(t.id,{tick:0,revision:t.getChangeRevision()});
+            if(this.canBufferFiniteDrum(t,repeat?scoreTicks:0))this.finiteDrumCursors.set(t.id,{tick:0,revision:t.getChangeRevision(),origin:startFrame/ctx.sampleRate,period:repeat?scoreTicks:0});
           }
         }
         if(this.finiteScoreTracks.size||this.finiteDrumCursors.size)startLead=startFrame/ctx.sampleRate-now;
@@ -1472,7 +1473,7 @@ export class SY1StudioEngine {
    * randomization, effects and native start times. No rendered samples/cache.
    * The bounded native queue survives short UI stalls, but is not an
    * unbounded audio-thread drum synthesizer. Dense scores fall back safely. */
-  private canBufferFiniteDrum(track:SY1TrackEngine):boolean {
+  private canBufferFiniteDrum(track:SY1TrackEngine,period=0):boolean {
     if(!track.isDrumTrack()||!track.isAudioAttached()||!track.events.length||this.liveDrums.has(track.id))return false;
     track.ensureEventsSorted();
     const span=DRUM_AHEAD_SEC*this.ticksPerSecond();
@@ -1481,10 +1482,13 @@ export class SY1StudioEngine {
     for(const ev of track.events){
       if(ev.type!=="noteOn"&&ev.type!=="noteOff")return false;
       if(ev.type!=="noteOn")continue;
+      if(period&&ev.tick>=period)continue;
       hits.push(ev.tick);
       while(first<hits.length&&ev.tick-hits[first]>=span)first++;
       if(hits.length-first>DRUM_MAX_WINDOW_HITS)return false;
     }
+    // Conservative density bound across repeated loop seams.
+    if(period&&hits.length*(Math.ceil(span/period)+1)>DRUM_MAX_WINDOW_HITS)return false;
     return hits.length>0;
   }
   private refillFiniteDrums(now:number):void {
@@ -1492,23 +1496,41 @@ export class SY1StudioEngine {
     const tps=this.ticksPerSecond(this.anchorBpm);
     const secPerTick=1/tps;
     const total=this.getTotalTicks();
-    const current=Math.min(total,Math.max(this.anchorTick,this.anchorTick+(now-this.anchorAudioTime)*tps));
-    const end=Math.min(total,Math.max(this.anchorTick,this.anchorTick+(now+DRUM_AHEAD_SEC-this.anchorAudioTime)*tps));
     for(const [id,state] of this.finiteDrumCursors){
       const track=this.getTrack(id);
       if(!track)continue;
-      if(state.tick<current){
-        track.forEachEventInRange(state.tick,current,ev=>{if(ev.type==="noteOn")this.finiteDrumStats.missed++;});
-        state.tick=current;
-      }
-      if(state.tick>=total||(state.tick-current)/tps>=DRUM_REFILL_SEC||end<=state.tick)continue;
-      track.forEachEventInRange(state.tick,end,ev=>{
-        if(ev.type!=="noteOn")return;
-        const at=this.anchorAudioTime+(ev.tick-this.anchorTick)*secPerTick;
-        this.dispatchTransportDrum(track,ev,at);
-        this.finiteDrumStats.queued++;
-      });
-      state.tick=end;
+      const limit=state.period?Infinity:total;
+      const current=Math.min(limit,Math.max(0,(now-state.origin)*tps));
+      const end=Math.min(limit,Math.max(0,(now+DRUM_AHEAD_SEC-state.origin)*tps));
+      const visit=(from:number,to:number,emit:boolean)=>{
+        let cursor=from;
+        // A long blocked/suspended host must not scan arbitrarily many cycles.
+        if(state.period&&to-from>state.period*4){
+          const cycles=Math.floor((to-from)/state.period)-1;
+          if(!emit){
+            let count=0;
+            track.forEachEventInRange(0,state.period,ev=>{if(ev.type==="noteOn")count++;});
+            this.finiteDrumStats.missed+=cycles*count;
+            cursor+=cycles*state.period;
+          }
+        }
+        while(cursor<to){
+          const cycle=state.period?Math.floor(cursor/state.period)*state.period:0;
+          const stop=state.period?Math.min(to,cycle+state.period):to;
+          if(stop<=cursor)break;
+          track.forEachEventInRange(cursor-cycle,stop-cycle,ev=>{
+            if(ev.type!=="noteOn")return;
+            if(!emit){this.finiteDrumStats.missed++;return;}
+            const at=state.origin+(cycle+ev.tick)*secPerTick;
+            this.dispatchTransportDrum(track,ev,at);
+            this.finiteDrumStats.queued++;
+          });
+          cursor=stop;
+        }
+      };
+      if(state.tick<current){visit(state.tick,current,false);state.tick=current;}
+      if(state.tick>=limit||(state.tick-current)/tps>=DRUM_REFILL_SEC||end<=state.tick)continue;
+      visit(state.tick,end,true);state.tick=end;
     }
     this.finiteDrumStats.maxQueued=Math.max(this.finiteDrumStats.maxQueued,this.scheduledTransportDrums.length);
   }

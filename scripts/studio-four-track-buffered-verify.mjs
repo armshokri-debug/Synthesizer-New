@@ -47,7 +47,22 @@ try{
     e.replaceTrackNotes(drum.id,[{midi:36,startTick:1920,endTick:2000,velocity:.7}]);
     const afterEdit=e.getFiniteScoreTrackIds(),afterDrumEdit=e.getFiniteDrumTrackIds();
     await e.stop();
-    return {initial,initialDrums,afterEdit,afterDrumEdit,afterStop:e.getFiniteScoreTrackIds(),afterDrumStop:e.getFiniteDrumTrackIds(),windows,drumStats,ids:[a.id,b.id,c.id],drum:drum.id};
+    const afterStop=e.getFiniteScoreTrackIds(),afterDrumStop=e.getFiniteDrumTrackIds();
+    e.setLoopEnabled(true);e.setLoopRange(1,1);e.setBpm(240);
+    for(const t of [drum,a,b,c]){
+      const events=[];for(let i=0;i<8;i++){const midi=t===drum?36:60+i%3;events.push({type:"noteOn",tick:i*240,midi,velocity:.7},{type:"noteOff",tick:i*240+72,midi});}
+      t.setEvents(events);
+    }
+    records.forEach(r=>r.length=0);
+    await e.play();
+    const loopTracks=e.getFiniteScoreTrackIds(),loopDrums=e.getFiniteDrumTrackIds(),loopAnchor=e.anchorAudioTime;
+    await delay(Math.max(0,(loopAnchor+.6-ctx.currentTime)*1000));
+    const loopWall=performance.now();while(performance.now()-loopWall<1000){}
+    await delay(100);
+    const loopWindows=records.map(r=>[.75,1,1.25,1.5].map(t=>peak(r,loopAnchor+t+.008,loopAnchor+t+.035)));
+    const loopStats=e.getFiniteDrumDiagnostics();
+    await e.stop();
+    return {initial,initialDrums,afterEdit,afterDrumEdit,afterStop,afterDrumStop,windows,drumStats,ids:[a.id,b.id,c.id],drum:drum.id,loopTracks,loopDrums,loopWindows,loopStats};
   }finally{await e.stop();probes.forEach((p,i)=>{taps[i].disconnect(p);p.disconnect();});sink.disconnect();}
  })()`);
  assert.deepEqual(report.initial,report.ids,JSON.stringify(report));
@@ -56,5 +71,9 @@ try{
  assert.equal(report.drumStats.missed,0,JSON.stringify(report));
  assert.deepEqual(report.afterEdit,report.ids);assert.deepEqual(report.afterDrumEdit,[]);
  assert.deepEqual(report.afterStop,[]);assert.deepEqual(report.afterDrumStop,[]);
+ assert.deepEqual(report.loopTracks,report.ids,JSON.stringify(report));
+ assert.deepEqual(report.loopDrums,[report.drum],JSON.stringify(report));
+ assert(report.loopWindows.every(w=>w.every(p=>p>.001)),JSON.stringify(report));
+ assert.equal(report.loopStats.missed,0,JSON.stringify(report));
  console.log("PASS FOUR_TRACK_BUFFERED_STALL_PCM",JSON.stringify(report));
 }finally{cdp?.close();chrome.kill();chrome.once("exit",()=>{try{rmSync(profile,{recursive:true,force:true});}catch{}});}

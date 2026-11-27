@@ -396,7 +396,7 @@ export class SY1TrackEngine {
 
   isFiniteScoreArmed(): boolean { return this.scoreArmed; }
 
-  async prepareFiniteScore(startFrame:number,framesPerTick:number,totalTicks:number):Promise<boolean> {
+  async prepareFiniteScore(startFrame:number,framesPerTick:number,totalTicks:number,repeat=false):Promise<boolean> {
     if(!this.canUseFiniteScore()||this.scorePrepared)return false;
     const node=this.workletNode!;
     this.ensureEventsSorted();
@@ -411,7 +411,7 @@ export class SY1TrackEngine {
       const listener=(ev:MessageEvent)=>{if(ev.data?.t==="score-ready"&&ev.data.generation===gen)done(!!ev.data.accepted);};
       timer=setTimeout(()=>done(false),120);
       node.port.addEventListener("message",listener);node.port.start();
-      try{node.port.postMessage({t:"score-prepare",generation:gen,data:compiled.data},[compiled.data.buffer]);}
+      try{node.port.postMessage({t:"score-prepare",generation:gen,data:compiled.data,...(repeat?{repeat:{origin:startFrame,period:totalTicks*framesPerTick}}:{})},[compiled.data.buffer]);}
       catch{done(false);}
     });
     if(!accepted||this.workletNode!==node||this.scorePrepared!==gen||!this.canUseFiniteScore()){

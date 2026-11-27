@@ -29,3 +29,6 @@ In the opt-in finite-arrangement mode, eligible note-only drum arrangements reta
 
 ## Checkpoint 9 — explicit pre-clip headroom
 Separate project-local pre-clip trim (0 to -24 dB) from monitor output volume. Legacy sessions remain unity and no automatic gain or preset modifications are applied. Live mix capture and full mix bounce use the same trim; raw stems intentionally do not. Stereo recent sample-peak warning precedes the clipper, not a true-peak/continuous overload measurement. Browser regression checks -6 dB mix attenuation, live gain and persistence. Existing experimental transport still opt-in; full loop/recording/engine support and V10 reconstruction remain unresolved.
+
+## Checkpoint 10 — repeating audio-clock score
+Opt-in note-only HQ scores can repeat on the render clock for loops starting at bar 1, with fractional-period rounding from the original anchor and independent voice IDs each cycle. Native drum buffering uses an independent absolute cursor across loop seams. Added 1000-cycle drift/identity regression and four-track PCM stall across a loop seam. Loops starting later, recording, controller/mono semantics and non-HQ scores remain on the legacy path. No production activation.

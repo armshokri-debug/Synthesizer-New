@@ -77,7 +77,7 @@ class SY1Processor extends AudioWorkletProcessor {
       case "glide": this.enqueue(4, m); break;
       case "score-prepare":
       case "score-load": {
-        const accepted = this.score.load(m.generation,m.data,currentFrame,m.t==="score-load");
+        const accepted = this.score.load(m.generation,m.data,currentFrame,m.t==="score-load",m.repeat);
         this.port.postMessage({t:"score-ready",generation:m.generation,accepted});
         break;
       }
