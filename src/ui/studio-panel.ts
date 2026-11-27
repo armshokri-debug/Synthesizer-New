@@ -1186,6 +1186,7 @@ function updateMetersDOM(zeroOut = false): void {
   }
 }
 
+let lastMeterUpdateAt = -Infinity;
 function updatePlayheadOnly(): void {
   const container = document.getElementById("sy1-studio");
   if (!container || container.hidden) return;
@@ -1213,7 +1214,12 @@ function updatePlayheadOnly(): void {
     cachedClockEl.textContent = clockStr;
     cachedClockEl.classList.toggle("is-countin", !!countInBeat);
   }
-  updateMetersDOM(!studioEngine.isPlaying());
+  // Meters need not run at the display refresh rate (especially 120 Hz iPads).
+  const now = performance.now();
+  if (!studioEngine.isPlaying() || now - lastMeterUpdateAt >= 50) {
+    lastMeterUpdateAt = now;
+    updateMetersDOM(!studioEngine.isPlaying());
+  }
 }
 
 function startPlayheadLoop(): void {
@@ -1583,10 +1589,12 @@ export function initStudioPanel(opts: { onClose: () => void; instrumentHeader?:(
     if (!studioEngine.isActive()) return;
     if (renderQueued) return;
     renderQueued = true;
-    queueMicrotask(() => {
+    const render = () => {
       renderQueued = false;
-      renderStudioPanel();
-    });
+      if (studioEngine.isActive()) renderStudioPanel();
+    };
+    if (studioEngine.isPlaying()) requestAnimationFrame(render);
+    else queueMicrotask(render);
   };
 
   bindPianoRollEvents(container, requestRender, message => setStatus(message, "error"));

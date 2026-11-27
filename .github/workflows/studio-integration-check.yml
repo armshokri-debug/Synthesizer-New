@@ -1,5 +1,7 @@
 name: Studio integration checks
 on:
+  push:
+    branches: [audit/audio-stability-foundation]
   pull_request:
     branches: [main]
 permissions:

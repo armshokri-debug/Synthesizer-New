@@ -277,6 +277,12 @@ export class SY1StudioEngine {
   private scheduledTransportDrums: {track:SY1TrackEngine;tick:number;midi:number;velocity:number;at:number;handle?:ReturnType<SY1TrackEngine['scheduleDrumNote']>;capture?:SY1StudioEngine['pendingDrumCapture'][number]}[]=[];
   private recordedDrumHits = new Set<string>();
   private liveArpTimer: ReturnType<typeof setInterval> | null = null;
+  // Per-session transport telemetry; bounded scalar counters, no per-tick logs.
+  private schedulerStats = { calls: 0, underruns: 0, severeStalls: 0, maxLateMs: 0, maxWorkMs: 0, skippedNoteOns: 0, seamRecoveries: 0 };
+  getSchedulerDiagnostics() { return { ...this.schedulerStats }; }
+  resetSchedulerDiagnostics(): void {
+    this.schedulerStats = { calls: 0, underruns: 0, severeStalls: 0, maxLateMs: 0, maxWorkMs: 0, skippedNoteOns: 0, seamRecoveries: 0 };
+  }
   private cursorAudioTime = 0;
   private cursorTick = 0;
   private playbackOpenNotes = new Map<string, Set<number>>();
@@ -1095,7 +1101,9 @@ export class SY1StudioEngine {
     // Preview and arrangement are mutually exclusive modes of this one scheduler.
     this.schedulerTimer = setInterval(() => {
       if (!this.playing && !this.drumPreview) return;
+      const started = performance.now();
       this.stepScheduler(this.nowAudioTime());
+      this.schedulerStats.maxWorkMs = Math.max(this.schedulerStats.maxWorkMs, performance.now() - started);
     }, SCHEDULER_INTERVAL_MS);
   }
 
@@ -1114,12 +1122,37 @@ export class SY1StudioEngine {
     const windowEnd = nowAudioTime + LOOKAHEAD_SEC;
     if (this.cursorAudioTime > windowEnd) return;
 
-    // Stall / background sleep recovery guard: if the audio clock jumped far ahead of the scheduler
-    // cursor (e.g. main-thread hitch or iPad Safari returning from background), release open notes and
-    // re-anchor cleanly at `nowAudioTime` instead of burst-firing dozens of stale past notes.
-    if (nowAudioTime - this.cursorAudioTime > SCHEDULER_STALL_THRESHOLD_SEC) {
-      this.releasePlaybackNotes(nowAudioTime);
+    this.schedulerStats.calls++;
+    const late = Math.max(0, nowAudioTime - this.cursorAudioTime);
+    if (late > 0.005) {
+      this.schedulerStats.underruns++;
+      this.schedulerStats.maxLateMs = Math.max(this.schedulerStats.maxLateMs, late * 1000);
+    }
+    if (late > SCHEDULER_STALL_THRESHOLD_SEC) {
+      this.schedulerStats.severeStalls++;
       const resyncTick = this.getCurrentTick(nowAudioTime);
+      const elapsedTicks = late * this.ticksPerSecond(this.anchorBpm);
+      const samePass = !this.pendingLoopWrap &&
+        resyncTick >= this.cursorTick &&
+        this.cursorTick + elapsedTicks < (this.loopEnabled ? this.getLoopEndTick() : this.getTotalTicks());
+      if (samePass) {
+        // Events already scheduled on the audio clock remain intact. Only
+        // reconcile missed releases/controllers; never replay stale attacks.
+        for (const track of this.tracks) {
+          let open = this.playbackOpenNotes.get(track.id);
+          if (!open) this.playbackOpenNotes.set(track.id, open = new Set<number>());
+          const held = open;
+          track.forEachEventInRange(this.cursorTick, resyncTick, ev => {
+            if (ev.type === "noteOn") { this.schedulerStats.skippedNoteOns++; return; }
+            if (ev.type === "noteOff" && !held.has(ev.midi)) return;
+            this.dispatchEventToTrack(track, ev, nowAudioTime, held);
+          });
+        }
+      } else {
+        // An uncertain loop seam or arrangement end retains safe release.
+        this.schedulerStats.seamRecoveries++;
+        this.releasePlaybackNotes(nowAudioTime);
+      }
       for (const sequence of this.liveDrums.values()) sequence.reset();
       this.anchorAudioTime = nowAudioTime;
       this.anchorTick = resyncTick;

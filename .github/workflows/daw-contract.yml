@@ -1,5 +1,7 @@
 name: DAW architecture contract
 on:
+  push:
+    branches: [audit/audio-stability-foundation]
   pull_request:
     branches: [main]
     paths:
