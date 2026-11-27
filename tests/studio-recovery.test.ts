@@ -58,7 +58,7 @@ describe("Studio recovery — heterogeneous instruments", () => {
 
  test("master pre-clip trim persists, clamps and preserves legacy unity gain", async()=>{
  const e=new SY1StudioEngine({isolatedTempo:true});const old=e.exportProject();
- expect(e.getMasterTrimDb()).toBe(0);expect(old.masterTrimDb).toBeUndefined();
+ expect(e.getMasterTrimDb()).toBe(0);expect(old.masterTrimDb).toBe(undefined);
  e.setMasterTrimDb(-6);const saved=e.exportProject();expect(saved.masterTrimDb).toBe(-6);
  await e.loadProject(old);expect(e.getMasterTrimDb()).toBe(0);
  await e.loadProject(saved);expect(e.getMasterTrimDb()).toBe(-6);
