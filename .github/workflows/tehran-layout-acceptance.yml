@@ -1,0 +1,36 @@
+name: Tehran performance layout acceptance
+on:
+  push:
+    branches: [audit/tehran-performance-layout]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --package-lock=false playwright-core@1.51.1
+      - name: Syntax and baseline
+        run: |
+          node --check assets/index-tehran-performance-v1.js
+          git show 6430113945612f9b22d226bae2ad7ba3417af00a:index.html > qa-baseline.html
+      - name: Browser acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHROME_BIN="$(command -v google-chrome || command -v chromium)"
+          python3 -m http.server 4177 --bind 127.0.0.1 >/tmp/sy1-web.log 2>&1 &
+          trap 'kill $! 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:4177/ >/dev/null && break; sleep 1; done
+          node scripts/tehran-layout-acceptance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tehran-layout-screenshots
+          path: qa-screenshots
