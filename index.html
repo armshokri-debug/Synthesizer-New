@@ -233,6 +233,35 @@ html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data
 html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] #machine-btn[aria-expanded=true]::after{transform:rotate(180deg)}
 html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] #machine-btn:focus-visible{outline:2px solid #ffe0a5;outline-offset:3px;border-radius:5px}
 </style>
+    <style id="tehran-layout-v10">
+/* V10: anchored MIDI settings and optional half-height performance keyboard. */
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-toolbar{position:relative;overflow:visible;padding-right:100px;min-height:38px;box-sizing:border-box;z-index:5}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-toolbar>.st-pr-tb-group:last-child{position:absolute;right:5px;top:3px;display:block;flex:none;width:88px;margin:0;padding:0}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-edit-options{position:static;width:100%;max-width:none}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-edit-options>summary{display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:88px;min-height:32px;height:32px;padding:0 6px;white-space:nowrap;font-size:11px;background:#20232a}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-edit-options[open]>summary{border-color:#d5a25e;color:#ffdb9b;background:#30281f}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-edit-options:not([open])>.st-pr-option-body{display:none}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-toolbar>.st-pr-tb-group:last-child,html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-edit-options{position:static}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-edit-options>summary{position:absolute;right:5px;top:3px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-toolbar>.st-pr-tb-group:last-child{width:0;height:0;flex:0 0 0;margin:0;padding:0;overflow:visible}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-edit-options[open]>.st-pr-option-body{position:absolute;top:39px;right:5px;width:min(486px,calc(100% - 10px));max-width:calc(100% - 10px);box-sizing:border-box;display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:6px;padding:9px;border:1px solid #957144;border-radius:7px;background:#202329;box-shadow:0 7px 18px #000b;z-index:8}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-option-body .st-pr-btn{min-height:32px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-option-body .st-pr-vel-ctrl{flex-wrap:wrap;max-width:100%}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-main{position:relative;z-index:0}
+.sy1-shell{--tehran-full-keys-h:var(--keys-h)}
+#tehran-keys-size{display:none!important}
+html:not(.is-plugin) .sy1-shell:has(>#sy1-panel:not([hidden]) .synth-panel[data-machine=sy1]:is([data-tehran-view=sound],[data-tehran-view=midi])) #tehran-keys-size{display:inline-flex!important;flex:0 0 auto;align-items:center;gap:6px;justify-content:center;min-height:36px;white-space:nowrap;padding:0 9px;font-size:11px;letter-spacing:0;background:linear-gradient(#303b49,#1f2833);color:#e7effa;border:1px solid #7891aa;border-radius:6px;box-shadow:inset 0 1px #fff2}
+html:not(.is-plugin) .sy1-shell:has(>#sy1-panel:not([hidden]) .synth-panel[data-machine=sy1]:is([data-tehran-view=sound],[data-tehran-view=midi])) #tehran-keys-size[aria-pressed=true]{color:#142539;background:linear-gradient(#bbd6ee,#7298bb);border-color:#c1def7}
+html:not(.is-plugin) .sy1-shell:has(>#sy1-panel:not([hidden]) .synth-panel[data-machine=sy1]:is([data-tehran-view=sound],[data-tehran-view=midi]))[data-tehran-compact=true] .kb-area{--keys-h:calc(var(--tehran-full-keys-h) * .5)}
+html:not(.is-plugin) .sy1-shell:has(>#sy1-panel:not([hidden]) .synth-panel[data-machine=sy1]:is([data-tehran-view=sound],[data-tehran-view=midi])) #tehran-keys-size svg{width:14px;height:14px;flex:none}
+html:not(.is-plugin) .sy1-shell:has(>#sy1-panel:not([hidden]) .synth-panel[data-machine=sy1]:is([data-tehran-view=sound],[data-tehran-view=midi])) .kb-bar .kb-machine-badge{min-width:0}
+@media(max-width:759px),(orientation:portrait){
+html:not(.is-plugin) .sy1-shell:has(>#sy1-panel:not([hidden]) .synth-panel[data-machine=sy1]:is([data-tehran-view=sound],[data-tehran-view=midi])) #tehran-keys-size{padding:0 5px;font-size:10px;gap:3px}
+html:not(.is-plugin) .sy1-shell:has(>#sy1-panel:not([hidden]) .synth-panel[data-machine=sy1]:is([data-tehran-view=sound],[data-tehran-view=midi])) .kb-bar .kb-machine-role,html:not(.is-plugin) .sy1-shell:has(>#sy1-panel:not([hidden]) .synth-panel[data-machine=sy1]:is([data-tehran-view=sound],[data-tehran-view=midi])) .kb-bar .kb-machine-sep{display:none}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-toolbar{padding-right:82px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-midi .st-pr-edit-options>summary{width:70px}
+}
+</style>
   </head>
   <body>
     <div class="sy1-shell">
@@ -254,6 +283,7 @@ html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data
             <div class="kb-scale-notes" id="kb-scale-notes" aria-live="polite"></div>
             <div class="kb-mini" id="kb-mini" role="slider" tabindex="0" aria-label="Keyboard range" aria-valuemin="24" aria-valuemax="84"><span class="kb-mini-keys" aria-hidden="true"></span><span class="kb-mini-win" aria-hidden="true"></span></div>
           </div>
+          <button type="button" id="tehran-keys-size" class="kb-btn" aria-pressed="false" aria-label="Toggle compact keyboard" title="Toggle half-height keyboard for more editing space"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="1.5" y="4.5" width="13" height="8" rx="1.5"/><path d="M5 4.5v8M8 4.5v8M11 4.5v8M5 1.5h6M8 1.5v2"/></svg><span>Keys ½</span></button>
           <div class="kb-machine-badge" id="kb-machine-badge" data-machine="sy1" aria-live="polite">
             <span class="kb-machine-emblem" aria-hidden="true"></span>
             <span class="kb-machine-name" id="kb-machine-name">SY-1</span>
@@ -302,6 +332,9 @@ html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data
  document.addEventListener('sy1-view-change',schedule);
  schedule();
 })();
+</script>
+  <script id="tehran-keys-v10">
+(()=>{const b=document.getElementById('tehran-keys-size'),shell=document.querySelector('.sy1-shell');if(!b||!shell)return;b.addEventListener('click',()=>{const compact=shell.dataset.tehranCompact!=='true';shell.dataset.tehranCompact=String(compact);b.setAttribute('aria-pressed',String(compact));b.querySelector('span').textContent=compact?'Keys Full':'Keys ½';});})();
 </script>
   </body>
 </html>
