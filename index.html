@@ -1767,6 +1767,10 @@ html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=isfahan][data-tehran-v
 }
 
 </style>
+<style id="isfahan-panorama-v15">
+/* Preserve the original image aspect ratio; frame the monuments rather than the upper sky. */
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=isfahan][data-tehran-view=main][data-tehran-view]::before{background-position:center 48%;background-size:auto,cover}
+</style>
 </head>
   <body>
     <div class="sy1-shell">
