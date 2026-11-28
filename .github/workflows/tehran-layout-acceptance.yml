@@ -21,6 +21,7 @@ jobs:
           node --check assets/index-tehran-performance-v1.js
           node --check assets/index-tehran-performance-v7.js
           node --check assets/index-family-performance-v11.js
+          node --check assets/index-family-performance-v12.js
           git show 6430113945612f9b22d226bae2ad7ba3417af00a:index.html > qa-baseline.html
       - name: Browser acceptance
         shell: bash
@@ -32,6 +33,7 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:4177/ >/dev/null && break; sleep 1; done
           node scripts/tehran-layout-acceptance.mjs
           TEST_INSTRUMENT=yazd node scripts/tehran-layout-acceptance.mjs
+          TEST_INSTRUMENT=tabriz node scripts/tehran-layout-acceptance.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

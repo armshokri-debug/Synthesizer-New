@@ -5,7 +5,7 @@ const browser=await chromium.launch({executablePath:process.env.CHROME_BIN,args:
 await mkdir("qa-screenshots",{recursive:true});
 const errors=[];
 const instrument=process.env.TEST_INSTRUMENT||"sy1";
-const pages=instrument==="yazd"?["osc","filter","motion","space"]:["osc","filter","amp","fx"];
+const pages=instrument==="tabriz"?["osc","filter","voice","fx"]:instrument==="yazd"?["osc","filter","motion","space"]:["osc","filter","amp","fx"];
 const dimensions=[[1024,768],[1080,810],[1180,820],[1366,1024],[1024,650],[1080,680],[1080,700]];
 const measure=()=>{const p=document.querySelector("#sy1-panel .synth-panel"),g=p.querySelector(".synth-sections"),k=document.querySelector(".kb-main"),kr=k.getBoundingClientRect(),gr=g.getBoundingClientRect();const vis=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=="hidden";const rect=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,bottom:r.bottom,right:r.right}};return {page:p.dataset.page,view:p.dataset.tehranView,keyboard:rect(k),panel:rect(p),grid:rect(g),gridScroll:[g.scrollWidth,g.clientWidth,g.scrollHeight,g.clientHeight],body:[document.documentElement.scrollWidth,document.documentElement.scrollHeight,innerWidth,innerHeight],sections:[...g.querySelectorAll(".synth-sec")].filter(vis).map(s=>({name:s.querySelector("h4").textContent,box:rect(s),scroll:[s.scrollWidth,s.clientWidth,s.scrollHeight,s.clientHeight]})),knobs:[...g.querySelectorAll(".sk[role=slider]")].map(e=>({id:e.dataset.param||e.dataset.stParam,visible:vis(e),box:rect(e),dial:rect(e.querySelector(".sk-dial"))})),overflow:[...g.querySelectorAll(".synth-sec")].filter(vis).flatMap(s=>{const r=s.getBoundingClientRect();return [...s.querySelectorAll(".sk-dial,.sk-label,.sk-val,.synth-choice-btn,.sk-caption,h4")].filter(vis).filter(e=>{const q=e.getBoundingClientRect();return q.x<r.x-2||q.right>r.right+2||q.y<r.y-2||q.bottom>r.bottom+2}).map(e=>({section:s.querySelector("h4").textContent,label:e.textContent,box:rect(e),sectionBox:rect(s)}))})}};
 function sameKeys(a,b,label){assert(Math.abs(a.h-b.h)<=1,label+" keyboard height changed: "+JSON.stringify([a,b]));assert(Math.abs(a.y-b.y)<=2,label+" keyboard position changed: "+JSON.stringify([a,b]));assert(Math.abs(a.w-b.w)<=1,label+" keyboard width changed")}
@@ -26,8 +26,8 @@ for(const [w,h] of dimensions){
  await p.goto("http://127.0.0.1:4177/qa-baseline.html");await p.waitForFunction(()=>window.SY1&&window.SY1_STUDIO);
  await p.evaluate(instrument=>{window.SY1.setMachine(instrument)},instrument);await p.locator('[data-action="synth-page"][data-page="all"]').evaluate(e=>e.click());
  const baseline=await p.evaluate(measure);
- await p.goto("http://127.0.0.1:4177/"+(instrument==="yazd"?"?instrument=yazd":""));await p.waitForFunction(()=>window.SY1&&window.SY1_STUDIO);
- if(instrument==="yazd")await p.waitForSelector('#sy1-panel .synth-panel[data-machine=yazd]');else await p.evaluate(instrument=>window.SY1.setMachine(instrument),instrument);
+ await p.goto("http://127.0.0.1:4177/"+(instrument==="sy1"?"":"?instrument="+instrument));await p.waitForFunction(()=>window.SY1&&window.SY1_STUDIO);
+ if(instrument!=="sy1")await p.waitForSelector('#sy1-panel .synth-panel[data-machine='+instrument+']');else await p.evaluate(instrument=>window.SY1.setMachine(instrument),instrument);
  const home=await p.evaluate(measure);assert(!(await p.locator("#tehran-keys-size").isVisible()));assert.equal(home.view,"main");assert.equal(home.knobs.filter(x=>x.visible).length,0);
  sameKeys(baseline.keyboard,home.keyboard,w+"x"+h+" home");checkNav(await p.evaluate(navCheck),"Main");
  await p.waitForFunction(()=>document.querySelector(".sy1-shell").dataset.tehranDocked==="true");
