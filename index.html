@@ -90,6 +90,41 @@ html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=
 html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound]:not([data-page=all]) .synth-sec.is-on-page>.sk-row>.sk>.sk-val{max-width:100%;min-height:0;font-size:10px;line-height:1.1;white-space:normal;overflow-wrap:anywhere;letter-spacing:0;margin:0}
 }
 </style>
+    <style id="tehran-layout-v6">
+/* Tehran V6: clearly separate editor navigation from synthesis parameter families. */
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-actions{gap:10px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;min-width:96px;min-height:38px;padding:0 10px;border-radius:10px;font-size:12px;font-weight:750;letter-spacing:.02em;text-shadow:none;box-shadow:inset 0 1px #ffffff24,0 2px 4px #0007}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn[data-tehran-action=sound]{background:linear-gradient(180deg,#455c72,#24384b);border-color:#7898b4;color:#edf6ff}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn[data-tehran-action=sound][aria-pressed=true]{background:linear-gradient(180deg,#b4d2ed,#739ac0);border-color:#c2dff9;color:#102439}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn[data-tehran-action=midi]{background:linear-gradient(180deg,#27665e,#183f3b);border-color:#64a79b;color:#e6fff7}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn[data-tehran-action=midi][aria-expanded=true]{background:linear-gradient(180deg,#9bdeca,#54ad98);border-color:#b2f2df;color:#10382f}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn::before{content:"";display:block;flex:0 0 12px;width:12px;height:12px;opacity:.95;background-repeat:no-repeat;background-position:center;background-size:contain}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn[data-tehran-action=sound]::before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23d9edff' stroke-width='1.5' stroke-linecap='round'%3E%3Cpath d='M1 8h2l2-5 3 10 3-10 2 5h2'/%3E%3C/svg%3E")}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn[data-tehran-action=midi]::before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23d8fff0' stroke-width='1.5' stroke-linecap='round'%3E%3Crect x='1.5' y='2' width='13' height='12' rx='2'/%3E%3Cpath d='M5 2v12M9 2v12M12 2v12M5 7h4'/%3E%3C/svg%3E")}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn:is([aria-pressed=true],[aria-expanded=true])::before{filter:brightness(.28)}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-tabs{box-sizing:border-box;display:flex;flex-wrap:nowrap;gap:4px;padding:3px;border:1px solid #5d4935;border-radius:7px;background:#141314;justify-content:center;align-items:center;min-width:0}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-tabs .synth-tab{flex:0 1 auto;width:auto;min-width:44px;min-height:32px;height:32px;padding:0 10px;font-size:11px;font-weight:650;line-height:1;white-space:nowrap;border-radius:4px;background:linear-gradient(#30271e,#1d1915);border:1px solid #675039;color:#eadbc6;box-shadow:none;text-shadow:none}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-tabs .synth-tab:is(.active,.is-active){background:linear-gradient(#ffdb9b,#d9a04c);border-color:#f2c67d;color:#26190c}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .tehran-actions{gap:10px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=midi] .tehran-actions{gap:10px}
+@media(orientation:landscape) and (min-width:760px){
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-top{padding-right:238px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .tehran-actions{gap:10px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-subbar{column-gap:12px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-tabs{width:max-content;max-width:100%;justify-self:center}
+}
+@media(orientation:landscape) and (min-width:1000px){
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-subbar{grid-template-columns:minmax(170px,1fr) auto auto;grid-template-areas:"preset tabs actions";column-gap:14px;align-items:center}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-preset-nav{max-width:260px}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-tabs{justify-self:end;margin:0}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .tehran-actions{border-left:1px solid #6a5035;padding-left:12px;margin-left:0}
+}
+@media(max-width:759px),(orientation:portrait){
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-tabs{width:100%;overflow-x:auto;justify-content:flex-start}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=sound] .synth-tabs .synth-tab{flex:0 0 auto}
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-edit-btn{min-width:84px;padding:0 7px}
+}
+</style>
   </head>
   <body>
     <div class="sy1-shell">

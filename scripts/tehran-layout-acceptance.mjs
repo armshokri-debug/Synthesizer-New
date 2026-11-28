@@ -10,6 +10,8 @@ function sameKeys(a,b,label){assert(Math.abs(a.h-b.h)<=1,label+" keyboard height
 function fit(m,label){assert(m.gridScroll[0]<=m.gridScroll[1]+2&&m.gridScroll[2]<=m.gridScroll[3]+2,label+" sections overflow "+JSON.stringify(m.gridScroll));assert(m.overflow.length===0,label+" controls outside sections: "+JSON.stringify(m.overflow));assert(m.body[0]<=m.body[2]+2&&m.body[1]<=m.body[3]+2,label+" page overflow "+JSON.stringify(m.body));assert(m.keyboard.bottom<=m.body[3]+2,label+" keyboard outside viewport")}
 const inspectMidi=()=>{const p=document.querySelector('#sy1-panel .synth-panel[data-tehran-view=midi]');const rect=e=>e.getBoundingClientRect();const area=rect(p),m=rect(p.querySelector('.tehran-midi')),grid=rect(p.querySelector('.st-pr-body-scroll')),actions=rect(p.querySelector('.tehran-actions'));return {topHidden:getComputedStyle(p.querySelector('.synth-top')).display==='none',presetHidden:getComputedStyle(p.querySelector('.synth-preset-nav')).display==='none',actions:actions.height,topGap:m.top-area.top,bottomGap:area.bottom-m.bottom,gridHeight:grid.height,midiHeight:m.height,panelHeight:area.height}};
 const strictReadouts=()=>{const panel=document.querySelector('#sy1-panel .synth-panel[data-tehran-view=sound]');const kb=document.querySelector('.kb-bar').getBoundingClientRect();return [...panel.querySelectorAll('.synth-sec')].filter(e=>e.getClientRects().length).flatMap(sec=>{const r=sec.getBoundingClientRect();return [...sec.querySelectorAll('.sk-label,.sk-val')].filter(e=>e.getClientRects().length).filter(e=>{const q=e.getBoundingClientRect();return q.top<r.top||q.bottom>r.bottom||q.left<r.left||q.right>r.right||q.bottom>kb.top}).map(e=>[sec.querySelector('h4').textContent,e.textContent])})};
+const navCheck=()=>{const p=document.querySelector('#sy1-panel .synth-panel[data-tehran-view]'),a=p.querySelector('[data-tehran-action=sound]'),b=p.querySelector('[data-tehran-action=midi]'),tabs=p.querySelector('.synth-tabs'),r=e=>e.getBoundingClientRect(),style=e=>getComputedStyle(e),ar=r(a),br=r(b),tr=r(tabs),pr=r(p);const visible=!!tr.width&&!!tr.height;return {gap:br.left-ar.right,distinct:style(a).backgroundImage!==style(b).backgroundImage,within:ar.left>=pr.left&&br.right<=pr.right&&ar.top>=pr.top&&br.bottom<=pr.bottom,tabGap:visible&&Math.abs(tr.top-ar.top)<20?ar.left-tr.right:null,tabs:visible?[...tabs.querySelectorAll('.synth-tab')].map(e=>({h:r(e).height,w:r(e).width,different:style(e).backgroundImage!==style(a).backgroundImage&&style(e).backgroundImage!==style(b).backgroundImage,contained:r(e).left>=tr.left&&r(e).right<=tr.right})):[]}};
+function checkNav(n,label){assert(n.distinct&&n.within&&n.gap>=8,label+' action separation: '+JSON.stringify(n));if(n.tabGap!==null)assert(n.tabGap>=10,label+' tabs touch navigation: '+JSON.stringify(n));assert(n.tabs.every(t=>t.h>=30&&t.h<=34&&t.w>=44&&t.different&&t.contained),label+' tabs not compact or distinct: '+JSON.stringify(n))}
 try {
 for(const [w,h] of dimensions){
  const ctx=await browser.newContext({viewport:{width:w,height:h},deviceScaleFactor:1,hasTouch:true,isMobile:true,serviceWorkers:"block"});
@@ -20,13 +22,13 @@ for(const [w,h] of dimensions){
  await p.goto("http://127.0.0.1:4177/");await p.waitForFunction(()=>window.SY1&&window.SY1_STUDIO);
  await p.evaluate(()=>window.SY1.setMachine("sy1"));
  const home=await p.evaluate(measure);assert.equal(home.view,"main");assert.equal(home.knobs.filter(x=>x.visible).length,0);
- sameKeys(baseline.keyboard,home.keyboard,w+"x"+h+" home");
+ sameKeys(baseline.keyboard,home.keyboard,w+"x"+h+" home");checkNav(await p.evaluate(navCheck),"Main");
  await p.screenshot({path:"qa-screenshots/"+w+"x"+h+"-main.png"});
  await p.locator('[data-tehran-action="sound"]').tap();await p.waitForSelector('[data-tehran-view="sound"]');
  const all=await p.evaluate(measure);console.log("ALL",w,h,JSON.stringify(all));
  assert.equal(all.page,"all");assert.deepEqual(all.knobs.map(x=>x.id).sort(),baseline.knobs.map(x=>x.id).sort());
  assert(all.knobs.every(x=>x.visible&&x.dial.w>0), "Missing knobs in All");assert.equal(all.sections.length,baseline.sections.length);
- sameKeys(home.keyboard,all.keyboard,w+"x"+h+" All");fit(all,w+"x"+h+" All");
+ sameKeys(home.keyboard,all.keyboard,w+"x"+h+" All");fit(all,w+"x"+h+" All");checkNav(await p.evaluate(navCheck),"Sound All");assert.deepEqual(await p.evaluate(strictReadouts),[],"All readouts");
  await p.screenshot({path:"qa-screenshots/"+w+"x"+h+"-all.png"});
  for(const page of ["osc","filter","amp","fx"]){
   await p.locator('[data-action="synth-page"][data-page="'+page+'"]').tap();const m=await p.evaluate(measure);
@@ -42,7 +44,7 @@ for(const [w,h] of dimensions){
  await p.locator('[data-tehran-action="sound"]').tap();assert.equal((await p.evaluate(measure)).view,"main");
  await p.locator('[data-tehran-action="midi"]').tap();await p.waitForSelector('.tehran-midi #st-piano-roll',{timeout:15000});
  const midi=await p.evaluate(measure);sameKeys(home.keyboard,midi.keyboard,"MIDI");
- const expanded=await p.evaluate(inspectMidi);console.log("MIDI expanded",w,h,JSON.stringify(expanded));assert(expanded.topHidden&&expanded.presetHidden,"MIDI header still visible");assert(expanded.actions>=30&&expanded.topGap<=60&&expanded.bottomGap<=12&&expanded.gridHeight>=65,"MIDI area not expanded: "+JSON.stringify(expanded));
+ checkNav(await p.evaluate(navCheck),"MIDI");const expanded=await p.evaluate(inspectMidi);console.log("MIDI expanded",w,h,JSON.stringify(expanded));assert(expanded.topHidden&&expanded.presetHidden,"MIDI header still visible");assert(expanded.actions>=30&&expanded.topGap<=60&&expanded.bottomGap<=12&&expanded.gridHeight>=65,"MIDI area not expanded: "+JSON.stringify(expanded));
  assert(await p.evaluate(()=>window.SY1_STUDIO.isInstrumentFocusOpen()&&window.SY1_STUDIO.engine.getFocusedTrack().machineId==="sy1"));
  await p.screenshot({path:"qa-screenshots/"+w+"x"+h+"-midi.png"});
  const before=await p.evaluate(()=>window.SY1_STUDIO.engine.getFocusedTrack().getNoteCount());
@@ -52,7 +54,7 @@ for(const [w,h] of dimensions){
  await p.locator('[data-tehran-action="midi"]').tap();assert.equal((await p.evaluate(measure)).view,"main");
  assert.equal(await p.locator('#st-piano-roll').count(),0);
  await p.locator('[data-tehran-action="sound"]').tap();await p.waitForSelector('[data-tehran-view="sound"]');
- assert(await p.locator('.st-inst-knob[data-st-param="cutoff"]').count()>0);fit(await p.evaluate(measure),"Studio sound All");
+ assert(await p.locator('.st-inst-knob[data-st-param="cutoff"]').count()>0);fit(await p.evaluate(measure),"Studio sound All");checkNav(await p.evaluate(navCheck),"Studio Sound All");
  for(const page of ["osc","filter","amp","fx"]){await p.locator('[data-st-action="inst-page"][data-st-page="'+page+'"]').tap();const m=await p.evaluate(measure);assert.equal(m.page,page);fit(m,"Studio "+w+"x"+h+" "+page);assert.deepEqual(await p.evaluate(strictReadouts),[],"Studio readout outside card in "+page);sameKeys(home.keyboard,m.keyboard,"Studio "+page);if(page==="osc")await p.screenshot({path:"qa-screenshots/"+w+"x"+h+"-studio-osc.png"});}
  await p.locator('[data-tehran-action="sound"]').tap();await p.locator('#st-inst-back-btn').tap();
  assert(await p.locator('#sy1-studio').isVisible());assert.equal(await p.evaluate(()=>window.SY1_STUDIO.engine.getFocusedTrack().getNoteCount()),before+1);
