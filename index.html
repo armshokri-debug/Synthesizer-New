@@ -178,6 +178,53 @@ html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view]
 html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view] .tehran-global-controls .tehran-actions{margin-left:auto}
 }
 </style>
+    <style id="tehran-layout-v8">
+
+/* V8: center the instrument selector in the approved skyline; dock existing controls
+   beside the keyboard without reparenting their event targets. */
+html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view][data-tehran-view=main]::before{background:linear-gradient(180deg,#090b143b 0%,#090b1414 30%,#090b1400 66%,#10101316 100%),url(./assets/tehran-night-full-239a6dc1.webp) center top/cover no-repeat}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] .kb-bar .kb-machine-badge{display:none!important}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-top,html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-brand,html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-subbar{position:static;transform:none}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-top,html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-subbar{min-height:0;padding:0;margin:0;flex:0 0 0;gap:0}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-brand{padding:0;margin:0;min-width:0;gap:0}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] #machine-btn{
+ position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);z-index:2;
+ display:inline-flex;align-items:center;justify-content:center;gap:14px;
+ min-width:0;max-width:calc(100% - 32px);min-height:64px;
+ padding:8px 18px 10px 23px;box-sizing:border-box;
+ font:600 clamp(31px,4.2vw,53px)/1.08 Georgia,"Times New Roman",serif;
+ letter-spacing:.14em;color:#ffe6ba;text-align:center;text-shadow:0 2px 7px #100b0c,0 0 22px #271812;
+ background:linear-gradient(180deg,#19131a66,#19131abf);
+ border:1px solid #b48b5bba;border-radius:12px;
+ box-shadow:0 6px 26px #0005,inset 0 1px #ffddad1c;
+ touch-action:manipulation;
+}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] #machine-btn::after{
+ content:"";width:26px;height:26px;flex:0 0 26px;
+ border:1px solid #e4b677;border-radius:50%;
+ background:linear-gradient(45deg,transparent 46%,#ffe1a5 47% 60%,transparent 61%) calc(50% - 3px) 52%/7px 8px no-repeat,linear-gradient(135deg,transparent 46%,#ffe1a5 47% 60%,transparent 61%) calc(50% + 3px) 52%/7px 8px no-repeat,#211c1caa;
+}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] #machine-btn:focus-visible{outline:2px solid #ffe0a5;outline-offset:4px}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] #machine-btn[aria-expanded=true]{border-color:#ffe0a5;background:#221a19}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-studio-btn{
+ position:absolute;top:var(--tehran-dock-y);left:var(--tehran-studio-x);z-index:3;
+ width:72px;min-width:72px;height:36px;min-height:36px;max-height:36px;
+ box-sizing:border-box;margin:0;padding:0 8px;white-space:nowrap;
+ color:#29190b;background:linear-gradient(#ffe2b2,#d69a4d);border:1px solid #f4cb8d;
+ border-radius:6px;font-size:12px;font-weight:750;
+}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-preset-nav{
+ position:absolute;top:var(--tehran-dock-y);right:var(--tehran-dock-right);
+ z-index:3;width:var(--tehran-preset-width);max-width:var(--tehran-preset-width);
+ height:36px;min-height:36px;box-sizing:border-box;
+ display:flex;align-items:stretch;gap:4px;margin:0;padding:0;
+}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-preset-nav>.preset-step-btn{flex:0 0 32px;min-width:32px;width:32px;min-height:36px;height:36px;margin:0;padding:0}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-preset-nav>.preset-display{flex:1 1 0;min-width:0;width:auto;min-height:36px;height:36px;margin:0;padding:2px 6px}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-preset-nav .pd-text{min-width:0;overflow:hidden}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-preset-nav .pd-name,html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-preset-nav .pd-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-studio-btn:focus-visible,html:not(.is-plugin) .sy1-shell[data-tehran-docked] #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view=main] .synth-preset-nav button:focus-visible{outline:2px solid #ffd48a;outline-offset:2px}
+</style>
   </head>
   <body>
     <div class="sy1-shell">
@@ -217,5 +264,36 @@ html:not(.is-plugin) #sy1-panel .synth-panel[data-machine=sy1][data-tehran-view]
         </div>
       </div>
     </div>
+  <script id="tehran-dock-v8">
+/* Geometry only: keep original controls in the synth panel so every existing
+   delegated click handler, preset update and Studio transition stays intact. */
+(()=>{
+ const shell=document.querySelector('.sy1-shell'),host=document.getElementById('sy1-panel'),bar=document.querySelector('.kb-bar'),orient=document.getElementById('kb-oriental'),strip=document.querySelector('.kb-strip');
+ if(!shell||!host||!bar||!orient||!strip)return;
+ let pending=0,watchedPanel=null;
+ const refresh=()=>{
+  pending=0;
+  const panel=host.querySelector('.synth-panel[data-machine=sy1][data-tehran-view=main]');
+  if(watchedPanel!==panel){if(watchedPanel)ro?.unobserve(watchedPanel);watchedPanel=panel;if(panel)ro?.observe(panel);}
+  if(!panel||host.hidden||document.documentElement.classList.contains('is-plugin')||!window.matchMedia('(orientation: landscape) and (min-width: 760px)').matches){delete shell.dataset.tehranDocked;return;}
+  const pr=panel.getBoundingClientRect(),br=bar.getBoundingClientRect(),sr=strip.getBoundingClientRect(),or=orient.getBoundingClientRect();
+  const start=Math.ceil(Math.max(sr.right,or.right))+8,end=Math.floor(br.right)-8,space=end-start-72-12;
+  if(!pr.width||!br.width||space<170){delete shell.dataset.tehranDocked;return;}
+  const set=(name,value)=>{const v=Math.round(value)+'px';if(shell.style.getPropertyValue(name)!==v)shell.style.setProperty(name,v)};
+  set('--tehran-dock-y',br.top-pr.top-panel.clientTop+(br.height-36)/2);
+  set('--tehran-studio-x',start-pr.left-panel.clientLeft);
+  set('--tehran-dock-right',pr.right-panel.clientLeft-end);
+  set('--tehran-preset-width',Math.min(244,space));
+  shell.dataset.tehranDocked='true';
+ };
+ const schedule=()=>{if(!pending)pending=requestAnimationFrame(refresh)};
+ const ro=typeof ResizeObserver==='function'?new ResizeObserver(schedule):null;
+ for(const e of [bar,orient,strip])ro?.observe(e);
+ new MutationObserver(schedule).observe(host,{childList:true,attributes:true,attributeFilter:['hidden','data-studio-instrument']});
+ window.addEventListener('resize',schedule,{passive:true});
+ document.addEventListener('sy1-view-change',schedule);
+ schedule();
+})();
+</script>
   </body>
 </html>
