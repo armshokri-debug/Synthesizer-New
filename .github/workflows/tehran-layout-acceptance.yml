@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        instrument: [sy1, yazd, tabriz, bam, isfahan]
+        instrument: [sy1, yazd, tabriz, bam, isfahan, shiraz]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,6 +28,7 @@ jobs:
           node --check assets/index-family-performance-v12.js
           node --check assets/index-family-performance-v13.js
           node --check assets/index-family-performance-v14.js
+          node --check assets/index-family-performance-v16.js
           git show 6430113945612f9b22d226bae2ad7ba3417af00a:index.html > qa-baseline.html
       - name: Browser acceptance
         shell: bash
