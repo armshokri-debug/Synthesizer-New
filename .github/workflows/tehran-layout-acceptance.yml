@@ -19,6 +19,7 @@ jobs:
       - name: Syntax and baseline
         run: |
           node --check assets/index-tehran-performance-v1.js
+          node --check assets/index-tehran-performance-v7.js
           git show 6430113945612f9b22d226bae2ad7ba3417af00a:index.html > qa-baseline.html
       - name: Browser acceptance
         shell: bash
